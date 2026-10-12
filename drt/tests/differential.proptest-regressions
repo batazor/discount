@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2c19d74f5d85d57f7697b2e472686adfe177922ea824c0dfbf9c7d9cc47e682f # shrinks to i = PricingInput { now: 1000, policy: PricingPolicy { rounding: HalfUp, stacking: Sequential, order_cap: OrderCap { amount: None, bps: None } }, customer: CustomerContext, cart: CartSnapshot { currency: "USD", lines: [CartLine { line_id: "L0", unit_price: Money { amount: 3043301294086, currency: "USD" }, quantity: 1 }, CartLine { line_id: "L1", unit_price: Money { amount: 3364, currency: "USD" }, quantity: 4 }, CartLine { line_id: "L2", unit_price: Money { amount: 2091, currency: "USD" }, quantity: 5 }, CartLine { line_id: "L3", unit_price: Money { amount: 822771682, currency: "USD" }, quantity: 3932 }, CartLine { line_id: "L4", unit_price: Money { amount: 9229157979426, currency: "USD" }, quantity: 1 }, CartLine { line_id: "L5", unit_price: Money { amount: 0, currency: "USD" }, quantity: 2 }] }, groups: [StackingGroup { group_id: "g0", priority: 0, mode: Stackable }], promotions: [Promotion { promotion_id: "P0", group_id: "g0", priority: 0, exclusive: false, cap: None, remaining_budget: None, rounding: None, rules: [], action: OrderPercentage { bps: 798 } }] }

@@ -1,10 +1,13 @@
 //! # discount-drt
 //!
 //! Differential random testing harness (ADR 2): a driver for the Lean reference
-//! executable (`spec/.lake/build/bin/discount-spec`, one JSON document per line) and the
-//! comparison of parsed results. Generators and the proptest suite are the next
-//! deliverable; `tests/fixtures.rs` already replays the hand-written fixtures through both
-//! implementations.
+//! executable (`spec/.lake/build/bin/discount-spec`, one JSON document per line), the
+//! comparison of parsed results, and proptest generators (`generators`). `tests/differential.rs`
+//! is the random comparison, `tests/fixtures.rs` replays the hand-written fixtures.
+//!
+//! `DRT_CASES` sets the number of random cases (default 256).
+
+pub mod generators;
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -79,4 +82,12 @@ pub fn rust_envelope(result: &Result<PricingResult, PricingError>) -> Value {
 
 pub fn rust_evaluate(input: &PricingInput) -> Value {
     rust_envelope(&apply(input))
+}
+
+/// Number of random cases, from `DRT_CASES`.
+pub fn cases() -> u32 {
+    std::env::var("DRT_CASES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(256)
 }

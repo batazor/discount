@@ -9,6 +9,4 @@ repository.workspace = true
 [dependencies]
 discount-core = { path = "../core" }
 serde_json = { workspace = true }
-
-[dev-dependencies]
 proptest = { workspace = true }
