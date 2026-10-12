@@ -88,3 +88,23 @@ CI runs exactly these steps on every push and pull request.
 Spec-driven: ubiquitous language → Lean types and invariants → Rust core → differential
 testing. A new domain concept enters `docs/ubiquitous-language.md` first, then `spec/`,
 then `core/`. ADRs are living documents and are edited in place.
+
+## Observability
+
+The service exports traces, metrics and logs over OpenTelemetry (OTLP) and ships Grafana
+dashboards as code. Run the whole chain locally:
+
+```bash
+docker compose -f deploy/compose.yaml up -d --build
+```
+
+Then open [http://localhost:3000](http://localhost:3000) (folder **Discount**: engine
+overview, promotions, validation errors) and check that signals arrive end to end:
+
+```bash
+deploy/smoke.sh
+```
+
+The metric and attribute names are listed under "Telemetry vocabulary" in
+[docs/ubiquitous-language.md](docs/ubiquitous-language.md). Instrumentation lives in
+`adapters/` only; `core/` stays telemetry-free.

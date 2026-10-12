@@ -9,3 +9,19 @@ repository.workspace = true
 [dependencies]
 discount-core = { path = "../core" }
 discount-app = { path = "../app" }
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-opentelemetry = "0.34.0"
+opentelemetry = "0.33.1"
+opentelemetry_sdk = { version = "0.33.1", features = ["trace", "metrics", "logs", "testing"] }
+opentelemetry-otlp = { version = "0.33.1", features = ["grpc-tonic", "trace", "metrics", "logs"] }
+opentelemetry-appender-tracing = { version = "0.33.1", features = ["experimental_metadata_attributes"] }
+axum = "0.8.9"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "signal", "net"] }
+tower-http = { version = "0.7.1", features = ["trace"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tower = "0.5.3"

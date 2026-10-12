@@ -27,6 +27,8 @@ The service SHALL record, via OpenTelemetry metrics, exported over OTLP:
 - `discount.evaluate.duration` (histogram, seconds) with `outcome`;
 - `discount.applied` (counter) with `promotion_id` and `clamped_by` in
   `none | Cap | Budget | OrderCap | Running`;
+- `discount.applied.amount` (counter, minor units) with `promotion_id` and `currency`,
+  the discount each applied promotion granted;
 - `discount.skipped` (counter) with `promotion_id` and `reason` in
   `NotEligible | ExclusiveApplied | FirstMatchTaken`;
 - `discount.amount` (histogram, minor units) with `currency`, recording `total_discount`
@@ -40,7 +42,8 @@ Attribute values SHALL reuse the ubiquitous-language names verbatim.
 - **WHEN** a cart is evaluated with promotions `P1` (applied, clamped by `Cap`) and `P3`
   (skipped, `NotEligible`)
 - **THEN** `discount.evaluations{outcome="ok"}` increased by 1,
-  `discount.applied{promotion_id="P1",clamped_by="Cap"}` by 1 and
+  `discount.applied{promotion_id="P1",clamped_by="Cap"}` by 1,
+  `discount.applied.amount{promotion_id="P1"}` by the discount `P1` granted, and
   `discount.skipped{promotion_id="P3",reason="NotEligible"}` by 1
 
 #### Scenario: Validation error metric

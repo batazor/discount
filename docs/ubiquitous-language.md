@@ -299,3 +299,26 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
   Pure with respect to the domain: a dry run.
 - `Redeem`: use case that records an `Evaluate` result for an order and consumes budgets
   and usage counters. Iteration 2 (ADR 7, ADR 4).
+
+## Telemetry vocabulary (not verified; `adapters/`)
+
+Names the service emits over OpenTelemetry. They reuse the domain vocabulary above and are
+the contract the Grafana dashboards depend on (OpenSpec change `otel-grafana-observability`).
+`adapters/src/telemetry.rs` keeps the same list as constants; a test checks the two agree.
+
+- Resource: `service.name` = `discount`, `service.version`, `deployment.environment`.
+- Span `discount.evaluate` (child of the HTTP server span) with attributes
+  `discount.currency`, `discount.lines`, `discount.promotions`, `discount.applied`,
+  `discount.skipped`, `discount.original_subtotal`, `discount.total_discount` and, on error,
+  `discount.error_type` (a `PricingError` variant name).
+- Metrics (OpenTelemetry names; Prometheus sees the translated `discount_…` forms):
+  `discount.evaluations` {`outcome` = `ok` | `error`, `error_type`},
+  `discount.evaluate.duration` seconds {`outcome`},
+  `discount.applied` {`promotion_id`, `clamped_by` = `none` | `Cap` | `Budget` | `OrderCap` | `Running`},
+  `discount.applied.amount` minor units {`promotion_id`, `currency`},
+  `discount.skipped` {`promotion_id`, `reason` = `NotEligible` | `ExclusiveApplied` | `FirstMatchTaken`},
+  `discount.amount` minor units {`currency`},
+  `discount.share.bps` basis points of the original subtotal, buckets
+  `0, 100, 250, 500, 1000, 1500, 2000, 3000, 5000, 7500, 10000`.
+- One log record per evaluation, `INFO` on success and `WARN` on a pricing error, carrying
+  `outcome`, `total_discount` and the trace and span ids of `discount.evaluate`.

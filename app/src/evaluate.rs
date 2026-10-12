@@ -13,14 +13,21 @@ pub enum EvaluateError {
     Pricing(PricingError),
 }
 
-pub struct Evaluate<'a, R: PromotionRepository, C: Clock, E: EventPublisher> {
+pub struct Evaluate<
+    'a,
+    R: PromotionRepository + ?Sized,
+    C: Clock + ?Sized,
+    E: EventPublisher + ?Sized,
+> {
     pub repository: &'a R,
     pub clock: &'a C,
     pub events: &'a E,
     pub policy: PricingPolicy,
 }
 
-impl<R: PromotionRepository, C: Clock, E: EventPublisher> Evaluate<'_, R, C, E> {
+impl<R: PromotionRepository + ?Sized, C: Clock + ?Sized, E: EventPublisher + ?Sized>
+    Evaluate<'_, R, C, E>
+{
     pub fn run(
         &self,
         cart: CartSnapshot,
