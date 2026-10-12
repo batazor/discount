@@ -24,9 +24,9 @@ Options considered:
 2. `Int64` in Lean to match Rust bit-for-bit. Rejected for now: far fewer lemmas, proofs
    by `bv_decide` become slow and opaque. Bounded `Int` gives the same guarantee with
    readable proofs.
-3. Rounding policy per promotion. Rejected: two promotions on one order with different
-   policies make invariant 3 unprovable in general and are impossible to explain to a
-   merchant.
+3. Rounding policy per promotion only. Rejected: a merchant-wide default is still
+   needed, and the order cap (ADR 4) is not any promotion's computation. Chosen instead:
+   engine-wide policy plus an optional per-promotion override (below).
 4. Percent as integer `0..=100`. Rejected: too coarse for "12.5 % off".
 
 ## Decision
@@ -51,11 +51,21 @@ Options considered:
 ### Rounding
 
 - `RoundingPolicy` is a domain type and an input to the pricing function via
-  `PricingPolicy` (ADR 8). It is not a property of a promotion or a currency.
+  `PricingPolicy` (ADR 8). A promotion may override it: `Promotion.rounding : Option
+  RoundingPolicy`; the **effective** policy for a promotion's percentage computation is
+  the override if present, else `PricingPolicy.rounding`. The order-cap percentage (ADR 4)
+  always uses `PricingPolicy.rounding`. The policy is never a property of a currency.
+- The override does not weaken the proofs: invariants 1, 2 and 5 rest on `roundDiv`
+  bounds that hold for every policy, and the commutativity claims of ADR 4 are unaffected
+  (under `Additive` each discount is computed independently from the same base; under
+  `Sequential` commutativity was never claimed beyond rounding). It exists because the
+  promocode service this engine replaces configures campaigns individually.
 - Variants in the first iteration: `HalfUp`, `HalfEven`, `Down`. `Down` rounds toward
   zero; all amounts in the engine are non-negative, so `Down` equals floor. `Up` is not
   included; add it only when a use case appears.
-- Default policy when the caller does not specify one: `HalfUp`.
+- Default policy when nothing is configured: `Down` (`DEFAULT_ROUNDING`). It is what the
+  application layer puts into `PricingPolicy.rounding`; the core itself has no defaults.
+  `Down` matches the `ROUND_DOWN` used everywhere in the promocode service being replaced.
 - Rounding happens once per discount computation, on the final quotient, never on
   intermediate values. Allocation (ADR 5) is integer-exact and does not round.
 - Lean defines `roundDiv (policy) (num den : Int) : Int` with `den > 0` and proves the

@@ -6,7 +6,7 @@ Date: 2026-10-12
 
 Accepted
 
-Depends on [4. Stacking: sequential application in a total order; exclusive promotions](0004-stacking-sequential-application-in-a-total-order-exclusive-promotions.md)
+Depends on [4. Stacking: total order, groups, exclusivity and order-level cap](0004-stacking-total-order-groups-exclusivity-and-order-level-cap.md)
 
 
 ## Context
