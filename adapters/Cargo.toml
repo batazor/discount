@@ -1,0 +1,11 @@
+[package]
+name = "discount-adapters"
+description = "Adapters of the discount service: HTTP (axum), Postgres (sqlx), events"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+discount-core = { path = "../core" }
+discount-app = { path = "../app" }

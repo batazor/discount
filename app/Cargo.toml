@@ -1,0 +1,10 @@
+[package]
+name = "discount-app"
+description = "Application layer of the discount service: use cases and ports"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+discount-core = { path = "../core" }

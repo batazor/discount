@@ -1,0 +1,15 @@
+[package]
+name = "discount-core"
+description = "Pure pricing core of the discount service; structural mirror of spec/ (Lean 4)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "discount_core"
+path = "src/lib.rs"
+
+# ADR 8: the core depends on std and serde (derive only). Nothing else.
+[dependencies]
+serde = { workspace = true }
