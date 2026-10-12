@@ -42,8 +42,9 @@ Options considered:
 2. The Rust `core` crate mirrors the Lean model structurally: same type names, same
    function decomposition, same order of operations (ADR 8).
 3. Differential random testing (DRT) in `drt/` generates carts, promotions and `now` with
-   `proptest`, runs both implementations and asserts byte-identical JSON results,
-   including error results (ADR 6). Communication is a child process over stdin/stdout.
+   `proptest`, runs both implementations and asserts equal results, compared as parsed JSON values
+   (key order is not significant), including error results (ADR 6). The Lean reference
+   is a long-lived child process speaking one JSON document per line over stdin/stdout.
    No FFI.
 4. Aeneas is optional and later. If used, it is limited to the rounding and allocation
    functions, which stay inside Aeneas' supported subset: safe Rust, no async, no trait

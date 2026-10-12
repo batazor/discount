@@ -12,18 +12,19 @@ Notation: `S` is `result.original_subtotal`, `D` is `result.total_discount`,
 
 ## Status by iteration
 
-| # | Invariant | Iteration 1 | Lean theorem |
-|---|-----------|-------------|--------------|
+| # | Invariant | Status | Lean theorem(s) in `spec/Discount/Theorems/Invariants.lean` |
+|---|-----------|--------|------------------------------------------------------------|
 | 1 | Bounds per order and per line | proved | `final_total_bounds`, `line_total_bounds` |
 | 2 | Caps are respected | proved | `discount_le_cap`, `discount_le_budget`, `total_discount_le_order_cap`, `total_discount_le_subtotal` |
-| 3 | Deterministic stacking | proved (permutation part) | `apply_perm_invariant` |
+| 3 | Deterministic stacking | stated; permutation part is the next proof, commutativity is iteration 2 | `apply_perm_invariant` (planned) |
 | 4 | Exclusive never combines; first-match groups apply at most one | proved | `exclusive_alone`, `first_match_at_most_one` |
-| 5 | Allocation is conservative | proved | `allocate_sum`, `allocate_le`, `line_discount_sum` |
-| 6 | Idempotence | stated, iteration 2 | `apply_deterministic` (iteration 1), `apply_idempotent` (iteration 2) |
-| 7 | Eligibility is a function of the input | proved (by construction) | `eligible_depends_on_input` |
+| 5 | Allocation is conservative | proved | `allocation_conserves`, `line_discount_sum`, `total_discount_eq_sum`; on `allocate` itself `allocate_sum`, `allocate_le`, `allocate_nonneg`, `allocate_length` |
+| 6 | Idempotence | stated, iteration 2 | `apply_idempotent` (planned) |
+| 7 | Eligibility is a function of the input | proved | `eligible_depends_on_input` |
 
-"Proved" means a theorem without `sorry` that `lake build` checks in CI. A proof that
-turns out to be blocked is reported, never stubbed.
+"Proved" means a theorem without `sorry` that `lake build` checks in CI, over the Lean
+model and the `ok` branch of `apply`. A proof that turns out to be blocked is reported,
+never stubbed.
 
 ## 1. Final price is within bounds
 
@@ -55,11 +56,15 @@ per-line bound is invariant 1.
 
 Two separate claims (ADR 4):
 
-**Permutation invariance (proved).** For any permutations `π`, `σ`,
+**Permutation invariance (stated, proof next).** For any permutations `π`, `σ`,
 `apply (input with promotions := π input.promotions, groups := σ input.groups) = apply input`.
 The caller's list orders never matter because `sortPromotions` produces the total order
 `(group.priority DESC, group_id ASC, promotion.priority DESC, promotion_id ASC)` and ids
-are unique after validation. The `skipped` list is in that same total order.
+are unique after validation. The `skipped` list is in that same total order. The proof
+needs two facts not yet in `spec/`: a sorted permutation of a sorted list under a total,
+antisymmetric order is equal to it, and `find?` by a unique key is permutation-invariant.
+Both are routine and planned before the DRT lands; the DRT itself exercises permutation
+invariance on every generated case.
 
 **Commutativity (claimed only where true, proved in iteration 2).**
 Swapping the *priorities* of two promotions changes the result in general. It does not
@@ -75,11 +80,14 @@ General commutativity is **not** an invariant of this engine.
 ## 4. Exclusive promotions never combine; first-match groups apply at most one
 
 - If some `p ∈ result.applied` comes from a promotion with `exclusive = true`, then
-  `result.applied.length = 1`, and every other eligible promotion is in `skipped` with
-  reason `ExclusiveApplied { by := p.promotion_id }`.
-- For every group `g` with `mode = FirstMatch`, at most one `p ∈ result.applied` has
-  `P.group_id = g.group_id`; every other eligible promotion of `g` is in `skipped` with
-  reason `FirstMatchTaken`.
+  `result.applied.length = 1` (`exclusive_alone`). Every other eligible promotion is in
+  `skipped` with reason `ExclusiveApplied { winner := p.promotion_id }` (stated; follows
+  from the partition lemma below once proved).
+- For every group id `g` with `modeOf groups g = FirstMatch`, at most one applied record
+  comes from a promotion of group `g` (`first_match_at_most_one`, with `appliedInGroup`
+  looking the source promotion up by id). After validation `modeOf groups g` is the mode of
+  the unique group with that id. Every other eligible promotion of `g` is in `skipped`
+  with reason `FirstMatchTaken` (stated).
 
 Why: `selectExclusive` returns a one-element list whenever an eligible exclusive promotion
 exists; `selectFirstMatch` keeps the first promotion of each `FirstMatch` group (ADR 4).
@@ -118,27 +126,36 @@ iteration 2 together with `Redeem`.
 so this holds by construction; the Lean theorem is a one-line `rfl`-style statement kept
 as documentation.
 
-## Structural lemmas (support for the above, proved in iteration 1)
+## Structural lemmas
+
+Proved (`spec/Discount/Theorems/`):
+
+- `validate_ok` (`Validate.lean`): `validate input = ok` implies `Valid input`: every
+  `unit_price`, `action.amount`, `cap`, `remaining_budget` and `order_cap.amount` is in
+  `0 ..= MAX_MINOR_UNITS` and in `cart.currency`, every `quantity` in
+  `1 ..= MAX_QUANTITY`, every `bps` in `0 ..= BPS_SCALE`, `line_id`s, `group_id`s and
+  `promotion_id`s are pairwise distinct, and every promotion's `group_id` names a group.
+- `roundDiv_nonneg`, `roundDiv_le` (`Rounding.lean`): for `0 ≤ num`, `0 < den`,
+  `0 ≤ roundDiv p num den`; and for `0 ≤ base`, `0 ≤ bps ≤ BPS_SCALE`,
+  `roundDiv p (base * bps) BPS_SCALE ≤ base`. (The second is why a 100 % discount never
+  exceeds the base even with `HalfUp`.)
+- `clampDiscount_spec` (`Fold.lean`): the clamped discount is non-negative and below every
+  present bound and the running subtotal.
+- `FoldInv` (`Fold.lean`): the step invariant of the fold, preserved by `applyOne` and
+  established by `initStep`; it carries the per-line bounds, the running total, the
+  remaining order cap and the per-record facts the invariants above are read from.
+- `selectExclusive_exclusive`, `selectFirstMatch_at_most_one` (`Stacking.lean`).
+
+Stated, not yet proved:
 
 - `applied_skipped_partition`: every `input.promotions[i].promotion_id` occurs exactly
   once across `result.applied` and `result.skipped`, and nothing else occurs (ADR 9).
 - `clamped_by_sound`: if `p.clamped_by = some r` then the bound named by `r` equals
   `p.discount` and the raw discount was strictly larger; if `none`, the raw discount was
   not reduced.
-- `validate_ok_amounts`: every `unit_price`, `action.amount`, `cap`, `remaining_budget`
-  and `order_cap.amount` in a validated input is in `0 ..= MAX_MINOR_UNITS`, every
-  `quantity` in `1 ..= MAX_QUANTITY`, every `bps` in `0 ..= BPS_SCALE`, and
-  `orderSubtotal ≤ MAX_MINOR_UNITS`.
-- `validate_ok_currency`: every `Money` in a validated input has `cart.currency`.
-- `validate_ok_unique`: `line_id`s, `group_id`s and `promotion_id`s are pairwise distinct,
-  and every promotion's `group_id` names a group.
-- `roundDiv_nonneg`, `roundDiv_le`: for `0 ≤ num`, `0 < den`:
-  `0 ≤ roundDiv p num den ≤ num / den + 1`; and for `bps ≤ BPS_SCALE`,
-  `roundDiv p (base * bps) BPS_SCALE ≤ base` when `base ≥ 0`. (The last one is why a
-  100 % discount never exceeds the base even with `HalfUp`.)
-- `no_overflow`: under `validate_ok_amounts` every `i64` intermediate in the Rust core is
-  below `2^63` and every `i128` intermediate below `2^127`. Stated over the Lean `Int`
-  model as explicit bounds; it is what makes `PricingError::Overflow` unreachable (ADR 3).
+- `no_overflow`: under `Valid` every `i64` intermediate in the Rust core is below `2^63`
+  and every `i128` intermediate below `2^127`. Stated over the Lean `Int` model as
+  explicit bounds; it is what makes `PricingError::Overflow` unreachable (ADR 3).
 
 ## What is explicitly not claimed
 

@@ -1,0 +1,9 @@
+name = "discount"
+defaultTargets = ["Discount", "discount-spec"]
+
+[[lean_lib]]
+name = "Discount"
+
+[[lean_exe]]
+name = "discount-spec"
+root = "Main"

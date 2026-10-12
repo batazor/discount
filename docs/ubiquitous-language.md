@@ -8,8 +8,9 @@ Adding a concept means adding it here first (ADR 8).
 JSON encodings are normative: they are the DRT contract between the Lean reference and
 the Rust core (ADR 2). Rules shared by every type:
 
-- Objects carry exactly the listed keys, in the listed order on output. Extra keys on
-  input are an error at decode time, not a `PricingError`.
+- Objects carry exactly the listed keys. Extra keys on input are an error at decode time,
+  not a `PricingError`. Key order on output is not significant (the Lean reference emits
+  keys alphabetically); the DRT compares parsed values.
 - Enums encode as an object with a `"type"` key holding the variant name, followed by the
   variant's fields: `{"type": "HalfUp"}`, `{"type": "OrderPercentage", "bps": 1500}`.
 - Optional fields encode as `null` when absent. A missing key is read as `null`.
@@ -177,15 +178,20 @@ Everything `apply` may depend on (ADR 7). Fields: `now : Timestamp`,
 one named function per stage in both code bases (ADR 8):
 
 1. `validate` — first failing check in the fixed order below, or the validated input.
-2. `lineSubtotal`, `orderSubtotal` — integer sums.
-3. `eligible` — split promotions into eligible ones and `NotEligible` skips.
-4. `sortPromotions` — total order.
-5. `selectExclusive` — the first exclusive promotion alone, or the whole list.
-6. `selectFirstMatch` — per `FirstMatch` group keep the first promotion, skip the rest.
-7. `applyOne` — for each remaining promotion in order: raw discount from `Action`,
-   `clampDiscount`, `allocate` to lines, decrease the running subtotals, record
-   `clamped_by`.
-8. Assemble `PricingResult`.
+2. `lineSubtotal`, `orderSubtotal` — integer sums (`subsOf` is the list of line subtotals).
+3. `sortPromotions` — all promotions in the total order (`sortedOf`).
+4. `eligible` — keep the eligible ones (`eligibleOf`); `firstFailingRule` gives the
+   `NotEligible` skips (`skipsOf`).
+5. `selectExclusive` — the first exclusive promotion alone, or the whole list
+   (`afterExclusive`).
+6. `selectFirstMatch` — per `FirstMatch` group keep the first promotion, skip the rest
+   (`afterFirstMatch`, whose kept list is `toApplyOf`).
+7. `applyOne` — fold over `toApplyOf` from `initStep` to `finalStep`: for each promotion
+   `rawDiscount` from `Action` (with `effectiveRounding`), `clampDiscount`, `allocate` to
+   lines, `subLists` the running subtotals, record `clamped_by`. The fold state is `Step`
+   (`lineRunning`, `orderCapRemaining`, `applied`); `orderCapInitial` seeds the cap.
+8. `compute` assembles `PricingResult`; `skipped` is `sortedOf` filtered through the
+   collected skip reasons, so it is in total order.
 
 ### roundDiv
 `roundDiv : RoundingPolicy → (num den : Int) → Int`, `den > 0`, `num ≥ 0` in all uses.
@@ -203,7 +209,12 @@ that order whose value equals the result.
 ### allocate
 Splits an order-level discount `D` over line subtotals `s_i` by the largest-remainder
 method with ties by line position (ADR 5). Returns one amount per line. Uses `Int` in
-Lean and `i128` intermediates in Rust.
+Lean and `i128` intermediates in Rust. Named pieces, identical in both code bases:
+`baseShares` (`floor(D s_i / S)`), `remainders` (`(D s_i) mod S`), `extraUnits`
+(`R = D - Σ base_i`), `positiveIndices` (candidate lines, those with a positive
+remainder), `remainderLe` (the ordering: larger remainder first, then position),
+`pickedLines` (the first `R` candidates in that order), `bumpAll` (one unit to each
+picked line). If `S = 0` every line gets `0`.
 
 ### Running subtotal
 The order subtotal minus all discounts applied so far, maintained per line and in total.
@@ -211,7 +222,10 @@ The order subtotal minus all discounts applied so far, maintained per line and i
 
 ### PricingError
 Returned by `validate`; the **check order** is normative (ADR 6) and both implementations
-report the first failure in this order:
+report the first failure in this order. Helper names shared by both code bases:
+`validCurrency`, `amountInRange`, `bpsInRange`, `checkMoney`, `checkOptMoney`,
+`checkLines`, `firstDuplicate`, `checkDuplicates`, `checkOrderCap`, `checkAction`,
+`checkPromotions`, sequenced with `andThen`.
 
 1. `InvalidCurrency { field }` — `cart.currency` malformed.
 2. For each line `i` in order: `InvalidCurrency` on `cart.lines[i].unit_price`;
@@ -246,9 +260,9 @@ JSON: `{"type": "OrderCap"}`.
 ### SkipReason
 Why a promotion was not applied (ADR 9):
 - `NotEligible { rule_index }` — index of the first rule that did not hold.
-- `ExclusiveApplied { by : PromotionId }`.
-- `FirstMatchTaken { by : PromotionId }`.
-JSON: `{"type": "FirstMatchTaken", "by": "P7"}`.
+- `ExclusiveApplied { winner : PromotionId }`.
+- `FirstMatchTaken { winner : PromotionId }`.
+JSON: `{"type": "FirstMatchTaken", "winner": "P7"}`.
 
 ### SkippedPromotion
 `promotion_id`, `reason : SkipReason`.
@@ -273,8 +287,10 @@ with `total = subtotal - discount`.
 one of `applied` and `skipped`.
 
 ### Result envelope (CLI contract)
-The Lean executable and the Rust harness exchange
-`{"ok": <PricingResult>}` or `{"error": <PricingError>}`.
+The Lean reference executable is line-oriented: one `PricingInput` JSON document per
+input line, one envelope per output line, `{"ok": <PricingResult>}` or
+`{"error": <PricingError>}`. A line that does not decode yields
+`{"decode_error": "<message>"}`; the DRT treats that as a harness bug, never as a result.
 
 ## Application layer (not verified, named here for consistency)
 

@@ -68,8 +68,9 @@ In both `spec/` and `core/`:
 - Only order-level actions. Line-level targeting (`LinePercentage`, item filters,
   "buy X get Y") is the second iteration and gets its own ADR.
 - Proofs: invariants 1, 2, 5 (as the brief requires), plus 4 (per group and global,
-  ADR 4), 7 and the permutation part of 3, which are cheap. Commutativity (rest of 3) and
+  ADR 4) and 7. The permutation part of 3 is the next proof; commutativity (rest of 3) and
   idempotence (6) are stated in `docs/invariants.md` and proved in iteration 2.
+  `docs/invariants.md` is the authoritative status table.
 
 ## Consequences
 
