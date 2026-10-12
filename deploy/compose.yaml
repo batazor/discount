@@ -1,0 +1,34 @@
+# Local observability stack for the discount service (OpenTelemetry + Grafana).
+#
+#   docker compose -f deploy/compose.yaml up -d
+#   open http://localhost:3000        (Grafana, anonymous admin)
+#   OTLP: grpc localhost:4317, http localhost:4318
+#
+# grafana/otel-lgtm bundles an OpenTelemetry Collector, Prometheus (metrics), Tempo
+# (traces), Loki (logs) and Grafana with the data sources pre-wired. Dashboards from
+# deploy/grafana/dashboards are provisioned on start.
+services:
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: discount-lgtm
+    ports:
+      - "3000:3000"   # Grafana
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      ENABLE_LOGS_ALL: "false"
+    volumes:
+      - ./grafana/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards/discount:ro
+      - ./grafana/provisioning/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/discount.yaml:ro
+      - lgtm-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  lgtm-data:

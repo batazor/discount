@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lean proofs, Rust tests, differential run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Lean: the specification must build and every proof must check (ADR 2) ---
+      - name: Build the Lean specification
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: spec
+          use-mathlib-cache: false
+
+      - name: No sorry in the specification
+        run: |
+          if grep -rn --include='*.lean' -w sorry spec/Discount spec/Main.lean; then
+            echo "sorry found in merged Lean code"; exit 1
+          fi
+
+      - name: Theorems depend on no sorryAx
+        working-directory: spec
+        run: |
+          lake env lean AxiomCheck.lean | tee axioms.txt
+          if grep -q sorryAx axioms.txt; then echo "sorryAx in axioms"; exit 1; fi
+
+      # --- Rust: core, app, adapters, drt ---
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test (unit tests, fixtures, differential run)
+        env:
+          DRT_CASES: "5000"
+          DISCOUNT_SPEC_BIN: ${{ github.workspace }}/spec/.lake/build/bin/discount-spec
+        run: cargo test --workspace
