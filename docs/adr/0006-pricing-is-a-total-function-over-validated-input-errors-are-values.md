@@ -1,0 +1,60 @@
+# 6. Pricing is a total function over validated input; errors are values
+
+Date: 2026-10-12
+
+## Status
+
+Accepted
+
+## Context
+
+The Lean proofs quantify over inputs. If `apply` can panic, throw or loop, the theorems
+say nothing about those inputs, and the DRT cannot compare behaviours. Real input can be
+malformed: mixed currencies, a fixed discount in the wrong currency, negative or oversized
+amounts, duplicate promotion ids.
+
+Options considered:
+
+1. Reject at the adapter boundary and make the core assume valid input. Rejected: the
+   proofs would carry preconditions that nothing in the core enforces, and the DRT would
+   need its own validator, a third implementation.
+2. Dependent types in Lean (`Fin`, subtypes) to make invalid input unrepresentable.
+   Elegant, but Rust cannot mirror it, and JSON decoding would still need to fail
+   somewhere. Kept as an option for internal functions after validation.
+3. Skip invalid promotions silently. Rejected: hides configuration bugs behind a smaller
+   discount.
+
+## Decision
+
+1. `apply : PricingInput → Except PricingError PricingResult` in Lean,
+   `fn apply(input: &PricingInput) -> Result<PricingResult, PricingError>` in Rust.
+   Both are total: every input yields exactly one of the two.
+2. Validation is a separate, named step inside `apply` that runs before any arithmetic
+   and reports the first error found in a fixed check order, so both implementations
+   report the same error for the same input.
+3. `PricingError` variants in the first iteration:
+   - `MixedCurrencies`: lines do not all share one currency.
+   - `CurrencyMismatch { promotion_id }`: a fixed amount, cap or budget on a promotion is
+     in a currency other than the cart's. Loud, not skipped: a promotion the repository
+     returned for this cart in another currency is a configuration bug.
+   - `AmountOutOfRange { field }`: any amount `< 0` or `> MAX_MINOR_UNITS`, or the order
+     subtotal `> MAX_MINOR_UNITS` (ADR 3).
+   - `InvalidBasisPoints { promotion_id }`: outside `0 ..= 10_000`.
+   - `InvalidQuantity { line_index }`: quantity `< 1`.
+   - `DuplicatePromotionId { promotion_id }`.
+   - `Overflow`: reserved for checked arithmetic in Rust; unreachable for valid input
+     (ADR 3). Lean never produces it.
+   An empty cart is not an error: it prices to zero with no discounts.
+4. The invariant theorems are stated on the `ok` branch:
+   `apply input = .ok result → <invariant>`. Validation lemmas state that the `ok` branch
+   implies the bounds the arithmetic lemmas need.
+5. DRT compares the full JSON of `Except`/`Result`, including the error variant and its
+   payload. Generators produce invalid inputs at a fixed, small rate so the validation
+   order is tested too.
+
+## Consequences
+
+- Validation order is part of the specification and is documented in
+  `docs/invariants.md` next to invariant 7.
+- Every new field needs its validation rule in both implementations; the DRT catches the
+  one that is forgotten.
