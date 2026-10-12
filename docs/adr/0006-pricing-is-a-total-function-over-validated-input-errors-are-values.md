@@ -32,19 +32,24 @@ Options considered:
 2. Validation is a separate, named step inside `apply` that runs before any arithmetic
    and reports the first error found in a fixed check order, so both implementations
    report the same error for the same input.
-3. `PricingError` variants in the first iteration:
-   - `MixedCurrencies`: lines do not all share one currency.
-   - `CurrencyMismatch { promotion_id }`: a fixed amount, cap or budget on a promotion is
-     in a currency other than the cart's. Loud, not skipped: a promotion the repository
-     returned for this cart in another currency is a configuration bug.
+3. `PricingError` variants in the first iteration. Locations are reported by list
+   index, never by id, so that errors about duplicate ids are unambiguous:
+   - `InvalidCurrency { field }`: a currency is not three ASCII uppercase letters.
+   - `MixedCurrencies { line_index }`: a line's `unit_price` currency differs from
+     `cart.currency`.
+   - `CurrencyMismatch { promotion_index, field }`: a fixed amount, cap or budget on a
+     promotion is in a currency other than the cart's. Loud, not skipped: a promotion the
+     repository returned for this cart in another currency is a configuration bug.
    - `AmountOutOfRange { field }`: any amount `< 0` or `> MAX_MINOR_UNITS`, or the order
      subtotal `> MAX_MINOR_UNITS` (ADR 3).
-   - `InvalidBasisPoints { promotion_id }`: outside `0 ..= 10_000`.
-   - `InvalidQuantity { line_index }`: quantity `< 1`.
-   - `DuplicatePromotionId { promotion_id }`.
+   - `InvalidBasisPoints { promotion_index }`: outside `0 ..= 10_000`.
+   - `InvalidQuantity { line_index }`: outside `1 ..= MAX_QUANTITY`.
+   - `DuplicateLineId { line_id }`, `DuplicatePromotionId { promotion_id }`.
    - `Overflow`: reserved for checked arithmetic in Rust; unreachable for valid input
      (ADR 3). Lean never produces it.
-   An empty cart is not an error: it prices to zero with no discounts.
+   An empty cart is not an error: it prices to zero with no discounts. The exact check
+   order and the `field` path grammar are normative and live in
+   `docs/ubiquitous-language.md` under `PricingError`.
 4. The invariant theorems are stated on the `ok` branch:
    `apply input = .ok result → <invariant>`. Validation lemmas state that the `ok` branch
    implies the bounds the arithmetic lemmas need.
@@ -55,6 +60,6 @@ Options considered:
 ## Consequences
 
 - Validation order is part of the specification and is documented in
-  `docs/invariants.md` next to invariant 7.
+  `docs/ubiquitous-language.md` under `PricingError`.
 - Every new field needs its validation rule in both implementations; the DRT catches the
   one that is forgotten.
