@@ -9,7 +9,11 @@
 pub mod config;
 pub mod http;
 pub mod memory;
+pub mod postgres;
 pub mod telemetry;
 
 pub use config::Config;
-pub use memory::{FixedClock, InMemoryPromotionRepository, NoopEventPublisher, SystemClock};
+pub use memory::{
+    CatalogFixture, FixedClock, InMemoryStore, NoopEventPublisher, SystemClock, default_policy,
+};
+pub use postgres::PgStore;

@@ -1,29 +1,62 @@
-//! `discount-server`: the HTTP service with OpenTelemetry export.
+//! `discount-server`: the HTTP service with OpenTelemetry export. Postgres when
+//! `DATABASE_URL` is set, otherwise an in-memory catalogue seeded from the fixture.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use discount_adapters::http::{AppState, router};
 use discount_adapters::telemetry;
-use discount_adapters::{Config, InMemoryPromotionRepository, NoopEventPublisher, SystemClock};
+use discount_adapters::{
+    CatalogFixture, Config, InMemoryStore, NoopEventPublisher, PgStore, SystemClock,
+};
+use discount_app::ports::{PromotionCatalog, RedemptionRepository};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
     let guard = telemetry::init(&config)?;
-    let repository = InMemoryPromotionRepository::from_json_file(&config.promotions_path)?;
-    tracing::info!(
-        listen = %config.listen,
-        otlp = %config.otlp_endpoint,
-        promotions = repository.promotions.len(),
-        groups = repository.groups.len(),
-        "discount-server starting"
-    );
+    let (catalog, redemptions): (Arc<dyn PromotionCatalog>, Arc<dyn RedemptionRepository>) =
+        match &config.database_url {
+            Some(url) => {
+                let store = PgStore::connect(url, &config.policy).await?;
+                tracing::info!("catalogue: postgres");
+                (Arc::new(store.clone()), Arc::new(store))
+            }
+            None => {
+                let fixture = CatalogFixture::from_json_file(&config.promotions_path)?;
+                tracing::info!(
+                    promotions = fixture.promotions.len(),
+                    groups = fixture.groups.len(),
+                    path = %config.promotions_path,
+                    "catalogue: in-memory from fixture"
+                );
+                let store = InMemoryStore::new(config.policy.clone()).with_fixture(fixture);
+                (Arc::new(store.clone()), Arc::new(store))
+            }
+        };
+    tracing::info!(listen = %config.listen, otlp = %config.otlp_endpoint, "discount-server starting");
+    let instruments = guard.instruments();
+    // Budget gauge: refresh the cache from the catalogue every 10 seconds.
+    {
+        let catalog = catalog.clone();
+        let instruments = instruments.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(10));
+            loop {
+                tick.tick().await;
+                match catalog.list_budgets().await {
+                    Ok(b) => instruments.set_budgets(b),
+                    Err(e) => tracing::warn!(error = %e, "budget refresh failed"),
+                }
+            }
+        });
+    }
     let state = Arc::new(AppState {
-        repository: Arc::new(repository),
+        catalog,
+        redemptions,
         clock: Arc::new(SystemClock),
         events: Arc::new(NoopEventPublisher),
-        policy: config.policy.clone(),
-        instruments: guard.instruments(),
+        instruments,
     });
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
     axum::serve(listener, router(state))

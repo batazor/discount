@@ -1,98 +1,86 @@
-//! The four scenarios of the `evaluate-http-api` spec, through the axum router.
+//! HTTP scenarios of `evaluate-http-api`, `redemption` and `promotion-catalog` through
+//! the axum router on the in-memory store.
+
+mod common;
 
 use std::sync::Arc;
 
+use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
+use axum::http::{Method, Request, StatusCode, header};
+use common::*;
 use discount_adapters::http::{AppState, router};
-use discount_adapters::telemetry::Instruments;
-use discount_adapters::{FixedClock, InMemoryPromotionRepository, NoopEventPublisher};
-use discount_core::{OrderCap, PricingInput, PricingPolicy, RoundingPolicy, StackingPolicy, apply};
+use discount_core::{CustomerContext, PricingInput, apply};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-fn fixture_repo() -> InMemoryPromotionRepository {
-    InMemoryPromotionRepository::from_json_file(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../deploy/promotions.json"
-    ))
-    .unwrap()
-}
-
-fn policy() -> PricingPolicy {
-    PricingPolicy {
-        rounding: RoundingPolicy::Down,
-        stacking: StackingPolicy::Sequential,
-        order_cap: OrderCap {
-            amount: None,
-            bps: None,
-        },
-    }
-}
-
-fn state() -> Arc<AppState> {
-    Arc::new(AppState {
-        repository: Arc::new(fixture_repo()),
-        clock: Arc::new(FixedClock(1_760_227_200)),
-        events: Arc::new(NoopEventPublisher),
-        policy: policy(),
-        instruments: Instruments::noop(),
-    })
-}
-
-async fn post_json(body: &str) -> (StatusCode, Value) {
-    let app = router(state());
-    let req = Request::post("/v1/evaluate")
+async fn call(
+    app: &Router,
+    method: Method,
+    path: &str,
+    body: Option<String>,
+) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method(method)
+        .uri(path)
         .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(body.to_string()))
+        .body(body.map(Body::from).unwrap_or_else(Body::empty))
         .unwrap();
-    let res = app.oneshot(req).await.unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
     let status = res.status();
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap())
+    let v = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap()
+    };
+    (status, v)
 }
 
-fn sample_cart() -> Value {
-    json!({
-        "currency": "EUR",
-        "lines": [
-            {"line_id": "L1", "unit_price": {"amount": 1999, "currency": "EUR"}, "quantity": 2},
-            {"line_id": "L2", "unit_price": {"amount": 501, "currency": "EUR"}, "quantity": 1}
-        ]
-    })
+fn cart_json() -> Value {
+    serde_json::to_value(sample_cart()).unwrap()
 }
 
 #[tokio::test]
 async fn successful_evaluation_matches_core() {
-    let body = json!({"cart": sample_cart(), "customer": {}}).to_string();
-    let (status, v) = post_json(&body).await;
+    let st: Arc<AppState> = state();
+    let app = router(st.clone());
+    let (status, v) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer_json()}).to_string()),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["final_total"]["amount"], 3750);
-    assert_eq!(
-        v["original_subtotal"]["amount"].as_i64().unwrap()
-            - v["total_discount"]["amount"].as_i64().unwrap(),
-        3750
-    );
-    // identical to discount_core::apply on the same input
-    let repo = fixture_repo();
+    let f = fixture();
     let input = PricingInput {
-        now: 1_760_227_200,
-        policy: policy(),
-        customer: discount_core::CustomerContext {},
-        cart: serde_json::from_value(sample_cart()).unwrap(),
-        groups: repo.groups,
-        promotions: repo.promotions,
+        now: NOW,
+        policy: discount_adapters::default_policy(),
+        customer: CustomerContext::default(),
+        cart: sample_cart(),
+        coupons: vec![],
+        exchange_rates: vec![],
+        groups: f.groups,
+        promotions: f.promotions,
     };
-    let expected = serde_json::to_value(apply(&input).unwrap()).unwrap();
-    assert_eq!(v, expected);
+    assert_eq!(v, serde_json::to_value(apply(&input).unwrap()).unwrap());
 }
 
 #[tokio::test]
 async fn invalid_currency_is_422_with_pricing_error() {
-    let mut cart = sample_cart();
+    let app = router(state());
+    let mut cart = cart_json();
     cart["currency"] = json!("eur");
-    let (status, v) = post_json(&json!({"cart": cart, "customer": {}}).to_string()).await;
+    let (status, v) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart, "customer": customer_json()}).to_string()),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(
         v,
@@ -102,12 +90,17 @@ async fn invalid_currency_is_422_with_pricing_error() {
 
 #[tokio::test]
 async fn unknown_key_is_400_decode_error() {
-    let (status, v) =
-        post_json(&json!({"cart": sample_cart(), "customer": {}, "extra": 1}).to_string()).await;
+    let app = router(state());
+    let (status, v) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer_json(), "extra": 1}).to_string()),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let msg = v["decode_error"].as_str().expect("decode_error message");
-    assert!(msg.contains("extra"), "message names the key: {msg}");
-    let (status, v) = post_json("{not json").await;
+    assert!(v["decode_error"].as_str().unwrap().contains("extra"));
+    let (status, v) = call(&app, Method::POST, "/v1/evaluate", Some("{not json".into())).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(v.get("decode_error").is_some());
 }
@@ -115,14 +108,262 @@ async fn unknown_key_is_400_decode_error() {
 #[tokio::test]
 async fn healthz() {
     let app = router(state());
-    let res = app
-        .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let (status, v) = call(&app, Method::GET, "/healthz", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v, json!({"status": "ok"}));
+}
+
+#[tokio::test]
+async fn redeem_confirm_cancel_over_http() {
+    let app = router(state());
+    let body =
+        json!({"order_id": "o-1", "cart": cart_json(), "customer": customer_json()}).to_string();
+    let (status, v) = call(&app, Method::POST, "/v1/redeem", Some(body.clone())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["status"], "reserved");
+    assert_eq!(v["order_id"], "o-1");
+    let (_, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer_json()}).to_string()),
+    )
+    .await;
     assert_eq!(
-        serde_json::from_slice::<Value>(&bytes).unwrap(),
-        json!({"status": "ok"})
+        v["result"], ev,
+        "redeem result equals evaluate for the same cart"
     );
+    // idempotent repeat
+    let (status, v2) = call(&app, Method::POST, "/v1/redeem", Some(body)).await;
+    assert_eq!((status, &v2), (StatusCode::OK, &v));
+    // get
+    let (status, g) = call(&app, Method::GET, "/v1/redemptions/o-1", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(g["status"], "reserved");
+    // confirm, then confirm again -> 409
+    let (status, c) = call(&app, Method::POST, "/v1/redemptions/o-1/confirm", None).await;
+    assert_eq!(
+        (status, c["status"].as_str()),
+        (StatusCode::OK, Some("confirmed"))
+    );
+    let (status, c) = call(&app, Method::POST, "/v1/redemptions/o-1/confirm", None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        c,
+        json!({"error": "InvalidTransition", "from": "confirmed", "to": "confirmed"})
+    );
+    // cancel
+    let (status, c) = call(&app, Method::POST, "/v1/redemptions/o-1/cancel", None).await;
+    assert_eq!(
+        (status, c["status"].as_str()),
+        (StatusCode::OK, Some("cancelled"))
+    );
+    // 404s
+    let (status, n) = call(&app, Method::POST, "/v1/redemptions/nope/confirm", None).await;
+    assert_eq!(
+        (status, n),
+        (StatusCode::NOT_FOUND, json!({"error": "NotFound"}))
+    );
+    let (status, _) = call(&app, Method::GET, "/v1/redemptions/nope", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // 422 stores nothing
+    let mut bad = cart_json();
+    bad["currency"] = json!("eur");
+    let (status, e) = call(
+        &app,
+        Method::POST,
+        "/v1/redeem",
+        Some(json!({"order_id": "o-2", "cart": bad, "customer": customer_json()}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(e["error"]["type"], "InvalidCurrency");
+    let (status, _) = call(&app, Method::GET, "/v1/redemptions/o-2", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn catalogue_routes() {
+    let app = router(state_with(
+        discount_adapters::InMemoryStore::new(discount_adapters::default_policy()),
+        discount_adapters::telemetry::Instruments::noop(),
+    ));
+    let (status, v) = call(&app, Method::GET, "/v1/promotions", None).await;
+    assert_eq!((status, v), (StatusCode::OK, json!([])));
+    // create group and promotion, then price
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/groups/g",
+        Some(json!({"group_id": "g", "priority": 0, "mode": {"type": "Stackable"}}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let promo = json!({"promotion_id": "P10", "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
+        "remaining_budget": null, "rounding": null, "rules": [], "action": {"type": "OrderPercentage", "bps": 1000}});
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P10",
+        Some(promo.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer_json()}).to_string()),
+    )
+    .await;
+    assert_eq!(ev["total_discount"]["amount"], 449);
+    // budget flows into pricing
+    let (status, b) = call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P10/budget",
+        Some(json!({"remaining": {"amount": 250, "currency": "EUR"}}).to_string()),
+    )
+    .await;
+    assert_eq!(
+        (status, b),
+        (
+            StatusCode::OK,
+            json!({"remaining": {"amount": 250, "currency": "EUR"}})
+        )
+    );
+    let (_, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer_json()}).to_string()),
+    )
+    .await;
+    assert_eq!(ev["applied"][0]["clamped_by"], json!({"type": "Budget"}));
+    let (status, p) = call(&app, Method::GET, "/v1/promotions/P10", None).await;
+    assert_eq!(
+        (status, &p["remaining_budget"]),
+        (StatusCode::OK, &json!({"amount": 250, "currency": "EUR"}))
+    );
+    let (status, _) = call(&app, Method::GET, "/v1/promotions/P10/budget", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/nope/budget",
+        Some(json!({"remaining": null}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // policy
+    let (status, pol) = call(&app, Method::GET, "/v1/policy", None).await;
+    assert_eq!(
+        (status, pol["rounding"].clone()),
+        (StatusCode::OK, json!({"type": "Down"}))
+    );
+    let (status, _) = call(&app, Method::PUT, "/v1/policy", Some(json!({"rounding": {"type": "HalfUp"}, "stacking": {"type": "Additive"}, "order_cap": {"amount": null, "bps": null}}).to_string())).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, pol) = call(&app, Method::GET, "/v1/policy", None).await;
+    assert_eq!(pol["stacking"], json!({"type": "Additive"}));
+    // unknown key -> 400
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/groups/h",
+        Some(
+            json!({"group_id": "h", "priority": 0, "mode": {"type": "Stackable"}, "x": 1})
+                .to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // archive hides
+    let (status, _) = call(&app, Method::DELETE, "/v1/promotions/P10", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, v) = call(&app, Method::GET, "/v1/promotions", None).await;
+    assert_eq!((status, v), (StatusCode::OK, json!([])));
+    let (_, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer_json()}).to_string()),
+    )
+    .await;
+    assert_eq!(ev["total_discount"]["amount"], 0);
+    let (status, _) = call(&app, Method::DELETE, "/v1/promotions/P10", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(&app, Method::DELETE, "/v1/groups/g", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = call(&app, Method::GET, "/v1/groups/g", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn coupon_and_rate_routes() {
+    let app = router(state_with(
+        discount_adapters::InMemoryStore::new(discount_adapters::default_policy()),
+        discount_adapters::telemetry::Instruments::noop(),
+    ));
+    call(
+        &app,
+        Method::PUT,
+        "/v1/groups/g",
+        Some(json!({"group_id": "g", "priority": 0, "mode": {"type": "Stackable"}}).to_string()),
+    )
+    .await;
+    let promo = json!({"promotion_id": "P1", "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
+        "remaining_budget": null, "rounding": null, "rules": [{"type": "RequiresCoupon"}],
+        "action": {"type": "OrderFixedAmount", "amount": {"amount": 1000, "currency": "USD"}}});
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P1",
+        Some(promo.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, c) = call(&app, Method::PUT, "/v1/coupons/WELCOME", Some(json!({"code": "WELCOME", "promotion_id": "P1", "starts_at": null, "ends_at": null, "customer_id": null}).to_string())).await;
+    assert_eq!(
+        (status, c["code"].as_str()),
+        (StatusCode::OK, Some("WELCOME"))
+    );
+    let (status, r) = call(
+        &app,
+        Method::PUT,
+        "/v1/exchange-rates/USD/EUR",
+        Some(json!({"numerator": 92, "denominator": 100}).to_string()),
+    )
+    .await;
+    assert_eq!((status, r["from"].as_str()), (StatusCode::OK, Some("USD")));
+    let (status, cs) = call(&app, Method::GET, "/v1/coupons", None).await;
+    assert_eq!((status, cs.as_array().unwrap().len()), (StatusCode::OK, 1));
+    let (status, rs) = call(&app, Method::GET, "/v1/exchange-rates", None).await;
+    assert_eq!((status, rs.as_array().unwrap().len()), (StatusCode::OK, 1));
+    // evaluate with the code: converted USD amount applies
+    let mut cart = cart_json();
+    cart["coupon_codes"] = json!(["WELCOME"]);
+    let (status, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart, "customer": customer_json()}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ev["applied"][0]["discount"]["amount"], 920);
+    // without the code: skipped
+    let (_, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer_json()}).to_string()),
+    )
+    .await;
+    assert_eq!(ev["skipped"][0]["reason"]["type"], "NotEligible");
+    let (status, _) = call(&app, Method::DELETE, "/v1/coupons/WELCOME", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = call(&app, Method::DELETE, "/v1/exchange-rates/USD/EUR", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = call(&app, Method::GET, "/v1/coupons/WELCOME", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

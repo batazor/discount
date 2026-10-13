@@ -73,6 +73,19 @@ Options considered:
   `roundDiv p num den ≤ num / den + 1`). Rust implements the same three cases with
   integer ops only.
 
+### Currency conversion
+
+- Promotion amounts (`action.amount`, `cap`, `remaining_budget`, `OrderTotalRange` bounds)
+  and `policy.order_cap.amount` may be in another currency than the cart's. `normalize`
+  converts them before pricing with an `ExchangeRate { from, to, numerator, denominator }`
+  from the input: `roundDiv Down (amount * numerator) denominator`. The rounding of a
+  conversion is always `Down`, whatever the policy: a conversion is not a discount
+  computation and must never round in the customer's favour by accident.
+- `numerator` and `denominator` are in `1 ..= MAX_RATE_PART = 10^12`, so
+  `amount * numerator ≤ 10^26` fits `i128`; the converted amount is checked against
+  `MAX_MINOR_UNITS` by `validate`, so after normalization every amount fits `i64`.
+- Only direct `(from, to)` pairs are used; a missing pair is `CurrencyMismatch`.
+
 ### Bounds
 
 - Every monetary amount on input (line subtotals, fixed discount amounts, caps,

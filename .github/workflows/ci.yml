@@ -12,6 +12,19 @@ jobs:
   verify:
     name: Lean proofs, Rust tests, differential run
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: discount
+          POSTGRES_PASSWORD: discount
+          POSTGRES_DB: discount
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U discount -d discount"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
 
@@ -44,8 +57,9 @@ jobs:
         run: cargo fmt --all --check
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: cargo test (unit tests, fixtures, differential run)
+      - name: cargo test (unit tests, fixtures, differential run, Postgres adapter)
         env:
           DRT_CASES: "5000"
           DISCOUNT_SPEC_BIN: ${{ github.workspace }}/spec/.lake/build/bin/discount-spec
+          DATABASE_URL: postgres://discount:discount@localhost:5432/discount
         run: cargo test --workspace

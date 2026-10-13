@@ -89,6 +89,39 @@ Spec-driven: ubiquitous language → Lean types and invariants → Rust core →
 testing. A new domain concept enters `docs/ubiquitous-language.md` first, then `spec/`,
 then `core/`. ADRs are living documents and are edited in place.
 
+## Running as a service
+
+`discount-server` exposes the engine over HTTP. Without `DATABASE_URL` it serves an
+in-memory catalogue seeded from `deploy/promotions.json`; with `DATABASE_URL` set the
+catalogue and the redemptions live in Postgres (migrations run at start-up).
+
+| Route | Purpose |
+|-------|---------|
+| `POST /v1/evaluate` `{cart, customer}` | dry run, returns a `PricingResult` |
+| `POST /v1/redeem` `{order_id, cart, customer}` | reserve: prices under a budget lock, stores the redemption, decrements budgets; idempotent by `order_id` |
+| `POST /v1/redemptions/{order_id}/confirm` / `cancel` | lifecycle `reserved → confirmed`, `reserved \| confirmed → cancelled` (cancel restores budgets) |
+| `GET /v1/redemptions/{order_id}` | stored redemption with its replayable input |
+| `GET\|PUT /v1/policy`, `/v1/groups[/{id}]`, `/v1/promotions[/{id}]`, `/v1/promotions/{id}/budget` | catalogue management |
+| `GET /v1/coupons`, `GET\|PUT\|DELETE /v1/coupons/{code}` | coupon codes that turn a promotion on (`RequiresCoupon`) |
+| `GET /v1/exchange-rates`, `PUT\|DELETE /v1/exchange-rates/{from}/{to}` | integer rates used to convert promotion amounts to the cart currency |
+
+Pricing errors are `422 {"error": PricingError}`, malformed bodies `400 {"decode_error"}`,
+unknown ids `404`, rejected transitions `409`. The behaviour is specified with scenarios in
+`openspec/specs/`.
+
+A cart carries `tags`, `attributes` and `coupon_codes`; the customer context carries
+`customer_id`, `completed_orders` and `uses`. The service resolves the codes to stored
+coupons and adds the customer's reserved and confirmed redemptions to `uses`, so rules
+such as `RequiresCoupon`, `MaxUsesPerCustomer`, `MaxCompletedOrders`, `TagsMatch`,
+`AttributeIn`, `AttributeDateWindow` and `OrderTotalRange` are evaluated by the verified
+core (see "Rule" in [docs/ubiquitous-language.md](docs/ubiquitous-language.md)).
+Promotion amounts in another currency are converted before pricing with the stored rates,
+rounding down; the proofs are stated on that normalized input.
+
+The adapter tests run against Postgres when `DATABASE_URL` is set (the compose stack
+provides one at `postgres://discount:discount@localhost:5432/discount`); otherwise the
+Postgres scenarios are skipped and the in-memory store is tested alone.
+
 ## Observability
 
 The service exports traces, metrics and logs over OpenTelemetry (OTLP) and ships Grafana

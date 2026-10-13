@@ -2,10 +2,12 @@
 //! `PricingResult`; nothing feeds back into pricing. Exporter failures are logged by the
 //! SDK and never reach the request handler.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use discount_app::EvaluateError;
-use discount_core::{ClampReason, PricingError, PricingResult, SkipReason};
+use discount_app::ports::{Redemption, RedemptionError, ReserveOutcome};
+use discount_core::{ClampReason, Money, PricingError, PricingResult, PromotionId, SkipReason};
 use opentelemetry::metrics::{Counter, Histogram, Meter, MeterProvider};
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{KeyValue, global};
@@ -15,6 +17,7 @@ use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::trace::SdkTracerProvider;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -30,6 +33,8 @@ pub const METRIC_APPLIED_AMOUNT: &str = "discount.applied.amount";
 pub const METRIC_SKIPPED: &str = "discount.skipped";
 pub const METRIC_AMOUNT: &str = "discount.amount";
 pub const METRIC_SHARE_BPS: &str = "discount.share.bps";
+pub const METRIC_REDEMPTIONS: &str = "discount.redemptions";
+pub const METRIC_BUDGET_REMAINING: &str = "discount.budget.remaining";
 
 /// Attribute keys.
 pub const ATTR_OUTCOME: &str = "outcome";
@@ -38,6 +43,7 @@ pub const ATTR_PROMOTION_ID: &str = "promotion_id";
 pub const ATTR_CLAMPED_BY: &str = "clamped_by";
 pub const ATTR_REASON: &str = "reason";
 pub const ATTR_CURRENCY: &str = "currency";
+pub const ATTR_ACTION: &str = "action";
 
 /// Span name and attribute keys.
 pub const SPAN_EVALUATE: &str = "discount.evaluate";
@@ -56,7 +62,10 @@ pub const SHARE_BPS_BOUNDARIES: [f64; 11] = [
 ];
 
 /// Every name a dashboard may rely on; `docs/ubiquitous-language.md` lists the same set.
-pub const VOCABULARY: [&str; 16] = [
+pub const VOCABULARY: [&str; 19] = [
+    METRIC_REDEMPTIONS,
+    METRIC_BUDGET_REMAINING,
+    ATTR_ACTION,
     METRIC_EVALUATIONS,
     METRIC_DURATION,
     METRIC_APPLIED,
@@ -88,6 +97,11 @@ pub fn error_type(e: &PricingError) -> &'static str {
         PricingError::DuplicateGroupId { .. } => "DuplicateGroupId",
         PricingError::DuplicatePromotionId { .. } => "DuplicatePromotionId",
         PricingError::UnknownGroup { .. } => "UnknownGroup",
+        PricingError::DuplicateCouponCode { .. } => "DuplicateCouponCode",
+        PricingError::InvalidCustomerContext { .. } => "InvalidCustomerContext",
+        PricingError::InvalidExchangeRate { .. } => "InvalidExchangeRate",
+        PricingError::DuplicateExchangeRate { .. } => "DuplicateExchangeRate",
+        PricingError::InvalidRule { .. } => "InvalidRule",
         PricingError::Overflow => "Overflow",
     }
 }
@@ -110,9 +124,16 @@ pub fn skip_reason(r: &SkipReason) -> &'static str {
     }
 }
 
+/// Latest known remaining budgets, read by the observable gauge. Refreshed by the service
+/// from the catalogue (`Instruments::set_budgets`).
+#[derive(Clone, Default)]
+pub struct BudgetCache(Arc<Mutex<Vec<(PromotionId, Money)>>>);
+
 /// The metric instruments of the service.
 #[derive(Clone)]
 pub struct Instruments {
+    budgets: BudgetCache,
+    redemptions: Counter<u64>,
     evaluations: Counter<u64>,
     duration: Histogram<f64>,
     applied: Counter<u64>,
@@ -124,7 +145,31 @@ pub struct Instruments {
 
 impl Instruments {
     pub fn new(meter: &Meter) -> Instruments {
+        let budgets = BudgetCache::default();
+        let cache = budgets.clone();
+        let _gauge = meter
+            .i64_observable_gauge(METRIC_BUDGET_REMAINING)
+            .with_description("Remaining budget per promotion")
+            .with_unit("{minor_unit}")
+            .with_callback(move |observer| {
+                for (pid, m) in cache.0.lock().unwrap().iter() {
+                    observer.observe(
+                        m.amount,
+                        &[
+                            KeyValue::new(ATTR_PROMOTION_ID, pid.clone()),
+                            KeyValue::new(ATTR_CURRENCY, m.currency.clone()),
+                        ],
+                    );
+                }
+            })
+            .build();
         Instruments {
+            budgets,
+            redemptions: meter
+                .u64_counter(METRIC_REDEMPTIONS)
+                .with_description("Redemption actions by outcome")
+                .with_unit("{redemption}")
+                .build(),
             evaluations: meter
                 .u64_counter(METRIC_EVALUATIONS)
                 .with_description("Evaluations by outcome")
@@ -164,6 +209,56 @@ impl Instruments {
         }
     }
 
+    /// Publish the latest remaining budgets for the gauge.
+    pub fn set_budgets(&self, budgets: Vec<(PromotionId, Money)>) {
+        *self.budgets.0.lock().unwrap() = budgets;
+    }
+
+    /// `discount.redemptions{action="reserve", outcome}` plus the evaluation telemetry of
+    /// the pricing that happened inside the reservation.
+    pub fn record_redemption(
+        &self,
+        action: &'static str,
+        outcome: &Result<ReserveOutcome, RedemptionError>,
+        elapsed: Duration,
+        currency: &str,
+    ) {
+        let (label, pricing): (&'static str, Option<Result<PricingResult, EvaluateError>>) =
+            match outcome {
+                Ok(ReserveOutcome::Reserved(r)) => ("ok", Some(Ok(r.result.clone()))),
+                Ok(ReserveOutcome::Idempotent(_)) => ("idempotent", None),
+                Err(RedemptionError::Pricing(e)) => {
+                    ("error", Some(Err(EvaluateError::Pricing(e.clone()))))
+                }
+                Err(_) => ("error", None),
+            };
+        self.redemptions.add(
+            1,
+            &[
+                KeyValue::new(ATTR_ACTION, action),
+                KeyValue::new(ATTR_OUTCOME, label),
+            ],
+        );
+        if let Some(p) = pricing {
+            self.record_evaluation(currency, elapsed, &p);
+        }
+    }
+
+    pub fn record_transition(
+        &self,
+        action: &'static str,
+        outcome: &Result<Redemption, RedemptionError>,
+    ) {
+        let label = if outcome.is_ok() { "ok" } else { "error" };
+        self.redemptions.add(
+            1,
+            &[
+                KeyValue::new(ATTR_ACTION, action),
+                KeyValue::new(ATTR_OUTCOME, label),
+            ],
+        );
+    }
+
     /// Instruments on a no-op meter, for tests and tools that do not export.
     pub fn noop() -> Instruments {
         Instruments::new(&opentelemetry::metrics::noop::NoopMeterProvider::new().meter("noop"))
@@ -178,6 +273,8 @@ impl Instruments {
         outcome: &Result<PricingResult, EvaluateError>,
     ) {
         let span = tracing::Span::current();
+        // Make the span the current OpenTelemetry context so the log record carries its ids.
+        let _cx = span.context().attach();
         match outcome {
             Ok(r) => {
                 let ok = [KeyValue::new(ATTR_OUTCOME, "ok")];
@@ -247,7 +344,7 @@ impl Instruments {
                 span.record(SPAN_ATTR_ERROR_TYPE, et);
                 tracing::warn!(outcome = "error", error_type = et, "evaluation rejected");
             }
-            Err(EvaluateError::Repository(e)) => {
+            Err(EvaluateError::Storage(e)) => {
                 let err = [
                     KeyValue::new(ATTR_OUTCOME, "error"),
                     KeyValue::new(ATTR_ERROR_TYPE, "Repository"),

@@ -11,7 +11,7 @@ namespace Discount
 /-! ## Plumbing -/
 
 theorem apply_ok {i : PricingInput} {r : PricingResult} (h : apply i = .ok r) :
-    validate i = .ok () ∧ r = compute i := by
+    validate i = .ok () ∧ r = compute (normalize i) := by
   unfold apply at h
   split at h
   · exact nomatch h
@@ -97,7 +97,7 @@ theorem line_total_bounds {i : PricingInput} {r : PricingResult} (h : apply i = 
   intro l hl
   rw [compute_lines] at hl
   obtain ⟨k, hk, rfl⟩ := List.mem_iff_getElem.mp hl
-  have hk' : k < (subsOf i).length := by
+  have hk' : k < (subsOf (normalize i)).length := by
     simp only [List.length_zipWith, List.length_zip] at hk; omega
   have hb := hinv.bounds k hk'
   rw [getD_eq_getElem _ _ (hinv.len ▸ hk'), getD_eq_getElem _ _ hk'] at hb
@@ -107,7 +107,7 @@ theorem line_total_bounds {i : PricingInput} {r : PricingResult} (h : apply i = 
 /-! ## 2. Discount never exceeds its cap -/
 
 theorem discount_le_cap {i : PricingInput} {r : PricingResult} (h : apply i = .ok r) :
-    ∀ a ∈ r.applied, ∀ p ∈ i.promotions, p.promotion_id = a.promotion_id →
+    ∀ a ∈ r.applied, ∀ p ∈ (normalize i).promotions, p.promotion_id = a.promotion_id →
       ∀ c, p.cap = some c → a.discount.amount ≤ c.amount := by
   obtain ⟨hval, rfl⟩ := apply_ok h
   have hv := validate_ok hval
@@ -115,12 +115,12 @@ theorem discount_le_cap {i : PricingInput} {r : PricingResult} (h : apply i = .o
   intro a ha p hp hid c hc
   rw [compute_applied] at ha
   obtain ⟨q, hq, hqid, hqcap, _⟩ := (hinv.applied_ok a ha).src
-  have hpq : p = q := eq_of_nodup_map hv.promotion_ids hp (toApply_sub i q hq) (by rw [hid, hqid])
+  have hpq : p = q := eq_of_nodup_map hv.promotion_ids hp (toApply_sub (normalize i) q hq) (by rw [hid, hqid])
   subst hpq
   exact hqcap c hc
 
 theorem discount_le_budget {i : PricingInput} {r : PricingResult} (h : apply i = .ok r) :
-    ∀ a ∈ r.applied, ∀ p ∈ i.promotions, p.promotion_id = a.promotion_id →
+    ∀ a ∈ r.applied, ∀ p ∈ (normalize i).promotions, p.promotion_id = a.promotion_id →
       ∀ b, p.remaining_budget = some b → a.discount.amount ≤ b.amount := by
   obtain ⟨hval, rfl⟩ := apply_ok h
   have hv := validate_ok hval
@@ -128,7 +128,7 @@ theorem discount_le_budget {i : PricingInput} {r : PricingResult} (h : apply i =
   intro a ha p hp hid b hb
   rw [compute_applied] at ha
   obtain ⟨q, hq, hqid, _, hqbud⟩ := (hinv.applied_ok a ha).src
-  have hpq : p = q := eq_of_nodup_map hv.promotion_ids hp (toApply_sub i q hq) (by rw [hid, hqid])
+  have hpq : p = q := eq_of_nodup_map hv.promotion_ids hp (toApply_sub (normalize i) q hq) (by rw [hid, hqid])
   subst hpq
   exact hqbud b hb
 
@@ -169,23 +169,27 @@ theorem orderCapInitial_bps {policy : PricingPolicy} {S : Int} {b : BasisPoints}
   | some m => exact ⟨_, rfl, Int.min_le_right _ _⟩
 
 theorem total_discount_le_order_cap {i : PricingInput} {r : PricingResult} (h : apply i = .ok r) :
-    (∀ m, i.policy.order_cap.amount = some m → r.total_discount.amount ≤ m.amount) ∧
+    (∀ m, (normalize i).policy.order_cap.amount = some m → r.total_discount.amount ≤ m.amount) ∧
     (∀ b, i.policy.order_cap.bps = some b →
       r.total_discount.amount ≤ roundDiv i.policy.rounding (r.original_subtotal.amount * b) BPS_SCALE) := by
   obtain ⟨hval, rfl⟩ := apply_ok h
   have hv := validate_ok hval
   have hinv := finalStep_inv hv
-  have hD : (compute i).total_discount.amount = sumDisc (finalStep i) := by
+  have hD : (compute (normalize i)).total_discount.amount = sumDisc (finalStep (normalize i)) := by
     rw [compute_total_discount, hinv.total]
   rw [hD, compute_original]
   constructor
   · intro m hm
-    obtain ⟨o0, ho0, hle⟩ := orderCapInitial_amount (S := (subsOf i).sum) hm
+    obtain ⟨o0, ho0, hle⟩ := orderCapInitial_amount (S := (subsOf (normalize i)).sum) hm
     have hrem := hinv.cap_some o0 ho0
     have := hinv.cap_nonneg _ hrem
     omega
   · intro b hb
-    obtain ⟨o0, ho0, hle⟩ := orderCapInitial_bps (S := (subsOf i).sum) hb
+    have hb' : (normalize i).policy.order_cap.bps = some b := hb
+    obtain ⟨o0, ho0, hle⟩ := orderCapInitial_bps (S := (subsOf (normalize i)).sum) hb'
+    have hr : roundDiv (normalize i).policy.rounding ((subsOf (normalize i)).sum * b) BPS_SCALE =
+        roundDiv i.policy.rounding ((subsOf (normalize i)).sum * b) BPS_SCALE := rfl
+    rw [hr] at hle
     have hrem := hinv.cap_some o0 ho0
     have := hinv.cap_nonneg _ hrem
     omega
@@ -197,7 +201,7 @@ theorem applied_length {i : PricingInput} : (finalStep i).applied.length = (toAp
   simpa using this
 
 theorem exclusive_alone {i : PricingInput} {r : PricingResult} (h : apply i = .ok r) :
-    ∀ a ∈ r.applied, ∀ p ∈ i.promotions, p.promotion_id = a.promotion_id → p.exclusive = true →
+    ∀ a ∈ r.applied, ∀ p ∈ (normalize i).promotions, p.promotion_id = a.promotion_id → p.exclusive = true →
       r.applied.length = 1 := by
   obtain ⟨hval, rfl⟩ := apply_ok h
   have hv := validate_ok hval
@@ -205,16 +209,16 @@ theorem exclusive_alone {i : PricingInput} {r : PricingResult} (h : apply i = .o
   intro a ha p hp hid hex
   rw [compute_applied] at ha ⊢
   obtain ⟨q, hq, hqid, _, _⟩ := (hinv.applied_ok a ha).src
-  have hpq : p = q := eq_of_nodup_map hv.promotion_ids hp (toApply_sub i q hq) (by rw [hid, hqid])
+  have hpq : p = q := eq_of_nodup_map hv.promotion_ids hp (toApply_sub (normalize i) q hq) (by rw [hid, hqid])
   have hexq : q.exclusive = true := hpq ▸ hex
   -- q is in the first-match output, hence in the exclusive output, which is then [q]
-  have hq1 : q ∈ (afterExclusive i).1 := selectFirstMatch_mem hq
-  have hex1 : (afterExclusive i).1 = [q] := selectExclusive_exclusive hq1 hexq
-  have hle : (toApplyOf i).length ≤ 1 := by
-    have := selectFirstMatch_length_le i.groups (afterExclusive i).1 []
+  have hq1 : q ∈ (afterExclusive (normalize i)).1 := selectFirstMatch_mem hq
+  have hex1 : (afterExclusive (normalize i)).1 = [q] := selectExclusive_exclusive hq1 hexq
+  have hle : (toApplyOf (normalize i)).length ≤ 1 := by
+    have := selectFirstMatch_length_le (normalize i).groups (afterExclusive (normalize i)).1 []
     rw [hex1] at this
     simpa [toApplyOf, afterFirstMatch, hex1] using this
-  have hpos : 0 < (finalStep i).applied.length := List.length_pos_of_mem ha
+  have hpos : 0 < (finalStep (normalize i)).applied.length := List.length_pos_of_mem ha
   rw [applied_length] at hpos ⊢
   omega
 
@@ -238,24 +242,24 @@ theorem filter_length_eq_of_map_eq {α β γ : Type} (as : List α) (qs : List �
 
 theorem first_match_at_most_one {i : PricingInput} {r : PricingResult} (h : apply i = .ok r) :
     ∀ gid, modeOf i.groups gid = .FirstMatch →
-      (r.applied.filter (appliedInGroup i gid)).length ≤ 1 := by
+      (r.applied.filter (appliedInGroup (normalize i) gid)).length ≤ 1 := by
   obtain ⟨hval, rfl⟩ := apply_ok h
   have hv := validate_ok hval
   intro gid hmode
   rw [compute_applied]
-  have hunf : appliedInGroup i gid = fun a => groupOfPid i gid a.promotion_id := by
+  have hunf : appliedInGroup (normalize i) gid = fun a => groupOfPid (normalize i) gid a.promotion_id := by
     funext a; rfl
   rw [hunf]
-  rw [filter_length_eq_of_map_eq (finalStep i).applied (toApplyOf i)
-    (fun a => a.promotion_id) (fun q => q.promotion_id) (groupOfPid i gid) (finalStep_ids i)]
-  have h2 : (toApplyOf i).filter (fun q => groupOfPid i gid q.promotion_id) =
-      (toApplyOf i).filter (fun q => q.group_id == gid) := by
+  rw [filter_length_eq_of_map_eq (finalStep (normalize i)).applied (toApplyOf (normalize i))
+    (fun a => a.promotion_id) (fun q => q.promotion_id) (groupOfPid (normalize i) gid) (finalStep_ids (normalize i))]
+  have h2 : (toApplyOf (normalize i)).filter (fun q => groupOfPid (normalize i) gid q.promotion_id) =
+      (toApplyOf (normalize i)).filter (fun q => q.group_id == gid) := by
     apply List.filter_congr
     intro q hq
     unfold groupOfPid
-    rw [find?_eq_some_of_nodup hv.promotion_ids (toApply_sub i q hq)]
+    rw [find?_eq_some_of_nodup hv.promotion_ids (toApply_sub (normalize i) q hq)]
   rw [h2]
-  exact selectFirstMatch_at_most_one_nil i.groups gid hmode _
+  exact selectFirstMatch_at_most_one_nil (normalize i).groups gid hmode _
 
 /-! ## 5. Allocation is conservative -/
 
@@ -263,7 +267,7 @@ theorem allocation_conserves {i : PricingInput} {r : PricingResult} (h : apply i
     ∀ a ∈ r.applied,
       (a.allocation.map (fun x => x.amount.amount)).sum = a.discount.amount ∧
       a.allocation.length = r.lines.length ∧
-      a.allocation.map (fun x => x.line_id) = i.cart.lines.map (fun l => l.line_id) := by
+      a.allocation.map (fun x => x.line_id) = (normalize i).cart.lines.map (fun l => l.line_id) := by
   obtain ⟨hval, rfl⟩ := apply_ok h
   have hv := validate_ok hval
   have hinv := finalStep_inv hv
@@ -302,27 +306,36 @@ theorem line_discount_sum {i : PricingInput} {r : PricingResult} (h : apply i = 
   have hv := validate_ok hval
   have hinv := finalStep_inv hv
   intro k hk
-  have hk' : k < (subsOf i).length := by rw [← compute_lines_length hv]; exact hk
+  have hk' : k < (subsOf (normalize i)).length := by rw [← compute_lines_length hv]; exact hk
   rw [compute_applied, hinv.line_disc k hk', compute_lines]
-  exact zipLines_discount_getD _ _ _ _ k (subsOf_length i).symm hinv.len.symm
+  exact zipLines_discount_getD _ _ _ _ k (subsOf_length (normalize i)).symm hinv.len.symm
     (by rw [← subsOf_length]; exact hk')
 
 /-! ## 7. Eligibility depends only on its inputs -/
 
-theorem ruleHolds_congr (r : Rule) (i j : PricingInput) (h : i.now = j.now) :
-    ruleHolds r i = ruleHolds r j := by
-  cases r; simp [ruleHolds, h]
+theorem couponValid_congr (i j : PricingInput) (h1 : i.now = j.now) (h2 : i.cart = j.cart)
+    (h3 : i.customer = j.customer) (pid : PromotionId) (c : Coupon) :
+    couponValid i pid c = couponValid j pid c := by
+  simp [couponValid, h1, h2, h3]
 
-theorem firstFailingRule_congr (rs : List Rule) (i j : PricingInput) (h : i.now = j.now) (k : Nat) :
-    firstFailingRule rs i k = firstFailingRule rs j k := by
+theorem ruleHolds_congr (r : Rule) (p : Promotion) (i j : PricingInput) (h1 : i.now = j.now)
+    (h2 : i.cart = j.cart) (h3 : i.customer = j.customer) (h4 : i.coupons = j.coupons) :
+    ruleHolds r p i = ruleHolds r p j := by
+  have hc : couponValid i p.promotion_id = couponValid j p.promotion_id := by
+    funext c; exact couponValid_congr i j h1 h2 h3 p.promotion_id c
+  cases r <;> simp only [ruleHolds, h1, h2, h3, h4, hc]
+
+theorem firstFailingRule_congr (rs : List Rule) (p : Promotion) (i j : PricingInput) (h1 : i.now = j.now)
+    (h2 : i.cart = j.cart) (h3 : i.customer = j.customer) (h4 : i.coupons = j.coupons) (k : Nat) :
+    firstFailingRule rs p i k = firstFailingRule rs p j k := by
   induction rs generalizing k with
   | nil => rfl
-  | cons r rs ih => simp [firstFailingRule, ruleHolds_congr r i j h, ih]
+  | cons r rs ih => simp [firstFailingRule, ruleHolds_congr r p i j h1 h2 h3 h4, ih]
 
-/-- In the first iteration eligibility reads nothing but `now` (and, trivially, the cart and
-customer context, which no rule inspects yet). -/
-theorem eligible_depends_on_input (p : Promotion) (i j : PricingInput) (h : i.now = j.now) :
+/-- Eligibility reads nothing but `now`, the cart, the customer context and the coupons. -/
+theorem eligible_depends_on_input (p : Promotion) (i j : PricingInput) (h1 : i.now = j.now)
+    (h2 : i.cart = j.cart) (h3 : i.customer = j.customer) (h4 : i.coupons = j.coupons) :
     eligible p i = eligible p j := by
-  simp [eligible, firstFailingRule_congr p.rules i j h]
+  simp [eligible, firstFailingRule_congr p.rules p i j h1 h2 h3 h4]
 
 end Discount

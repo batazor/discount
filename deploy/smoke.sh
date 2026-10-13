@@ -13,15 +13,40 @@ pass() { echo "ok:   $*"; }
 
 curl -sf "$SERVICE/healthz" >/dev/null || fail "service not healthy at $SERVICE"
 
+# Seed the catalogue (idempotent PUTs): one group, a 10 % promotion with a budget, a
+# capped fixed-amount promotion. With Postgres the catalogue starts empty.
+put() { curl -s -o /dev/null -w "%{http_code}" -H 'Content-Type: application/json' -X PUT "$SERVICE$1" -d "$2"; }
+[ "$(put /v1/groups/g '{"group_id":"g","priority":0,"mode":{"type":"Stackable"}}')" = "200" ] || fail "put group"
+[ "$(put /v1/promotions/P1 '{"promotion_id":"P1","group_id":"g","priority":10,"exclusive":false,"cap":null,"remaining_budget":null,"rounding":null,"rules":[],"action":{"type":"OrderPercentage","bps":1000}}')" = "200" ] || fail "put P1"
+[ "$(put /v1/promotions/P2 '{"promotion_id":"P2","group_id":"g","priority":5,"exclusive":false,"cap":{"amount":300,"currency":"EUR"},"remaining_budget":null,"rounding":null,"rules":[],"action":{"type":"OrderFixedAmount","amount":{"amount":500,"currency":"EUR"}}}')" = "200" ] || fail "put P2"
+B=$(curl -s "$SERVICE/v1/promotions/P1/budget")
+if [ "$B" = '{"remaining":null}' ]; then
+  [ "$(put /v1/promotions/P1/budget '{"remaining":{"amount":1000000,"currency":"EUR"}}')" = "200" ] || fail "put budget"
+fi
+pass "catalogue seeded (g, P1 10% with budget, P2 fixed 500 capped at 300)"
+
 # Fixture carts: the sample cart (priced to 749) and an invalid one (lowercase currency).
 post() { curl -s -o /dev/null -w "%{http_code}" -H 'Content-Type: application/json' -X POST "$SERVICE/v1/evaluate" -d "$1"; }
-CART='{"cart":{"currency":"EUR","lines":[{"line_id":"L1","unit_price":{"amount":1999,"currency":"EUR"},"quantity":2},{"line_id":"L2","unit_price":{"amount":501,"currency":"EUR"},"quantity":1}]},"customer":{}}'
-BAD='{"cart":{"currency":"eur","lines":[]},"customer":{}}'
+CUSTOMER='{"customer_id":"smoke","completed_orders":0,"uses":[]}'
+CART='{"cart":{"currency":"EUR","lines":[{"line_id":"L1","unit_price":{"amount":1999,"currency":"EUR"},"quantity":2},{"line_id":"L2","unit_price":{"amount":501,"currency":"EUR"},"quantity":1}],"tags":["#ios"],"attributes":[],"coupon_codes":[]},"customer":'"$CUSTOMER"'}'
+BAD='{"cart":{"currency":"eur","lines":[],"tags":[],"attributes":[],"coupon_codes":[]},"customer":'"$CUSTOMER"'}'
 for _ in 1 2 3 4 5; do
   [ "$(post "$CART")" = "200" ] || fail "evaluate did not return 200"
 done
 [ "$(post "$BAD")" = "422" ] || fail "invalid cart did not return 422"
 pass "posted 5 valid and 1 invalid evaluation"
+
+# Redemption round trip: reserve, idempotent repeat, confirm, cancel.
+ORDER="smoke-$(date +%s)"
+REDEEM="{\"order_id\":\"$ORDER\",$(echo "$CART" | cut -c2-)"
+R1=$(curl -s -H 'Content-Type: application/json' -X POST "$SERVICE/v1/redeem" -d "$REDEEM")
+echo "$R1" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["status"]=="reserved", d; assert d["result"]["total_discount"]["amount"]>=0' || fail "redeem did not reserve: $R1"
+R2=$(curl -s -H 'Content-Type: application/json' -X POST "$SERVICE/v1/redeem" -d "$REDEEM")
+[ "$R1" = "$R2" ] || fail "repeated redeem is not idempotent"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$SERVICE/v1/redemptions/$ORDER/confirm")" = "200" ] || fail "confirm failed"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$SERVICE/v1/redemptions/$ORDER/confirm")" = "409" ] || fail "second confirm should be 409"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$SERVICE/v1/redemptions/$ORDER/cancel")" = "200" ] || fail "cancel failed"
+pass "redeem -> idempotent repeat -> confirm -> 409 -> cancel for order $ORDER"
 
 # Give the periodic exporters time to flush (metrics export every 60s by default is too
 # slow for a smoke; the service sets OTEL_METRIC_EXPORT_INTERVAL=5000).

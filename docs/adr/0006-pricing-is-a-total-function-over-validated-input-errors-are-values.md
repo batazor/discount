@@ -31,7 +31,9 @@ Options considered:
    Both are total: every input yields exactly one of the two.
 2. Validation is a separate, named step inside `apply` that runs before any arithmetic
    and reports the first error found in a fixed check order, so both implementations
-   report the same error for the same input.
+   report the same error for the same input. It is followed by `normalize` (ADR 3), which
+   converts foreign-currency amounts; the pipeline and the theorems run on the normalized
+   input, and `validate = ok` guarantees `Valid (normalize input)`.
 3. `PricingError` variants in the first iteration. Locations are reported by list
    index or by a `field` path, never by id, so that errors about duplicate ids are
    unambiguous:
@@ -46,8 +48,13 @@ Options considered:
    - `InvalidBasisPoints { field }`: outside `0 ..= 10_000`.
    - `InvalidQuantity { line_index }`: outside `1 ..= MAX_QUANTITY`.
    - `DuplicateLineId { line_id }`, `DuplicateGroupId { group_id }`,
-     `DuplicatePromotionId { promotion_id }`.
+     `DuplicatePromotionId { promotion_id }`, `DuplicateCouponCode { code }` (in the cart's
+     codes or in the coupon snapshots), `DuplicateExchangeRate { from, to }`.
    - `UnknownGroup { promotion_index }`: the promotion's `group_id` is not in `groups` (ADR 4).
+   - `InvalidCustomerContext { field }`: negative `completed_orders` or use count, or a
+     promotion listed twice in `customer.uses`.
+   - `InvalidExchangeRate { field }`: numerator or denominator outside `1 ..= MAX_RATE_PART`.
+   - `InvalidRule { field }`: negative `max` in `MaxCompletedOrders` / `MaxUsesPerCustomer`.
    - `Overflow`: reserved for checked arithmetic in Rust; unreachable for valid input
      (ADR 3). Lean never produces it.
    An empty cart is not an error: it prices to zero with no discounts. The exact check

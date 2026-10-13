@@ -1,11 +1,13 @@
-//! The `telemetry` spec on in-memory exporters: span attributes, metrics, and the trace id
-//! on the log record.
+//! The `telemetry` spec on in-memory exporters: span attributes, metrics, the trace id on
+//! the log record, redemption counters and the budget gauge.
 
-use std::sync::Arc;
+mod common;
 
+use common::*;
+use discount_adapters::default_policy;
 use discount_adapters::http::{AppState, EvaluateRequest, evaluate_with_telemetry};
 use discount_adapters::telemetry::{self, Instruments};
-use discount_adapters::{FixedClock, InMemoryPromotionRepository, NoopEventPublisher};
+use discount_app::ports::{Redemption, RedemptionError, RedemptionStatus, ReserveOutcome};
 use discount_core::*;
 use opentelemetry::metrics::MeterProvider;
 use opentelemetry::trace::TracerProvider;
@@ -14,6 +16,7 @@ use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLoggerProvider};
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+use std::sync::Arc;
 use tracing_subscriber::layer::SubscriberExt;
 
 struct Harness {
@@ -40,25 +43,10 @@ fn harness() -> Harness {
     let logger_provider = SdkLoggerProvider::builder()
         .with_simple_exporter(logs.clone())
         .build();
-    let repo = InMemoryPromotionRepository::from_json_file(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../deploy/promotions.json"
-    ))
-    .unwrap();
-    let state = Arc::new(AppState {
-        repository: Arc::new(repo),
-        clock: Arc::new(FixedClock(1_760_227_200)),
-        events: Arc::new(NoopEventPublisher),
-        policy: PricingPolicy {
-            rounding: RoundingPolicy::Down,
-            stacking: StackingPolicy::Sequential,
-            order_cap: OrderCap {
-                amount: None,
-                bps: None,
-            },
-        },
-        instruments: Instruments::new(&meter_provider.meter("test")),
-    });
+    let state = state_with(
+        memory_store(),
+        Instruments::new(&meter_provider.meter("test")),
+    );
     Harness {
         spans,
         metrics,
@@ -70,29 +58,7 @@ fn harness() -> Harness {
     }
 }
 
-fn eur(a: i64) -> Money {
-    Money::new(a, "EUR")
-}
-
-fn sample_cart() -> CartSnapshot {
-    CartSnapshot {
-        currency: "EUR".into(),
-        lines: vec![
-            CartLine {
-                line_id: "L1".into(),
-                unit_price: eur(1999),
-                quantity: 2,
-            },
-            CartLine {
-                line_id: "L2".into(),
-                unit_price: eur(501),
-                quantity: 1,
-            },
-        ],
-    }
-}
-
-/// Run `f` with a tracing subscriber wired to the harness exporters.
+/// Run `f` with a tracing subscriber wired to the harness exporters, then flush.
 fn with_subscriber(h: &Harness, f: impl FnOnce()) {
     let tracer = h.tracer_provider.tracer("test");
     let subscriber = tracing_subscriber::registry()
@@ -104,13 +70,27 @@ fn with_subscriber(h: &Harness, f: impl FnOnce()) {
     h.meter_provider.force_flush().unwrap();
 }
 
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
 fn attr<'a>(kvs: impl Iterator<Item = &'a opentelemetry::KeyValue>, key: &str) -> Option<String> {
     kvs.filter(|kv| kv.key.as_str() == key)
         .map(|kv| kv.value.to_string())
         .next()
 }
 
-/// Sum data points of a counter: (attributes as "k=v" sorted, value).
+fn sorted_attrs<'a>(kvs: impl Iterator<Item = &'a opentelemetry::KeyValue>) -> Vec<String> {
+    let mut attrs: Vec<String> = kvs
+        .map(|kv| format!("{}={}", kv.key.as_str(), kv.value))
+        .collect();
+    attrs.sort();
+    attrs
+}
+
 fn counter_points(h: &Harness, name: &str) -> Vec<(Vec<String>, u64)> {
     let mut out = Vec::new();
     for rm in h.metrics.get_finished_metrics().unwrap() {
@@ -118,12 +98,24 @@ fn counter_points(h: &Harness, name: &str) -> Vec<(Vec<String>, u64)> {
             for m in sm.metrics().filter(|m| m.name() == name) {
                 if let AggregatedMetrics::U64(MetricData::Sum(sum)) = m.data() {
                     for dp in sum.data_points() {
-                        let mut attrs: Vec<String> = dp
-                            .attributes()
-                            .map(|kv| format!("{}={}", kv.key.as_str(), kv.value))
-                            .collect();
-                        attrs.sort();
-                        out.push((attrs, dp.value()));
+                        out.push((sorted_attrs(dp.attributes()), dp.value()));
+                    }
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn gauge_points(h: &Harness, name: &str) -> Vec<(Vec<String>, i64)> {
+    let mut out = Vec::new();
+    for rm in h.metrics.get_finished_metrics().unwrap() {
+        for sm in rm.scope_metrics() {
+            for m in sm.metrics().filter(|m| m.name() == name) {
+                if let AggregatedMetrics::I64(MetricData::Gauge(g)) = m.data() {
+                    for dp in g.data_points() {
+                        out.push((sorted_attrs(dp.attributes()), dp.value()));
                     }
                 }
             }
@@ -152,26 +144,31 @@ fn histogram_count(h: &Harness, name: &str) -> u64 {
     total
 }
 
+fn s(v: &[&str]) -> Vec<String> {
+    v.iter().map(|x| x.to_string()).collect()
+}
+
 #[test]
 fn span_metrics_and_log_for_a_priced_cart() {
     let h = harness();
+    let rt = runtime();
     with_subscriber(&h, || {
-        let r = evaluate_with_telemetry(
-            &h.state,
-            EvaluateRequest {
-                cart: sample_cart(),
-                customer: CustomerContext {},
-            },
-        )
-        .unwrap();
+        let r = rt
+            .block_on(evaluate_with_telemetry(
+                &h.state,
+                EvaluateRequest {
+                    cart: sample_cart(),
+                    customer: CustomerContext::default(),
+                },
+            ))
+            .unwrap();
         assert_eq!(r.total_discount.amount, 749);
     });
 
-    // Span `discount.evaluate` with the spec's attributes.
     let spans = h.spans.get_finished_spans().unwrap();
     let span = spans
         .iter()
-        .find(|s| s.name == telemetry::SPAN_EVALUATE)
+        .find(|sp| sp.name == telemetry::SPAN_EVALUATE)
         .expect("discount.evaluate span");
     let a = |k: &str| attr(span.attributes.iter(), k);
     assert_eq!(a("discount.currency").as_deref(), Some("EUR"));
@@ -183,39 +180,32 @@ fn span_metrics_and_log_for_a_priced_cart() {
     assert_eq!(a("discount.total_discount").as_deref(), Some("749"));
     assert_eq!(a("discount.error_type"), None);
 
-    // Metrics: counters with the documented attributes.
-    let ev = counter_points(&h, telemetry::METRIC_EVALUATIONS);
-    assert_eq!(ev, vec![(vec!["outcome=ok".to_string()], 1)]);
-    let mut applied = counter_points(&h, telemetry::METRIC_APPLIED);
-    applied.sort();
     assert_eq!(
-        applied,
+        counter_points(&h, telemetry::METRIC_EVALUATIONS),
+        vec![(s(&["outcome=ok"]), 1)]
+    );
+    assert_eq!(
+        counter_points(&h, telemetry::METRIC_APPLIED),
         vec![
-            (
-                vec!["clamped_by=Cap".to_string(), "promotion_id=P2".to_string()],
-                1
-            ),
-            (
-                vec!["clamped_by=none".to_string(), "promotion_id=P1".to_string()],
-                1
-            ),
+            (s(&["clamped_by=Cap", "promotion_id=P2"]), 1),
+            (s(&["clamped_by=none", "promotion_id=P1"]), 1),
+        ]
+    );
+    assert_eq!(
+        counter_points(&h, telemetry::METRIC_APPLIED_AMOUNT),
+        vec![
+            (s(&["currency=EUR", "promotion_id=P1"]), 449),
+            (s(&["currency=EUR", "promotion_id=P2"]), 300),
         ]
     );
     assert_eq!(
         counter_points(&h, telemetry::METRIC_SKIPPED),
-        vec![(
-            vec![
-                "promotion_id=P3".to_string(),
-                "reason=NotEligible".to_string()
-            ],
-            1
-        )]
+        vec![(s(&["promotion_id=P3", "reason=NotEligible"]), 1)]
     );
     assert_eq!(histogram_count(&h, telemetry::METRIC_DURATION), 1);
     assert_eq!(histogram_count(&h, telemetry::METRIC_AMOUNT), 1);
     assert_eq!(histogram_count(&h, telemetry::METRIC_SHARE_BPS), 1);
 
-    // Log record correlated with the span.
     let logs = h.logs.get_emitted_logs().unwrap();
     let log = logs
         .iter()
@@ -232,38 +222,91 @@ fn span_metrics_and_log_for_a_priced_cart() {
 #[test]
 fn validation_error_is_counted_and_nothing_applied() {
     let h = harness();
+    let rt = runtime();
     with_subscriber(&h, || {
         let mut cart = sample_cart();
         cart.lines[1].line_id = "L1".into();
-        let r = evaluate_with_telemetry(
+        let r = rt.block_on(evaluate_with_telemetry(
             &h.state,
             EvaluateRequest {
                 cart,
-                customer: CustomerContext {},
+                customer: CustomerContext::default(),
             },
-        );
+        ));
         assert!(r.is_err());
     });
-    let mut ev = counter_points(&h, telemetry::METRIC_EVALUATIONS);
-    ev.sort();
     assert_eq!(
-        ev,
-        vec![(
-            vec![
-                "error_type=DuplicateLineId".to_string(),
-                "outcome=error".to_string()
-            ],
-            1
-        )]
+        counter_points(&h, telemetry::METRIC_EVALUATIONS),
+        vec![(s(&["error_type=DuplicateLineId", "outcome=error"]), 1)]
     );
     assert!(counter_points(&h, telemetry::METRIC_APPLIED).is_empty());
     let spans = h.spans.get_finished_spans().unwrap();
     let span = spans
         .iter()
-        .find(|s| s.name == telemetry::SPAN_EVALUATE)
+        .find(|sp| sp.name == telemetry::SPAN_EVALUATE)
         .unwrap();
     assert_eq!(
         attr(span.attributes.iter(), "discount.error_type").as_deref(),
         Some("DuplicateLineId")
+    );
+}
+
+#[test]
+fn redemption_counter_and_budget_gauge() {
+    let h = harness();
+    let input = PricingInput {
+        now: 0,
+        policy: default_policy(),
+        customer: CustomerContext::default(),
+        cart: sample_cart(),
+        coupons: vec![],
+        exchange_rates: vec![],
+        groups: vec![],
+        promotions: vec![],
+    };
+    let result = apply(&input).unwrap();
+    let redemption = Redemption {
+        order_id: "o".into(),
+        customer_id: None,
+        status: RedemptionStatus::Reserved,
+        input,
+        result,
+        created_at: 0,
+        updated_at: 0,
+    };
+    let reserved: Result<ReserveOutcome, RedemptionError> =
+        Ok(ReserveOutcome::Reserved(redemption.clone()));
+    let idem: Result<ReserveOutcome, RedemptionError> = Ok(ReserveOutcome::Idempotent(redemption));
+    with_subscriber(&h, || {
+        h.state.instruments.record_redemption(
+            "reserve",
+            &reserved,
+            std::time::Duration::from_millis(1),
+            "EUR",
+        );
+        h.state.instruments.record_redemption(
+            "reserve",
+            &idem,
+            std::time::Duration::from_millis(1),
+            "EUR",
+        );
+        h.state
+            .instruments
+            .set_budgets(vec![("P1".to_string(), Money::new(700, "EUR"))]);
+    });
+    assert_eq!(
+        counter_points(&h, telemetry::METRIC_REDEMPTIONS),
+        vec![
+            (s(&["action=reserve", "outcome=idempotent"]), 1),
+            (s(&["action=reserve", "outcome=ok"]), 1),
+        ]
+    );
+    assert_eq!(
+        counter_points(&h, telemetry::METRIC_EVALUATIONS),
+        vec![(s(&["outcome=ok"]), 1)]
+    );
+    assert_eq!(
+        gauge_points(&h, telemetry::METRIC_BUDGET_REMAINING),
+        vec![(s(&["currency=EUR", "promotion_id=P1"]), 700)]
     );
 }

@@ -116,21 +116,63 @@ instance : FromJson CartLine where
     pure { line_id := ← getField j "line_id", unit_price := ← getField j "unit_price",
            quantity := ← getField j "quantity" }
 
+instance : ToJson Attribute where
+  toJson a := Json.mkObj [("key", toJson a.key), ("value", toJson a.value)]
+
+instance : FromJson Attribute where
+  fromJson? j := do
+    checkKeys j ["key", "value"]
+    pure { key := ← getField j "key", value := ← getField j "value" }
+
 instance : ToJson CartSnapshot where
-  toJson c := Json.mkObj [("currency", toJson c.currency), ("lines", toJson c.lines)]
+  toJson c := Json.mkObj [("currency", toJson c.currency), ("lines", toJson c.lines),
+    ("tags", toJson c.tags), ("attributes", toJson c.attributes), ("coupon_codes", toJson c.coupon_codes)]
 
 instance : FromJson CartSnapshot where
   fromJson? j := do
-    checkKeys j ["currency", "lines"]
-    pure { currency := ← getField j "currency", lines := ← getField j "lines" }
+    checkKeys j ["currency", "lines", "tags", "attributes", "coupon_codes"]
+    pure { currency := ← getField j "currency", lines := ← getField j "lines",
+           tags := ← getField j "tags", attributes := ← getField j "attributes",
+           coupon_codes := ← getField j "coupon_codes" }
+
+instance : ToJson PromotionUse where
+  toJson u := Json.mkObj [("promotion_id", toJson u.promotion_id), ("count", toJson u.count)]
+
+instance : FromJson PromotionUse where
+  fromJson? j := do
+    checkKeys j ["promotion_id", "count"]
+    pure { promotion_id := ← getField j "promotion_id", count := ← getField j "count" }
 
 instance : ToJson CustomerContext where
-  toJson _ := Json.mkObj []
+  toJson c := Json.mkObj [("customer_id", optJson c.customer_id),
+    ("completed_orders", toJson c.completed_orders), ("uses", toJson c.uses)]
 
 instance : FromJson CustomerContext where
   fromJson? j := do
-    checkKeys j []
-    pure {}
+    checkKeys j ["customer_id", "completed_orders", "uses"]
+    pure { customer_id := ← getOpt j "customer_id", completed_orders := ← getField j "completed_orders",
+           uses := ← getField j "uses" }
+
+instance : ToJson Coupon where
+  toJson c := Json.mkObj [("code", toJson c.code), ("promotion_id", toJson c.promotion_id),
+    ("starts_at", optJson c.starts_at), ("ends_at", optJson c.ends_at), ("customer_id", optJson c.customer_id)]
+
+instance : FromJson Coupon where
+  fromJson? j := do
+    checkKeys j ["code", "promotion_id", "starts_at", "ends_at", "customer_id"]
+    pure { code := ← getField j "code", promotion_id := ← getField j "promotion_id",
+           starts_at := ← getOpt j "starts_at", ends_at := ← getOpt j "ends_at",
+           customer_id := ← getOpt j "customer_id" }
+
+instance : ToJson ExchangeRate where
+  toJson r := Json.mkObj [("from", toJson r.«from»), ("to", toJson r.to),
+    ("numerator", toJson r.numerator), ("denominator", toJson r.denominator)]
+
+instance : FromJson ExchangeRate where
+  fromJson? j := do
+    checkKeys j ["from", "to", "numerator", "denominator"]
+    pure { «from» := ← getField j "from", to := ← getField j "to",
+           numerator := ← getField j "numerator", denominator := ← getField j "denominator" }
 
 -- Groups -------------------------------------------------------------------
 
@@ -162,6 +204,14 @@ instance : FromJson StackingGroup where
 instance : ToJson Rule where
   toJson
     | .DateWindow s e => variant "DateWindow" [("starts_at", optJson s), ("ends_at", optJson e)]
+    | .OrderTotalRange mn mx => variant "OrderTotalRange" [("min", optJson mn), ("max", optJson mx)]
+    | .TagsMatch a b c => variant "TagsMatch" [("all", toJson a), ("any", toJson b), ("none", toJson c)]
+    | .AttributeIn k vs => variant "AttributeIn" [("key", toJson k), ("values", toJson vs)]
+    | .AttributeDateWindow k s e =>
+        variant "AttributeDateWindow" [("key", toJson k), ("starts_at", optJson s), ("ends_at", optJson e)]
+    | .MaxCompletedOrders m => variant "MaxCompletedOrders" [("max", toJson m)]
+    | .MaxUsesPerCustomer m => variant "MaxUsesPerCustomer" [("max", toJson m)]
+    | .RequiresCoupon => variant "RequiresCoupon"
 
 instance : FromJson Rule where
   fromJson? j := do
@@ -169,6 +219,27 @@ instance : FromJson Rule where
     | "DateWindow" =>
         checkKeys j ["type", "starts_at", "ends_at"]
         pure (.DateWindow (← getOpt j "starts_at") (← getOpt j "ends_at"))
+    | "OrderTotalRange" =>
+        checkKeys j ["type", "min", "max"]
+        pure (.OrderTotalRange (← getOpt j "min") (← getOpt j "max"))
+    | "TagsMatch" =>
+        checkKeys j ["type", "all", "any", "none"]
+        pure (.TagsMatch (← getField j "all") (← getField j "any") (← getField j "none"))
+    | "AttributeIn" =>
+        checkKeys j ["type", "key", "values"]
+        pure (.AttributeIn (← getField j "key") (← getField j "values"))
+    | "AttributeDateWindow" =>
+        checkKeys j ["type", "key", "starts_at", "ends_at"]
+        pure (.AttributeDateWindow (← getField j "key") (← getOpt j "starts_at") (← getOpt j "ends_at"))
+    | "MaxCompletedOrders" =>
+        checkKeys j ["type", "max"]
+        pure (.MaxCompletedOrders (← getField j "max"))
+    | "MaxUsesPerCustomer" =>
+        checkKeys j ["type", "max"]
+        pure (.MaxUsesPerCustomer (← getField j "max"))
+    | "RequiresCoupon" =>
+        checkKeys j ["type"]
+        pure .RequiresCoupon
     | v => throw s!"unknown Rule '{v}'"
 
 instance : ToJson Action where
@@ -206,14 +277,16 @@ instance : FromJson Promotion where
 
 instance : ToJson PricingInput where
   toJson i := Json.mkObj [("now", toJson i.now), ("policy", toJson i.policy),
-    ("customer", toJson i.customer), ("cart", toJson i.cart), ("groups", toJson i.groups),
+    ("customer", toJson i.customer), ("cart", toJson i.cart), ("coupons", toJson i.coupons),
+    ("exchange_rates", toJson i.exchange_rates), ("groups", toJson i.groups),
     ("promotions", toJson i.promotions)]
 
 instance : FromJson PricingInput where
   fromJson? j := do
-    checkKeys j ["now", "policy", "customer", "cart", "groups", "promotions"]
+    checkKeys j ["now", "policy", "customer", "cart", "coupons", "exchange_rates", "groups", "promotions"]
     pure { now := ← getField j "now", policy := ← getField j "policy",
            customer := ← getField j "customer", cart := ← getField j "cart",
+           coupons := ← getField j "coupons", exchange_rates := ← getField j "exchange_rates",
            groups := ← getField j "groups", promotions := ← getField j "promotions" }
 
 -- Errors -------------------------------------------------------------------
@@ -230,6 +303,11 @@ instance : ToJson PricingError where
     | .DuplicateGroupId x => variant "DuplicateGroupId" [("group_id", toJson x)]
     | .DuplicatePromotionId x => variant "DuplicatePromotionId" [("promotion_id", toJson x)]
     | .UnknownGroup i => variant "UnknownGroup" [("promotion_index", toJson i)]
+    | .DuplicateCouponCode c => variant "DuplicateCouponCode" [("code", toJson c)]
+    | .InvalidCustomerContext f => variant "InvalidCustomerContext" [("field", toJson f)]
+    | .InvalidExchangeRate f => variant "InvalidExchangeRate" [("field", toJson f)]
+    | .DuplicateExchangeRate f t => variant "DuplicateExchangeRate" [("from", toJson f), ("to", toJson t)]
+    | .InvalidRule f => variant "InvalidRule" [("field", toJson f)]
     | .Overflow => variant "Overflow"
 
 -- Result -------------------------------------------------------------------

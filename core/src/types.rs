@@ -18,6 +18,8 @@ pub const MAX_MINOR_UNITS: i64 = 100_000_000_000_000;
 pub const MAX_QUANTITY: i64 = 1_000_000_000;
 /// Denominator of `BasisPoints`.
 pub const BPS_SCALE: i64 = 10_000;
+/// Upper bound for `ExchangeRate.numerator` and `denominator`.
+pub const MAX_RATE_PART: i64 = 1_000_000_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -114,17 +116,61 @@ pub struct CartLine {
     pub quantity: Quantity,
 }
 
+/// A string key and value describing the order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Attribute {
+    pub key: String,
+    pub value: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CartSnapshot {
     pub currency: Currency,
     pub lines: Vec<CartLine>,
+    pub tags: Vec<String>,
+    pub attributes: Vec<Attribute>,
+    pub coupon_codes: Vec<String>,
 }
 
-/// Empty in the first iteration; exists so the input shape is stable (ADR 7).
+/// How many times the customer already used a promotion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromotionUse {
+    pub promotion_id: PromotionId,
+    pub count: i64,
+}
+
+/// What eligibility rules may know about the customer (ADR 7).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CustomerContext {}
+pub struct CustomerContext {
+    pub customer_id: Option<String>,
+    pub completed_orders: i64,
+    pub uses: Vec<PromotionUse>,
+}
+
+/// A code that turns a promotion on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Coupon {
+    pub code: String,
+    pub promotion_id: PromotionId,
+    pub starts_at: Option<Timestamp>,
+    pub ends_at: Option<Timestamp>,
+    pub customer_id: Option<String>,
+}
+
+/// One minor unit of `from` is `numerator / denominator` minor units of `to`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExchangeRate {
+    pub from: Currency,
+    pub to: Currency,
+    pub numerator: i64,
+    pub denominator: i64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "type")]
@@ -162,6 +208,31 @@ pub enum Rule {
         starts_at: Option<Timestamp>,
         ends_at: Option<Timestamp>,
     },
+    /// `min <= orderSubtotal <= max` for the present bounds (cart currency after normalization).
+    OrderTotalRange {
+        min: Option<Money>,
+        max: Option<Money>,
+    },
+    /// All of `all`, at least one of `any` (if non-empty), none of `none` in `cart.tags`.
+    TagsMatch {
+        all: Vec<String>,
+        any: Vec<String>,
+        none: Vec<String>,
+    },
+    /// Some attribute `key` has a value in `values`.
+    AttributeIn { key: String, values: Vec<String> },
+    /// Attribute `key` parses as an integer `t` with `starts_at <= t < ends_at`.
+    AttributeDateWindow {
+        key: String,
+        starts_at: Option<Timestamp>,
+        ends_at: Option<Timestamp>,
+    },
+    /// `customer.completed_orders <= max`.
+    MaxCompletedOrders { max: i64 },
+    /// The customer's use count of this promotion is `< max`.
+    MaxUsesPerCustomer { max: i64 },
+    /// A presented, valid coupon of this promotion exists.
+    RequiresCoupon,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +263,8 @@ pub struct PricingInput {
     pub policy: PricingPolicy,
     pub customer: CustomerContext,
     pub cart: CartSnapshot,
+    pub coupons: Vec<Coupon>,
+    pub exchange_rates: Vec<ExchangeRate>,
     pub groups: Vec<StackingGroup>,
     pub promotions: Vec<Promotion>,
 }
@@ -228,6 +301,22 @@ pub enum PricingError {
     },
     UnknownGroup {
         promotion_index: usize,
+    },
+    DuplicateCouponCode {
+        code: String,
+    },
+    InvalidCustomerContext {
+        field: String,
+    },
+    InvalidExchangeRate {
+        field: String,
+    },
+    DuplicateExchangeRate {
+        from: Currency,
+        to: Currency,
+    },
+    InvalidRule {
+        field: String,
     },
     /// Rust only; the Lean model never produces it (ADR 3). Unreachable for validated input.
     Overflow,

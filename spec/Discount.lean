@@ -6,6 +6,7 @@ import Discount.Stacking
 import Discount.Allocate
 import Discount.Apply
 import Discount.Json
+import Discount.Examples
 import Discount.Theorems.Lists
 import Discount.Theorems.Rounding
 import Discount.Theorems.Validate

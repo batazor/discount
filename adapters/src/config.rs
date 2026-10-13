@@ -7,6 +7,7 @@ use discount_core::{OrderCap, PricingPolicy, RoundingPolicy, StackingPolicy};
 pub struct Config {
     pub listen: String,
     pub otlp_endpoint: String,
+    pub database_url: Option<String>,
     pub promotions_path: String,
     pub environment: String,
     pub policy: PricingPolicy,
@@ -63,6 +64,7 @@ impl Config {
             listen: get("DISCOUNT_LISTEN").unwrap_or_else(|| DEFAULT_LISTEN.to_string()),
             otlp_endpoint: get("OTEL_EXPORTER_OTLP_ENDPOINT")
                 .unwrap_or_else(|| DEFAULT_OTLP_ENDPOINT.to_string()),
+            database_url: get("DATABASE_URL").filter(|s| !s.is_empty()),
             promotions_path: get("DISCOUNT_PROMOTIONS")
                 .unwrap_or_else(|| DEFAULT_PROMOTIONS.to_string()),
             environment: get("DISCOUNT_ENV").unwrap_or_else(|| DEFAULT_ENV.to_string()),
@@ -87,6 +89,7 @@ mod tests {
         let c = Config::from_lookup(|_| None).unwrap();
         assert_eq!(c.listen, "0.0.0.0:8080");
         assert_eq!(c.otlp_endpoint, "http://localhost:4317");
+        assert_eq!(c.database_url, None);
         assert_eq!(c.promotions_path, "deploy/promotions.json");
         assert_eq!(c.environment, "local");
         assert_eq!(c.policy.rounding, RoundingPolicy::Down);

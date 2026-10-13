@@ -20,6 +20,8 @@ def MAX_MINOR_UNITS : Int := 100000000000000
 def MAX_QUANTITY : Int := 1000000000
 /-- Denominator of `BasisPoints`. -/
 def BPS_SCALE : Int := 10000
+/-- Upper bound for `ExchangeRate.numerator` and `denominator`. -/
+def MAX_RATE_PART : Int := 1000000000000
 
 structure Money where
   amount : Int
@@ -54,13 +56,48 @@ structure CartLine where
   quantity : Quantity
   deriving Repr, DecidableEq, Inhabited
 
+/-- A string key and value describing the order. -/
+structure Attribute where
+  key : String
+  value : String
+  deriving Repr, DecidableEq, Inhabited
+
 structure CartSnapshot where
   currency : Currency
   lines : List CartLine
+  tags : List String
+  attributes : List Attribute
+  coupon_codes : List String
   deriving Repr, DecidableEq, Inhabited
 
-/-- Empty in the first iteration; exists so the input shape is stable (ADR 7). -/
+/-- How many times the customer already used a promotion. -/
+structure PromotionUse where
+  promotion_id : PromotionId
+  count : Int
+  deriving Repr, DecidableEq, Inhabited
+
+/-- What eligibility rules may know about the customer (ADR 7). -/
 structure CustomerContext where
+  customer_id : Option String
+  completed_orders : Int
+  uses : List PromotionUse
+  deriving Repr, DecidableEq, Inhabited
+
+/-- A code that turns a promotion on. -/
+structure Coupon where
+  code : String
+  promotion_id : PromotionId
+  starts_at : Option Timestamp
+  ends_at : Option Timestamp
+  customer_id : Option String
+  deriving Repr, DecidableEq, Inhabited
+
+/-- One minor unit of `from` is `numerator / denominator` minor units of `to`. -/
+structure ExchangeRate where
+  «from» : Currency
+  to : Currency
+  numerator : Int
+  denominator : Int
   deriving Repr, DecidableEq, Inhabited
 
 inductive StackingMode where
@@ -77,6 +114,20 @@ structure StackingGroup where
 inductive Rule where
   /-- Holds when `starts_at ≤ now` (or absent) and `now < ends_at` (or absent). -/
   | DateWindow (starts_at : Option Timestamp) (ends_at : Option Timestamp)
+  /-- `min ≤ orderSubtotal ≤ max` for the present bounds (cart currency after normalization). -/
+  | OrderTotalRange (min : Option Money) (max : Option Money)
+  /-- All of `all`, at least one of `any` (if non-empty), none of `none` in `cart.tags`. -/
+  | TagsMatch (all : List String) (any : List String) (none : List String)
+  /-- Some attribute `key` has a value in `values`. -/
+  | AttributeIn (key : String) (values : List String)
+  /-- Attribute `key` parses as an integer `t` with `starts_at ≤ t < ends_at`. -/
+  | AttributeDateWindow (key : String) (starts_at : Option Timestamp) (ends_at : Option Timestamp)
+  /-- `customer.completed_orders ≤ max`. -/
+  | MaxCompletedOrders (max : Int)
+  /-- The customer's use count of this promotion is `< max`. -/
+  | MaxUsesPerCustomer (max : Int)
+  /-- A presented, valid coupon of this promotion exists. -/
+  | RequiresCoupon
   deriving Repr, DecidableEq, Inhabited
 
 inductive Action where
@@ -101,6 +152,8 @@ structure PricingInput where
   policy : PricingPolicy
   customer : CustomerContext
   cart : CartSnapshot
+  coupons : List Coupon
+  exchange_rates : List ExchangeRate
   groups : List StackingGroup
   promotions : List Promotion
   deriving Repr, DecidableEq, Inhabited
@@ -116,6 +169,11 @@ inductive PricingError where
   | DuplicateGroupId (group_id : GroupId)
   | DuplicatePromotionId (promotion_id : PromotionId)
   | UnknownGroup (promotion_index : Nat)
+  | DuplicateCouponCode (code : String)
+  | InvalidCustomerContext (field : String)
+  | InvalidExchangeRate (field : String)
+  | DuplicateExchangeRate («from» : Currency) (to : Currency)
+  | InvalidRule (field : String)
   /-- Rust only; the Lean model never produces it (ADR 3). -/
   | Overflow
   deriving Repr, DecidableEq, Inhabited

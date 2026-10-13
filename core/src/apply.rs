@@ -7,7 +7,7 @@ use crate::eligibility::{eligible, first_failing_rule};
 use crate::rounding::round_div;
 use crate::stacking::{lookup, select_exclusive, select_first_match, sort_promotions};
 use crate::types::*;
-use crate::validate::validate;
+use crate::validate::{convert_amount_i64, validate};
 
 /// Intermediate state of the fold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,7 +141,7 @@ pub fn skips_of(i: &PricingInput, sorted: &[Promotion]) -> Vec<(PromotionId, Ski
     sorted
         .iter()
         .filter_map(|p| {
-            first_failing_rule(&p.rules, i).map(|k| {
+            first_failing_rule(&p.rules, p, i).map(|k| {
                 (
                     p.promotion_id.clone(),
                     SkipReason::NotEligible { rule_index: k },
@@ -245,9 +245,82 @@ pub fn compute(i: &PricingInput) -> Result<PricingResult, PricingError> {
     })
 }
 
+// ---------------------------------------------------------------- normalize
+
+/// `m` in the cart currency; unchanged when no rate exists (validation guarantees one).
+pub fn normalize_money(rates: &[ExchangeRate], cur: &str, m: &Money) -> Money {
+    match convert_amount_i64(rates, m.amount, &m.currency, cur) {
+        Some(a) => Money::new(a, cur),
+        None => m.clone(),
+    }
+}
+
+pub fn normalize_rule(rates: &[ExchangeRate], cur: &str, r: &Rule) -> Rule {
+    match r {
+        Rule::OrderTotalRange { min, max } => Rule::OrderTotalRange {
+            min: min.as_ref().map(|m| normalize_money(rates, cur, m)),
+            max: max.as_ref().map(|m| normalize_money(rates, cur, m)),
+        },
+        other => other.clone(),
+    }
+}
+
+pub fn normalize_action(rates: &[ExchangeRate], cur: &str, a: &Action) -> Action {
+    match a {
+        Action::OrderFixedAmount { amount } => Action::OrderFixedAmount {
+            amount: normalize_money(rates, cur, amount),
+        },
+        other => other.clone(),
+    }
+}
+
+pub fn normalize_promotion(rates: &[ExchangeRate], cur: &str, p: &Promotion) -> Promotion {
+    Promotion {
+        cap: p.cap.as_ref().map(|m| normalize_money(rates, cur, m)),
+        remaining_budget: p
+            .remaining_budget
+            .as_ref()
+            .map(|m| normalize_money(rates, cur, m)),
+        rules: p
+            .rules
+            .iter()
+            .map(|r| normalize_rule(rates, cur, r))
+            .collect(),
+        action: normalize_action(rates, cur, &p.action),
+        ..p.clone()
+    }
+}
+
+/// Every promotion amount and the order cap in the cart currency. Everything else is
+/// unchanged (OpenSpec `multi-currency`).
+pub fn normalize(i: &PricingInput) -> PricingInput {
+    let cur = i.cart.currency.as_str();
+    let rates = &i.exchange_rates;
+    PricingInput {
+        policy: PricingPolicy {
+            order_cap: OrderCap {
+                amount: i
+                    .policy
+                    .order_cap
+                    .amount
+                    .as_ref()
+                    .map(|m| normalize_money(rates, cur, m)),
+                ..i.policy.order_cap.clone()
+            },
+            ..i.policy.clone()
+        },
+        promotions: i
+            .promotions
+            .iter()
+            .map(|p| normalize_promotion(rates, cur, p))
+            .collect(),
+        ..i.clone()
+    }
+}
+
 pub fn apply(i: &PricingInput) -> Result<PricingResult, PricingError> {
     validate(i)?;
-    compute(i)
+    compute(&normalize(i))
 }
 
 #[cfg(test)]
@@ -280,7 +353,7 @@ mod tests {
         PricingInput {
             now: 1_760_227_200,
             policy,
-            customer: CustomerContext {},
+            customer: CustomerContext::default(),
             cart: CartSnapshot {
                 currency: "EUR".to_string(),
                 lines: vec![
@@ -295,7 +368,12 @@ mod tests {
                         quantity: 1,
                     },
                 ],
+                tags: vec![],
+                attributes: vec![],
+                coupon_codes: vec![],
             },
+            coupons: vec![],
+            exchange_rates: vec![],
             groups,
             promotions,
         }
@@ -396,6 +474,9 @@ mod tests {
                     unit_price: money(10000),
                     quantity: 1,
                 }],
+                tags: vec![],
+                attributes: vec![],
+                coupon_codes: vec![],
             },
             ..input(
                 pol,
@@ -492,6 +573,176 @@ mod tests {
             Err(PricingError::InvalidCurrency {
                 field: "cart.currency".to_string()
             })
+        );
+    }
+
+    /// Multi-currency: a USD fixed amount converted with 92/100, rounded down (OpenSpec scenarios).
+    #[test]
+    fn foreign_currency_amounts_are_normalized() {
+        let usd = |a: i64| Money::new(a, "USD");
+        let mut i = input(
+            policy(RoundingPolicy::Down, StackingPolicy::Sequential),
+            vec![group("g", 0, StackingMode::Stackable)],
+            vec![promo(
+                "P1",
+                "g",
+                0,
+                Action::OrderFixedAmount { amount: usd(999) },
+            )],
+        );
+        assert_eq!(
+            apply(&i),
+            Err(PricingError::CurrencyMismatch {
+                field: "promotions[0].action.amount".into()
+            })
+        );
+        i.exchange_rates.push(ExchangeRate {
+            from: "USD".into(),
+            to: "EUR".into(),
+            numerator: 92,
+            denominator: 100,
+        });
+        let r = apply(&i).unwrap();
+        assert_eq!(r.applied[0].discount.amount, 919);
+        i.promotions[0].action = Action::OrderFixedAmount { amount: usd(1000) };
+        assert_eq!(apply(&i).unwrap().applied[0].discount.amount, 920);
+        i.exchange_rates[0].denominator = 0;
+        assert_eq!(
+            apply(&i),
+            Err(PricingError::InvalidExchangeRate {
+                field: "exchange_rates[0].denominator".into()
+            })
+        );
+    }
+
+    /// Coupons and the per-customer rules (OpenSpec scenarios).
+    #[test]
+    fn coupon_and_customer_rules() {
+        let mut p = promo("P1", "g", 0, Action::OrderPercentage { bps: 1000 });
+        p.rules = vec![
+            Rule::RequiresCoupon,
+            Rule::MaxUsesPerCustomer { max: 2 },
+            Rule::MaxCompletedOrders { max: 0 },
+        ];
+        let mut i = input(
+            policy(RoundingPolicy::Down, StackingPolicy::Sequential),
+            vec![group("g", 0, StackingMode::Stackable)],
+            vec![p],
+        );
+        let skipped = |r: &PricingResult| r.skipped.first().map(|s| s.reason.clone());
+        // no coupon presented
+        assert_eq!(
+            skipped(&apply(&i).unwrap()),
+            Some(SkipReason::NotEligible { rule_index: 0 })
+        );
+        i.coupons.push(Coupon {
+            code: "WELCOME".into(),
+            promotion_id: "P1".into(),
+            starts_at: None,
+            ends_at: Some(2_000_000_000),
+            customer_id: Some("c1".into()),
+        });
+        i.cart.coupon_codes.push("WELCOME".into());
+        // wrong customer
+        i.customer.customer_id = Some("c2".into());
+        assert_eq!(
+            skipped(&apply(&i).unwrap()),
+            Some(SkipReason::NotEligible { rule_index: 0 })
+        );
+        i.customer.customer_id = Some("c1".into());
+        assert_eq!(apply(&i).unwrap().applied.len(), 1);
+        // usage limit
+        i.customer.uses.push(PromotionUse {
+            promotion_id: "P1".into(),
+            count: 2,
+        });
+        assert_eq!(
+            skipped(&apply(&i).unwrap()),
+            Some(SkipReason::NotEligible { rule_index: 1 })
+        );
+        i.customer.uses[0].count = 1;
+        assert_eq!(apply(&i).unwrap().applied.len(), 1);
+        // first order only
+        i.customer.completed_orders = 1;
+        assert_eq!(
+            skipped(&apply(&i).unwrap()),
+            Some(SkipReason::NotEligible { rule_index: 2 })
+        );
+        // validation of the context
+        i.customer.uses.push(PromotionUse {
+            promotion_id: "P1".into(),
+            count: 0,
+        });
+        assert_eq!(
+            apply(&i),
+            Err(PricingError::InvalidCustomerContext {
+                field: "customer.uses[1]".into()
+            })
+        );
+    }
+
+    /// Tags, attributes and the check-in window (OpenSpec scenarios).
+    #[test]
+    fn tag_and_attribute_rules() {
+        let mut p = promo("P1", "g", 0, Action::OrderPercentage { bps: 1000 });
+        p.rules = vec![
+            Rule::TagsMatch {
+                all: vec!["#ios".into()],
+                any: vec![],
+                none: vec!["#partner".into()],
+            },
+            Rule::AttributeIn {
+                key: "hotel_kind".into(),
+                values: vec!["resort".into()],
+            },
+            Rule::AttributeDateWindow {
+                key: "checkin".into(),
+                starts_at: Some(100),
+                ends_at: Some(200),
+            },
+            Rule::OrderTotalRange {
+                min: Some(money(4000)),
+                max: Some(money(5000)),
+            },
+        ];
+        let mut i = input(
+            policy(RoundingPolicy::Down, StackingPolicy::Sequential),
+            vec![group("g", 0, StackingMode::Stackable)],
+            vec![p],
+        );
+        i.cart.tags = vec!["#ios".into()];
+        i.cart.attributes = vec![
+            Attribute {
+                key: "hotel_kind".into(),
+                value: "resort".into(),
+            },
+            Attribute {
+                key: "checkin".into(),
+                value: "150".into(),
+            },
+        ];
+        assert_eq!(apply(&i).unwrap().applied.len(), 1);
+        i.cart.attributes[1].value = "200".into();
+        assert_eq!(
+            apply(&i).unwrap().skipped[0].reason,
+            SkipReason::NotEligible { rule_index: 2 }
+        );
+        i.cart.attributes[1].value = "soon".into();
+        assert_eq!(
+            apply(&i).unwrap().skipped[0].reason,
+            SkipReason::NotEligible { rule_index: 2 }
+        );
+        i.cart.attributes[1].value = "150".into();
+        i.cart.tags.push("#partner".into());
+        assert_eq!(
+            apply(&i).unwrap().skipped[0].reason,
+            SkipReason::NotEligible { rule_index: 0 }
+        );
+        assert_eq!(crate::eligibility::parse_decimal("+5"), None);
+        assert_eq!(crate::eligibility::parse_decimal("-7"), Some(-7));
+        assert_eq!(
+            crate::eligibility::parse_decimal("1234567890123456789"),
+            None
         );
     }
 

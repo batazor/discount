@@ -1,6 +1,8 @@
 //! proptest strategies for `PricingInput` (ADR 2, ADR 3). The valid generator covers the
-//! whole validated domain of `docs/ubiquitous-language.md`; `mutated` applies one random
-//! violation so that the validation order (ADR 6) is compared too.
+//! validated domain of `docs/ubiquitous-language.md`; `mutated` applies one random
+//! violation so that the validation order (ADR 6) is compared too. Promotion amounts are
+//! sometimes in another currency: with a rate they exercise `normalize`, without one
+//! `CurrencyMismatch`.
 
 use discount_core::*;
 use proptest::prelude::*;
@@ -8,6 +10,8 @@ use proptest::prelude::*;
 pub const NOW: Timestamp = 1_000;
 
 const CURRENCIES: [&str; 3] = ["EUR", "USD", "RUB"];
+pub const TAGS: [&str; 5] = ["#ios", "#android", "#partner", "#promo", "cpa-meta"];
+pub const COUPON_CODES: [&str; 4] = ["WELCOME", "SUMMER", "VIP", "X1"];
 
 fn other_currency(c: &str) -> &'static str {
     if c == "EUR" { "USD" } else { "EUR" }
@@ -17,7 +21,7 @@ pub fn currency() -> impl Strategy<Value = Currency> {
     prop::sample::select(CURRENCIES.to_vec()).prop_map(|c| c.to_string())
 }
 
-/// Amounts: mostly small, sometimes mid-range, occasionally near the bound.
+/// Amounts: mostly small, sometimes mid-range.
 pub fn small_amount() -> impl Strategy<Value = i64> {
     prop_oneof![
         6 => 0..10_000i64,
@@ -55,6 +59,15 @@ pub fn money(cur: Currency) -> impl Strategy<Value = Money> {
     })
 }
 
+/// Money for a promotion: usually the cart currency, sometimes another one (needs a rate).
+pub fn promo_money(cur: Currency) -> impl Strategy<Value = Money> {
+    let other = other_currency(&cur).to_string();
+    (small_amount(), prop::bool::weighted(0.2)).prop_map(move |(a, foreign)| Money {
+        amount: a,
+        currency: if foreign { other.clone() } else { cur.clone() },
+    })
+}
+
 pub fn bps() -> impl Strategy<Value = BasisPoints> {
     prop_oneof![
         5 => 0..=BPS_SCALE,
@@ -66,7 +79,7 @@ pub fn bps() -> impl Strategy<Value = BasisPoints> {
 
 pub fn order_cap(cur: Currency) -> impl Strategy<Value = OrderCap> {
     (
-        prop::option::weighted(0.3, money(cur)),
+        prop::option::weighted(0.3, promo_money(cur)),
         prop::option::weighted(0.3, bps()),
     )
         .prop_map(|(amount, bps)| OrderCap { amount, bps })
@@ -101,15 +114,146 @@ pub fn line(idx: usize, cur: Currency) -> impl Strategy<Value = CartLine> {
     })
 }
 
+pub fn tags() -> impl Strategy<Value = Vec<String>> {
+    prop::collection::vec(prop::sample::select(TAGS.to_vec()), 0..=3).prop_map(|v| {
+        let mut out: Vec<String> = Vec::new();
+        for t in v {
+            if !out.iter().any(|x| x == t) {
+                out.push(t.to_string());
+            }
+        }
+        out
+    })
+}
+
+pub fn attributes() -> impl Strategy<Value = Vec<Attribute>> {
+    let checkin = prop_oneof![
+        3 => (NOW - 100..NOW + 100).prop_map(|t| t.to_string()),
+        1 => Just("soon".to_string()),
+        1 => Just("-5".to_string()),
+    ]
+    .prop_map(|v| Attribute {
+        key: "checkin".into(),
+        value: v,
+    });
+    let kind =
+        prop::sample::select(vec!["resort", "hostel", "apartment"]).prop_map(|v| Attribute {
+            key: "hotel_kind".into(),
+            value: v.to_string(),
+        });
+    (
+        prop::option::weighted(0.6, checkin),
+        prop::option::weighted(0.6, kind),
+    )
+        .prop_map(|(a, b)| a.into_iter().chain(b).collect())
+}
+
+/// Distinct codes presented with the cart.
+pub fn coupon_codes() -> impl Strategy<Value = Vec<String>> {
+    prop::collection::vec(prop::sample::select(COUPON_CODES.to_vec()), 0..=2).prop_map(|v| {
+        let mut out: Vec<String> = Vec::new();
+        for c in v {
+            if !out.iter().any(|x| x == c) {
+                out.push(c.to_string());
+            }
+        }
+        out
+    })
+}
+
 pub fn cart(cur: Currency) -> impl Strategy<Value = CartSnapshot> {
     (0usize..=6).prop_flat_map(move |n| {
         let cur2 = cur.clone();
         let lines: Vec<_> = (0..n).map(|k| line(k, cur2.clone())).collect();
         let cur3 = cur.clone();
-        lines.prop_map(move |lines| CartSnapshot {
-            currency: cur3.clone(),
-            lines,
+        (lines, tags(), attributes(), coupon_codes()).prop_map(
+            move |(lines, tags, attributes, coupon_codes)| CartSnapshot {
+                currency: cur3.clone(),
+                lines,
+                tags,
+                attributes,
+                coupon_codes,
+            },
+        )
+    })
+}
+
+pub fn customer(n_promotions: usize) -> impl Strategy<Value = CustomerContext> {
+    let uses = prop::collection::vec((0..n_promotions.max(1), 0..=3i64), 0..=2).prop_map(|v| {
+        let mut out: Vec<PromotionUse> = Vec::new();
+        for (k, count) in v {
+            let pid = format!("P{k}");
+            if !out.iter().any(|u| u.promotion_id == pid) {
+                out.push(PromotionUse {
+                    promotion_id: pid,
+                    count,
+                });
+            }
+        }
+        out
+    });
+    (
+        prop::option::weighted(0.7, prop::sample::select(vec!["c1", "c2"])),
+        0..=3i64,
+        uses,
+    )
+        .prop_map(|(cid, completed_orders, uses)| CustomerContext {
+            customer_id: cid.map(|c| c.to_string()),
+            completed_orders,
+            uses,
         })
+}
+
+/// Coupon snapshots with distinct codes, pointing at generated promotion ids.
+pub fn coupons(n_promotions: usize) -> impl Strategy<Value = Vec<Coupon>> {
+    prop::collection::vec(
+        (
+            prop::sample::select(COUPON_CODES.to_vec()),
+            0..n_promotions.max(1),
+            prop::option::of(NOW - 50..NOW + 50),
+            prop::option::of(NOW - 50..NOW + 50),
+            prop::option::weighted(0.3, prop::sample::select(vec!["c1", "c2"])),
+        ),
+        0..=3,
+    )
+    .prop_map(|v| {
+        let mut out: Vec<Coupon> = Vec::new();
+        for (code, k, starts_at, ends_at, cid) in v {
+            if !out.iter().any(|c| c.code == code) {
+                out.push(Coupon {
+                    code: code.to_string(),
+                    promotion_id: format!("P{k}"),
+                    starts_at,
+                    ends_at,
+                    customer_id: cid.map(|c| c.to_string()),
+                });
+            }
+        }
+        out
+    })
+}
+
+/// Rates from the other currencies into `cur`, distinct pairs.
+pub fn exchange_rates(cur: Currency) -> impl Strategy<Value = Vec<ExchangeRate>> {
+    let others: Vec<&'static str> = CURRENCIES.iter().copied().filter(|c| *c != cur).collect();
+    let cur2 = cur.clone();
+    prop::collection::vec(
+        (prop::sample::select(others), 1..=200i64, 1..=200i64),
+        0..=2,
+    )
+    .prop_map(move |v| {
+        let mut out: Vec<ExchangeRate> = Vec::new();
+        for (from, num, den) in v {
+            if !out.iter().any(|r| r.from == from) {
+                out.push(ExchangeRate {
+                    from: from.to_string(),
+                    to: cur2.clone(),
+                    numerator: num,
+                    denominator: den,
+                });
+            }
+        }
+        out
     })
 }
 
@@ -128,18 +272,34 @@ pub fn groups() -> impl Strategy<Value = Vec<StackingGroup>> {
     })
 }
 
-pub fn rule() -> impl Strategy<Value = Rule> {
-    (
+fn tag_list() -> impl Strategy<Value = Vec<String>> {
+    prop::collection::vec(prop::sample::select(TAGS.to_vec()), 0..=2)
+        .prop_map(|v| v.into_iter().map(str::to_string).collect::<Vec<_>>())
+}
+
+pub fn rule(cur: Currency) -> impl Strategy<Value = Rule> {
+    let window = (
         prop::option::of(NOW - 50..NOW + 50),
         prop::option::of(NOW - 50..NOW + 50),
-    )
-        .prop_map(|(starts_at, ends_at)| Rule::DateWindow { starts_at, ends_at })
+    );
+    prop_oneof![
+        3 => window.clone().prop_map(|(starts_at, ends_at)| Rule::DateWindow { starts_at, ends_at }),
+        2 => (prop::option::of(promo_money(cur.clone())), prop::option::of(promo_money(cur.clone())))
+            .prop_map(|(min, max)| Rule::OrderTotalRange { min, max }),
+        2 => (tag_list(), tag_list(), tag_list()).prop_map(|(all, any, none)| Rule::TagsMatch { all, any, none }),
+        1 => prop::collection::vec(prop::sample::select(vec!["resort", "hostel", "villa"]), 0..=2)
+            .prop_map(|vs| Rule::AttributeIn { key: "hotel_kind".into(), values: vs.into_iter().map(str::to_string).collect() }),
+        1 => window.prop_map(|(starts_at, ends_at)| Rule::AttributeDateWindow { key: "checkin".into(), starts_at, ends_at }),
+        1 => (0..=2i64).prop_map(|max| Rule::MaxCompletedOrders { max }),
+        1 => (0..=3i64).prop_map(|max| Rule::MaxUsesPerCustomer { max }),
+        2 => Just(Rule::RequiresCoupon),
+    ]
 }
 
 pub fn action(cur: Currency) -> impl Strategy<Value = Action> {
     prop_oneof![
         bps().prop_map(|b| Action::OrderPercentage { bps: b }),
-        money(cur).prop_map(|amount| Action::OrderFixedAmount { amount }),
+        promo_money(cur).prop_map(|amount| Action::OrderFixedAmount { amount }),
     ]
 }
 
@@ -148,10 +308,10 @@ pub fn promotion(idx: usize, cur: Currency, n_groups: usize) -> impl Strategy<Va
         0..n_groups,
         -5i64..=5,
         prop::bool::weighted(0.15),
-        prop::option::weighted(0.3, money(cur.clone())),
-        prop::option::weighted(0.3, money(cur.clone())),
+        prop::option::weighted(0.3, promo_money(cur.clone())),
+        prop::option::weighted(0.3, promo_money(cur.clone())),
         prop::option::weighted(0.3, rounding_policy()),
-        prop::collection::vec(rule(), 0..=2),
+        prop::collection::vec(rule(cur.clone()), 0..=2),
         action(cur),
     )
         .prop_map(
@@ -171,11 +331,18 @@ pub fn promotion(idx: usize, cur: Currency, n_groups: usize) -> impl Strategy<Va
         )
 }
 
-/// A valid input: every check of `validate` passes.
+/// A well-formed input: every check of `validate` passes, except that a promotion amount in
+/// another currency has a rate only most of the time (so `CurrencyMismatch` is exercised).
 pub fn valid_input() -> impl Strategy<Value = PricingInput> {
     currency().prop_flat_map(|cur| {
-        (policy(cur.clone()), cart(cur.clone()), groups(), Just(cur)).prop_flat_map(
-            |(policy, cart, groups, cur)| {
+        (
+            policy(cur.clone()),
+            cart(cur.clone()),
+            groups(),
+            exchange_rates(cur.clone()),
+            Just(cur),
+        )
+            .prop_flat_map(|(policy, cart, groups, rates, cur)| {
                 let n_groups = groups.len();
                 (0usize..=6).prop_flat_map(move |n| {
                     let ps: Vec<_> = (0..n)
@@ -184,23 +351,27 @@ pub fn valid_input() -> impl Strategy<Value = PricingInput> {
                     let policy = policy.clone();
                     let cart = cart.clone();
                     let groups = groups.clone();
-                    ps.prop_map(move |promotions| PricingInput {
-                        now: NOW,
-                        policy: policy.clone(),
-                        customer: CustomerContext {},
-                        cart: cart.clone(),
-                        groups: groups.clone(),
-                        promotions,
-                    })
+                    let rates = rates.clone();
+                    (ps, customer(n), coupons(n)).prop_map(
+                        move |(promotions, customer, coupons)| PricingInput {
+                            now: NOW,
+                            policy: policy.clone(),
+                            customer,
+                            cart: cart.clone(),
+                            coupons,
+                            exchange_rates: rates.clone(),
+                            groups: groups.clone(),
+                            promotions,
+                        },
+                    )
                 })
-            },
-        )
+            })
     })
 }
 
 /// The violations `validate` must report, one per case. Some are no-ops on inputs without
 /// the relevant element; those cases simply stay valid.
-pub const MUTATIONS: usize = 15;
+pub const MUTATIONS: usize = 22;
 
 pub fn mutate(i: &mut PricingInput, which: usize) {
     let cur = i.cart.currency.clone();
@@ -237,7 +408,7 @@ pub fn mutate(i: &mut PricingInput, which: usize) {
         7 => {
             i.policy.order_cap.amount = Some(Money {
                 amount: 10,
-                currency: other,
+                currency: "GBP".to_string(),
             })
         }
         8 => {
@@ -270,7 +441,7 @@ pub fn mutate(i: &mut PricingInput, which: usize) {
             if let Some(p) = i.promotions.last_mut() {
                 p.cap = Some(Money {
                     amount: 100,
-                    currency: other,
+                    currency: "GBP".to_string(),
                 });
             }
         }
@@ -286,12 +457,65 @@ pub fn mutate(i: &mut PricingInput, which: usize) {
                 l.quantity = 2;
             }
         }
-        _ => {
+        14 => {
             if let Some(p) = i.promotions.first_mut() {
                 p.remaining_budget = Some(Money {
                     amount: 1,
                     currency: "EU".to_string(),
                 });
+            }
+        }
+        15 => i.customer.completed_orders = -1,
+        16 => i.customer.uses.push(PromotionUse {
+            promotion_id: "P0".into(),
+            count: -1,
+        }),
+        17 => {
+            i.customer.uses.push(PromotionUse {
+                promotion_id: "P0".into(),
+                count: 1,
+            });
+            i.customer.uses.push(PromotionUse {
+                promotion_id: "P0".into(),
+                count: 2,
+            });
+        }
+        18 => {
+            if let Some(r) = i.exchange_rates.first_mut() {
+                r.denominator = 0;
+            } else {
+                i.exchange_rates.push(ExchangeRate {
+                    from: other.clone(),
+                    to: cur.clone(),
+                    numerator: 0,
+                    denominator: 1,
+                });
+            }
+        }
+        19 => {
+            let r = ExchangeRate {
+                from: other.clone(),
+                to: cur.clone(),
+                numerator: 1,
+                denominator: 1,
+            };
+            i.exchange_rates.push(r.clone());
+            i.exchange_rates.push(r);
+        }
+        20 => {
+            let c = Coupon {
+                code: "DUP".into(),
+                promotion_id: "P0".into(),
+                starts_at: None,
+                ends_at: None,
+                customer_id: None,
+            };
+            i.coupons.push(c.clone());
+            i.coupons.push(c);
+        }
+        _ => {
+            if let Some(p) = i.promotions.first_mut() {
+                p.rules.push(Rule::MaxUsesPerCustomer { max: -1 });
             }
         }
     }

@@ -2,7 +2,9 @@
 
 Every statement below is about `apply` from `docs/ubiquitous-language.md`, on the
 `ok` branch: for all `input`, if `apply input = .ok result` then the property holds
-(ADR 6). The Lean theorem names are the ones `spec/` must export; the Rust side is covered
+(ADR 6). `apply` validates, then prices `normalize input` (amounts converted to the cart
+currency, ADR 3); where a statement names a promotion's `cap`, `remaining_budget` or the
+order cap, it means the normalized value, written `P ∈ (normalize input).promotions`. The Lean theorem names are the ones `spec/` must export; the Rust side is covered
 by the differential tests in `drt/` (ADR 2). Nothing is claimed about inputs the generators
 do not produce; the generators cover the whole validated domain (ADR 3).
 
@@ -20,7 +22,7 @@ Notation: `S` is `result.original_subtotal`, `D` is `result.total_discount`,
 | 4 | Exclusive never combines; first-match groups apply at most one | proved | `exclusive_alone`, `first_match_at_most_one` |
 | 5 | Allocation is conservative | proved | `allocation_conserves`, `line_discount_sum`, `total_discount_eq_sum`; on `allocate` itself `allocate_sum`, `allocate_le`, `allocate_nonneg`, `allocate_length` |
 | 6 | Idempotence | stated, iteration 2 | `apply_idempotent` (planned) |
-| 7 | Eligibility is a function of the input | proved | `eligible_depends_on_input` |
+| 7 | Eligibility is a function of `(now, cart, customer, coupons)` | proved | `eligible_depends_on_input` |
 
 "Proved" means a theorem without `sorry` that `lake build` checks in CI, over the Lean
 model and the `ok` branch of `apply`. A proof that turns out to be blocked is reported,
@@ -121,20 +123,24 @@ iteration 2 together with `Redeem`.
 
 ## 7. Eligibility depends only on its inputs
 
-`eligible P input` is a pure function of `(input.cart, input.customer, input.now)` and
-`P.rules`. The core has no other inputs: no clock, no repository, no randomness (ADR 7),
-so this holds by construction; the Lean theorem is a one-line `rfl`-style statement kept
-as documentation.
+`eligible P input` is a pure function of `(input.now, input.cart, input.customer,
+input.coupons)` and `P`. The theorem states it as a congruence: two inputs that agree on
+those four fields give the same eligibility for every promotion. The core has no other
+inputs: no clock, no repository, no randomness (ADR 7). Coupon resolution and usage
+counters are inputs supplied by the application layer, so `RequiresCoupon` and
+`MaxUsesPerCustomer` are covered too.
 
 ## Structural lemmas
 
 Proved (`spec/Discount/Theorems/`):
 
-- `validate_ok` (`Validate.lean`): `validate input = ok` implies `Valid input`: every
-  `unit_price`, `action.amount`, `cap`, `remaining_budget` and `order_cap.amount` is in
-  `0 ..= MAX_MINOR_UNITS` and in `cart.currency`, every `quantity` in
-  `1 ..= MAX_QUANTITY`, every `bps` in `0 ..= BPS_SCALE`, `line_id`s, `group_id`s and
-  `promotion_id`s are pairwise distinct, and every promotion's `group_id` names a group.
+- `validate_ok` (`Validate.lean`): `validate input = ok` implies `Valid (normalize input)`:
+  after normalization every `unit_price`, `action.amount`, `cap`, `remaining_budget` and
+  `order_cap.amount` is in `0 ..= MAX_MINOR_UNITS` and in `cart.currency`, every
+  `quantity` in `1 ..= MAX_QUANTITY`, every `bps` in `0 ..= BPS_SCALE`, `line_id`s,
+  `group_id`s and `promotion_id`s are pairwise distinct, and every promotion's `group_id`
+  names a group. The bridge is `checkMoney_ok`: a money field that passes validation
+  normalizes to a bounded amount in the cart currency.
 - `roundDiv_nonneg`, `roundDiv_le` (`Rounding.lean`): for `0 ≤ num`, `0 < den`,
   `0 ≤ roundDiv p num den`; and for `0 ≤ base`, `0 ≤ bps ≤ BPS_SCALE`,
   `roundDiv p (base * bps) BPS_SCALE ≤ base`. (The second is why a 100 % discount never

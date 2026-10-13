@@ -7,4 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-trait = "0.1.92"
 discount-core = { path = "../core" }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.2", features = ["rt", "macros"] }
