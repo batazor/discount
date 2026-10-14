@@ -32,7 +32,7 @@ Everything that could vary between two calls is a field of `PricingInput`:
 - `remaining_budget : Option Money` on each `Promotion` snapshot: the budget still
   available for this promotion when the snapshot was taken. The core treats it as one
   more cap (ADR 4). Reserving or decrementing the budget is an application-layer concern
-  (`app/`), done after pricing, with its own tests; the core never sees the ledger.
+  (`src/applicationlication/`), done after pricing, with its own tests; the core never sees the ledger.
 - The promotions themselves are passed in as a list, already loaded by the application
   layer via `PromotionRepository`.
 

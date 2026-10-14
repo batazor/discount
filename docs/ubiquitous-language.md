@@ -1,6 +1,6 @@
 # Ubiquitous language
 
-The single list of names used in `spec/` (Lean 4), `core/` (Rust), `docs/invariants.md`
+The single list of names used in `verification/spec/` (Lean 4), `src/domain/` (Rust), `docs/invariants.md`
 and in conversation. A name here is spelled identically in both code bases (modulo
 language casing: `CartSnapshot` in both, `lineSubtotal` in Lean / `line_subtotal` in Rust).
 Adding a concept means adding it here first (ADR 8).
@@ -371,11 +371,11 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
 - `Redeem`: use case that records an `Evaluate` result for an order and consumes budgets
   and usage counters. Iteration 2 (ADR 7, ADR 4).
 
-## Telemetry vocabulary (not verified; `adapters/`)
+## Telemetry vocabulary (not verified; `src/infrastructure/`)
 
 Names the service emits over OpenTelemetry. They reuse the domain vocabulary above and are
 the contract the Grafana dashboards depend on (OpenSpec change `otel-grafana-observability`).
-`adapters/src/telemetry.rs` keeps the same list as constants; a test checks the two agree.
+`src/infrastructure/src/telemetry.rs` keeps the same list as constants; a test checks the two agree.
 
 - Resource: `service.name` = `discount`, `service.version`, `deployment.environment`.
 - Span `discount.evaluate` (child of the HTTP server span) with attributes

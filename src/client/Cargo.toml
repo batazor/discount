@@ -1,0 +1,32 @@
+[package]
+name = "discount-client"
+description = "Rust client for the discount service, generated at build time from api/openapi.yaml"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[dependencies]
+base64 = "0.23.1"
+bytes = "1.12.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+futures = "0.3.34"
+progenitor-client = "0.15.1"
+regress = "0.12.0"
+reqwest = { version = "0.13.5", features = ["json", "stream"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+uuid = { version = "1.28.0", features = ["serde", "v4"] }
+
+[build-dependencies]
+openapiv3 = "2.2.0"
+prettyplease = "0.3.0"
+progenitor = "0.15.1"
+serde_yaml_ng = "0.10.0"
+syn = { version = "3.0.9", features = ["full"] }
+
+[dev-dependencies]
+axum = "0.8.9"
+discount-infrastructure = { path = "../infrastructure" }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net"] }

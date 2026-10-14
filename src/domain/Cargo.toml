@@ -1,0 +1,15 @@
+[package]
+name = "discount-domain"
+description = "Domain layer of the discount service: the pure pricing engine, structural mirror of verification/spec (Lean 4)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "discount_domain"
+path = "src/lib.rs"
+
+# ADR 8: the core depends on std and serde (derive only). Nothing else.
+[dependencies]
+serde = { workspace = true }

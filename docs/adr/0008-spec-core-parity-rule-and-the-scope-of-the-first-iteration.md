@@ -28,8 +28,8 @@ Options considered:
 
 ### Parity rule
 
-1. No type, variant or field exists in `core/` without a counterpart of the same name in
-   `spec/`, and vice versa. The ubiquitous language (`docs/ubiquitous-language.md`) is
+1. No type, variant or field exists in `src/domain/` without a counterpart of the same name in
+   `verification/spec/`, and vice versa. The ubiquitous language (`docs/ubiquitous-language.md`) is
    the single list of names; both implementations are checked against it in review.
 2. Function decomposition is mirrored too: `validate`, `eligible`, `sortPromotions`,
    `selectExclusive`, `selectFirstMatch`, `applyOne`, `clampDiscount`, `allocate`,
@@ -51,7 +51,7 @@ Options considered:
 
 ### Scope of the first iteration
 
-In both `spec/` and `core/`:
+In both `verification/spec/` and `src/domain/`:
 
 - Types: `Money`, `Currency`, `BasisPoints`, `Timestamp`, `Quantity`, `RoundingPolicy`,
   `StackingPolicy`, `OrderCap`, `PricingPolicy`, `CartLine { line_id, unit_price, quantity }`,

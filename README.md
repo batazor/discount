@@ -31,7 +31,7 @@ with theorems for its invariants (ADR 2):
 | 6 | Re-applying the same promotions is idempotent | iteration 2 |
 | 7 | Eligibility depends only on its inputs | proved |
 
-The Lean model compiles to a reference executable. `drt/` generates random carts and
+The Lean model compiles to a reference executable. `verification/drt/` generates random carts and
 promotions with proptest, runs the Rust core and the reference, and requires identical
 results, including validation errors. The Rust core mirrors the Lean model function by
 function under the same names (ADR 8), so a divergence points at a line.
@@ -43,35 +43,40 @@ contract: [docs/ubiquitous-language.md](docs/ubiquitous-language.md). Decisions:
 ## Layout
 
 ```
-spec/        Lean 4 (lake): model, theorems, reference executable (JSON lines in/out)
-core/        Rust: pure domain, std + serde only, structural mirror of spec/
-app/         use cases (Evaluate) and ports (PromotionRepository, Clock, EventPublisher)
-adapters/    port implementations (in-memory now; axum and Postgres later)
-drt/         proptest generators + core vs spec comparison
-docs/        ubiquitous-language.md, invariants.md, adr/
+src/domain/            Rust: pure domain, std + serde only, structural mirror of the Lean model
+src/applicationlication/             use cases (Evaluate, Redeem, Confirm, Cancel) and ports
+src/infrastructure/        axum HTTP, Postgres (sqlx), in-memory store, OpenTelemetry
+verification/spec/   Lean 4 (lake): model, theorems, reference executable (JSON lines in/out)
+verification/drt/    proptest generators + core vs reference comparison
+docs/                ubiquitous-language.md, invariants.md, adr/
+openspec/            behaviour specs with scenarios (OpenSpec), archived changes
+deploy/              compose stack, Grafana dashboards, fixtures, smoke script
 ```
+
+Product code lives under `src/`; everything that checks it (the Lean model and the
+differential tests) under `verification/`. Neither depends on the other direction.
 
 ## How to run
 
 Prerequisites: [elan](https://github.com/leanprover/elan) (the toolchain is pinned in
-`spec/lean-toolchain`) and a stable Rust toolchain.
+`verification/spec/lean-toolchain`) and a stable Rust toolchain.
 
 Build the specification and check the proofs:
 
 ```bash
-cd spec && lake build
+cd verification/spec && lake build
 ```
 
 Confirm that no theorem rests on `sorry`:
 
 ```bash
-cd spec && lake env lean AxiomCheck.lean
+cd verification/spec && lake env lean AxiomCheck.lean
 ```
 
 Price a cart with the reference executable (one JSON document per line):
 
 ```bash
-cd spec && lake exe discount-spec < ../drt/fixtures/samples-1.jsonl
+cd verification/spec && lake exe discount-spec < ../drt/fixtures/samples-1.jsonl
 ```
 
 Run the Rust tests, the fixture replay and the differential run (the Lean build above
@@ -86,41 +91,33 @@ CI runs exactly these steps on every push and pull request.
 ## Process
 
 Spec-driven: ubiquitous language → Lean types and invariants → Rust core → differential
-testing. A new domain concept enters `docs/ubiquitous-language.md` first, then `spec/`,
-then `core/`. ADRs are living documents and are edited in place.
+testing. A new domain concept enters `docs/ubiquitous-language.md` first, then `verification/spec/`,
+then `src/domain/`. ADRs are living documents and are edited in place.
 
-## Running as a service
+## HTTP API: spec first
 
-`discount-server` exposes the engine over HTTP. Without `DATABASE_URL` it serves an
-in-memory catalogue seeded from `deploy/promotions.json`; with `DATABASE_URL` set the
-catalogue and the redemptions live in Postgres (migrations run at start-up).
+The contract is [api/openapi.yaml](api/openapi.yaml) (OpenAPI 3.0.3). It is written first,
+the server is checked against it, and clients are generated from it (ADR 10). A running
+service serves the document at `/openapi.yaml` and Swagger UI at `/docs`. Behaviour is
+specified with scenarios in `openspec/specs/`; the JSON shapes are the ubiquitous language.
 
-| Route | Purpose |
-|-------|---------|
-| `POST /v1/evaluate` `{cart, customer}` | dry run, returns a `PricingResult` |
-| `POST /v1/redeem` `{order_id, cart, customer}` | reserve: prices under a budget lock, stores the redemption, decrements budgets; idempotent by `order_id` |
-| `POST /v1/redemptions/{order_id}/confirm` / `cancel` | lifecycle `reserved → confirmed`, `reserved \| confirmed → cancelled` (cancel restores budgets) |
-| `GET /v1/redemptions/{order_id}` | stored redemption with its replayable input |
-| `GET\|PUT /v1/policy`, `/v1/groups[/{id}]`, `/v1/promotions[/{id}]`, `/v1/promotions/{id}/budget` | catalogue management |
-| `GET /v1/coupons`, `GET\|PUT\|DELETE /v1/coupons/{code}` | coupon codes that turn a promotion on (`RequiresCoupon`) |
-| `GET /v1/exchange-rates`, `PUT\|DELETE /v1/exchange-rates/{from}/{to}` | integer rates used to convert promotion amounts to the cart currency |
+- Rust: the workspace crate `discount-client` (`src/client`) is generated at build time;
+  add it as a path dependency and use `discount_client::Client`.
+- Other languages, from the same file (requires Docker):
 
-Pricing errors are `422 {"error": PricingError}`, malformed bodies `400 {"decode_error"}`,
-unknown ids `404`, rejected transitions `409`. The behaviour is specified with scenarios in
-`openspec/specs/`.
+```bash
+docker run --rm -v "$PWD:/local" openapitools/openapi-generator-cli generate -i /local/api/openapi.yaml -g typescript-fetch -o /local/clients/typescript
+```
 
-A cart carries `tags`, `attributes` and `coupon_codes`; the customer context carries
-`customer_id`, `completed_orders` and `uses`. The service resolves the codes to stored
-coupons and adds the customer's reserved and confirmed redemptions to `uses`, so rules
-such as `RequiresCoupon`, `MaxUsesPerCustomer`, `MaxCompletedOrders`, `TagsMatch`,
-`AttributeIn`, `AttributeDateWindow` and `OrderTotalRange` are evaluated by the verified
-core (see "Rule" in [docs/ubiquitous-language.md](docs/ubiquitous-language.md)).
-Promotion amounts in another currency are converted before pricing with the stored rates,
-rounding down; the proofs are stated on that normalized input.
+Lint the document the way CI does:
 
-The adapter tests run against Postgres when `DATABASE_URL` is set (the compose stack
-provides one at `postgres://discount:discount@localhost:5432/discount`); otherwise the
-Postgres scenarios are skipped and the in-memory store is tested alone.
+```bash
+npx --yes @redocly/cli@latest lint api/openapi.yaml
+```
+
+`discount-server` runs the engine behind that API. Without `DATABASE_URL` it uses an
+in-memory catalogue seeded from `deploy/promotions.json`; with it, catalogue and redemptions
+live in Postgres (migrations run at start-up).
 
 ## Observability
 
@@ -140,4 +137,4 @@ deploy/smoke.sh
 
 The metric and attribute names are listed under "Telemetry vocabulary" in
 [docs/ubiquitous-language.md](docs/ubiquitous-language.md). Instrumentation lives in
-`adapters/` only; `core/` stays telemetry-free.
+`src/infrastructure/` only; `src/domain/` stays telemetry-free.

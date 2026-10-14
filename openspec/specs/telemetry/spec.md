@@ -70,7 +70,7 @@ All signals SHALL carry the resource attributes `service.name=discount`,
 - **THEN** it is queryable by `service.name="discount"` in Prometheus, Tempo and Loki
 
 ### Requirement: Telemetry never changes pricing
-Instrumentation SHALL live outside `core/` and `app/`; the `PricingResult` returned to the
+Instrumentation SHALL live outside `src/domain/` and `src/applicationlication/`; the `PricingResult` returned to the
 caller SHALL be byte-for-byte the one computed before any telemetry is recorded. Exporter
 failures SHALL not fail evaluations.
 
@@ -78,3 +78,14 @@ failures SHALL not fail evaluations.
 - **WHEN** the OTLP endpoint is unreachable
 - **THEN** `POST /v1/evaluate` still returns the correct `PricingResult` and the service
   logs the export failure
+
+### Requirement: Redemption metrics
+The service SHALL record `discount.redemptions` (counter) with attributes `action` in
+`reserve | confirm | cancel` and `outcome` in `ok | idempotent | error`, and
+`discount.budget.remaining` (observable gauge, minor units) with `promotion_id` and
+`currency` for every promotion that has a budget, refreshed from the catalogue at least
+every 15 seconds.
+
+#### Scenario: Budget gauge after a reservation
+- **WHEN** `P1` had budget 1000 and a redemption reserved 300
+- **THEN** within 15 seconds `discount.budget.remaining{promotion_id="P1"}` reads 700

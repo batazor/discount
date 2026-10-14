@@ -32,17 +32,17 @@ jobs:
       - name: Build the Lean specification
         uses: leanprover/lean-action@v1
         with:
-          lake-package-directory: spec
+          lake-package-directory: verification/spec
           use-mathlib-cache: false
 
       - name: No sorry in the specification
         run: |
-          if grep -rn --include='*.lean' -w sorry spec/Discount spec/Main.lean; then
+          if grep -rn --include='*.lean' -w sorry verification/spec/Discount verification/spec/Main.lean; then
             echo "sorry found in merged Lean code"; exit 1
           fi
 
       - name: Theorems depend on no sorryAx
-        working-directory: spec
+        working-directory: verification/spec
         run: |
           lake env lean AxiomCheck.lean | tee axioms.txt
           if grep -q sorryAx axioms.txt; then echo "sorryAx in axioms"; exit 1; fi
@@ -53,6 +53,9 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
 
+      - name: Lint the API contract (api/openapi.yaml)
+        run: npx --yes @redocly/cli@latest lint api/openapi.yaml
+
       - name: cargo fmt
         run: cargo fmt --all --check
       - name: cargo clippy
@@ -60,6 +63,6 @@ jobs:
       - name: cargo test (unit tests, fixtures, differential run, Postgres adapter)
         env:
           DRT_CASES: "5000"
-          DISCOUNT_SPEC_BIN: ${{ github.workspace }}/spec/.lake/build/bin/discount-spec
+          DISCOUNT_SPEC_BIN: ${{ github.workspace }}/verification/spec/.lake/build/bin/discount-spec
           DATABASE_URL: postgres://discount:discount@localhost:5432/discount
         run: cargo test --workspace

@@ -37,7 +37,7 @@ Options considered:
   kopecks) plus a `Currency` (ISO 4217 alphabetic code, uppercase, 3 letters).
   Lean: `structure Money where amount : Int; currency : Currency`.
   Rust: `struct Money { amount: i64, currency: Currency }`.
-- No floating point anywhere in `spec/`, `core/`, `app/`. Adapters may format for
+- No floating point anywhere in `verification/spec/`, `src/domain/`, `src/applicationlication/`. Adapters may format for
   display but never compute.
 - Arithmetic on `Money` with different currencies is not defined; the pricing function
   rejects mixed-currency input (ADR 6). The model never has to add two currencies.
@@ -104,7 +104,7 @@ Options considered:
 
 ## Consequences
 
-- All generators in `drt/` must respect the bounds; they define the domain the
+- All generators in `verification/drt/` must respect the bounds; they define the domain the
   equivalence argument covers.
 - Formatting (`12.50 EUR`) is an adapter concern and needs the currency's exponent;
   the core does not know about exponents at all.

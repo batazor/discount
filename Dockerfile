@@ -2,11 +2,10 @@
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
-COPY core core
-COPY app app
-COPY adapters adapters
-COPY drt drt
-RUN cargo build --release -p discount-adapters --bin discount-server
+COPY src src
+COPY verification/drt verification/drt
+COPY api api
+RUN cargo build --release -p discount-infrastructure --bin discount-server
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*

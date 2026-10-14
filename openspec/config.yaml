@@ -32,13 +32,13 @@ schema: spec-driven
 #         - Summarize the archive outcome before finishing
 
 context: |
-  Spec-driven project: docs/ubiquitous-language.md is the single vocabulary, spec/ (Lean 4)
-  is the source of truth for the pricing engine, core/ (Rust) mirrors it function by
-  function and drt/ compares them. Only the pricing engine is in the verified scope;
-  app/, adapters/ and observability get ordinary tests.
-  A new domain concept enters docs/ubiquitous-language.md first, then spec/, then core/.
+  Spec-driven project: docs/ubiquitous-language.md is the single vocabulary, verification/spec/ (Lean 4)
+  is the source of truth for the pricing engine, src/domain/ (Rust) mirrors it function by
+  function and verification/drt/ compares them. Only the pricing engine is in the verified scope;
+  src/applicationlication/, src/infrastructure/ and observability get ordinary tests.
+  A new domain concept enters docs/ubiquitous-language.md first, then verification/spec/, then src/domain/.
   ADRs in docs/adr are living documents edited in place (adr-tools); no superseding ADRs.
-  Rust core/ depends on std and serde (derive) only; no telemetry code in core/.
+  Rust src/domain/ depends on std and serde (derive) only; no telemetry code in src/domain/.
   Money is integer minor units; no floats anywhere.
 rules:
   proposal:

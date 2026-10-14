@@ -4,8 +4,8 @@ Every statement below is about `apply` from `docs/ubiquitous-language.md`, on th
 `ok` branch: for all `input`, if `apply input = .ok result` then the property holds
 (ADR 6). `apply` validates, then prices `normalize input` (amounts converted to the cart
 currency, ADR 3); where a statement names a promotion's `cap`, `remaining_budget` or the
-order cap, it means the normalized value, written `P ∈ (normalize input).promotions`. The Lean theorem names are the ones `spec/` must export; the Rust side is covered
-by the differential tests in `drt/` (ADR 2). Nothing is claimed about inputs the generators
+order cap, it means the normalized value, written `P ∈ (normalize input).promotions`. The Lean theorem names are the ones `verification/spec/` must export; the Rust side is covered
+by the differential tests in `verification/drt/` (ADR 2). Nothing is claimed about inputs the generators
 do not produce; the generators cover the whole validated domain (ADR 3).
 
 Notation: `S` is `result.original_subtotal`, `D` is `result.total_discount`,
@@ -14,7 +14,7 @@ Notation: `S` is `result.original_subtotal`, `D` is `result.total_discount`,
 
 ## Status by iteration
 
-| # | Invariant | Status | Lean theorem(s) in `spec/Discount/Theorems/Invariants.lean` |
+| # | Invariant | Status | Lean theorem(s) in `verification/spec/Discount/Theorems/Invariants.lean` |
 |---|-----------|--------|------------------------------------------------------------|
 | 1 | Bounds per order and per line | proved | `final_total_bounds`, `line_total_bounds` |
 | 2 | Caps are respected | proved | `discount_le_cap`, `discount_le_budget`, `total_discount_le_order_cap`, `total_discount_le_subtotal` |
@@ -63,7 +63,7 @@ Two separate claims (ADR 4):
 The caller's list orders never matter because `sortPromotions` produces the total order
 `(group.priority DESC, group_id ASC, promotion.priority DESC, promotion_id ASC)` and ids
 are unique after validation. The `skipped` list is in that same total order. The proof
-needs two facts not yet in `spec/`: a sorted permutation of a sorted list under a total,
+needs two facts not yet in `verification/spec/`: a sorted permutation of a sorted list under a total,
 antisymmetric order is equal to it, and `find?` by a unique key is permutation-invariant.
 Both are routine and planned before the DRT lands; the DRT itself exercises permutation
 invariance on every generated case.
@@ -132,7 +132,7 @@ counters are inputs supplied by the application layer, so `RequiresCoupon` and
 
 ## Structural lemmas
 
-Proved (`spec/Discount/Theorems/`):
+Proved (`verification/spec/Discount/Theorems/`):
 
 - `validate_ok` (`Validate.lean`): `validate input = ok` implies `Valid (normalize input)`:
   after normalization every `unit_price`, `action.amount`, `cap`, `remaining_budget` and

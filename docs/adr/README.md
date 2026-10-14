@@ -9,3 +9,4 @@
 * [7. Purity: clock, budget and customer context enter only as inputs](0007-purity-clock-budget-and-customer-context-enter-only-as-inputs.md)
 * [8. Spec/core parity rule and the scope of the first iteration](0008-spec-core-parity-rule-and-the-scope-of-the-first-iteration.md)
 * [9. Evaluation result reports skipped promotions and clamp reasons](0009-evaluation-result-reports-skipped-promotions-and-clamp-reasons.md)
+* [10. Spec-first HTTP API: OpenAPI is the contract, clients are generated](0010-spec-first-http-api-openapi-is-the-contract-clients-are-generated.md)

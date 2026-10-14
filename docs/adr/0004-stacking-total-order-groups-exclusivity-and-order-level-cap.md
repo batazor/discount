@@ -156,5 +156,5 @@ per promotion and deterministic.
   prices for carts eligible for several promotions. This is intended and visible; policies
   are versioned with the promotion set, not hard-coded.
 - Application-layer naming follows the engines above: `Evaluate` (pure, dry-run; calls
-  `apply`) and `Redeem` (commits budgets and usage) are the two use cases in `app/`.
+  `apply`) and `Redeem` (commits budgets and usage) are the two use cases in `src/applicationlication/`.
   Only `Evaluate` is in the verified scope.

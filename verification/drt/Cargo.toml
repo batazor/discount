@@ -1,0 +1,12 @@
+[package]
+name = "discount-drt"
+description = "Differential random testing: discount-domain against the Lean reference in verification/spec"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+discount-domain = { path = "../../src/domain" }
+serde_json = { workspace = true }
+proptest = { workspace = true }

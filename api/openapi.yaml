@@ -1,0 +1,551 @@
+openapi: 3.0.3
+info:
+  title: discount
+  version: 0.1.0
+  description: |
+    Discount and promotion service. The pricing engine is specified in Lean 4 and mirrored in
+    Rust; this API wraps it. Every JSON shape below is the one defined in
+    docs/ubiquitous-language.md: amounts are integer minor units, enums are objects with a
+    `type` key, optional fields are `null`, unknown keys are rejected with `400`.
+    Behaviour is specified with scenarios in openspec/specs/.
+servers:
+  - url: http://localhost:8080
+    description: Local compose stack
+security: []
+tags:
+  - name: pricing
+    description: Price a cart without side effects
+  - name: redemptions
+    description: Apply a pricing result to an order and manage its lifecycle
+  - name: catalogue
+    description: Policy, groups, promotions, budgets, coupons and exchange rates
+  - name: system
+    description: Health and the API document itself
+paths:
+  /v1/evaluate:
+    post:
+      operationId: evaluate
+      tags: [pricing]
+      summary: Price a cart (dry run)
+      description: >-
+        Loads policy, groups, promotions, the coupons matching `cart.coupon_codes` and the
+        exchange rates from the catalogue, adds the customer's stored uses, and runs the
+        pricing engine. Nothing is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvaluateRequest' }
+      responses:
+        '200': { description: Priced, content: { application/json: { schema: { $ref: '#/components/schemas/PricingResult' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+        '422': { $ref: '#/components/responses/PricingError' }
+        '503': { $ref: '#/components/responses/StorageError' }
+  /v1/redeem:
+    post:
+      operationId: redeem
+      tags: [redemptions]
+      summary: Reserve a redemption for an order
+      description: >-
+        Prices the cart under a lock on the promotion budgets, stores the redemption as
+        `reserved` and decrements the budgets of the applied promotions. Idempotent by
+        `order_id`; a repeat returns the stored result unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RedeemRequest' }
+      responses:
+        '200': { description: 'Reserved, or the existing reservation', content: { application/json: { schema: { $ref: '#/components/schemas/RedeemResponse' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+        '422': { $ref: '#/components/responses/PricingError' }
+        '503': { $ref: '#/components/responses/StorageError' }
+  /v1/redemptions/{order_id}:
+    get:
+      operationId: getRedemption
+      tags: [redemptions]
+      summary: Stored redemption with its replayable input
+      parameters: [ { $ref: '#/components/parameters/OrderId' } ]
+      responses:
+        '200': { description: The redemption, content: { application/json: { schema: { $ref: '#/components/schemas/Redemption' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/redemptions/{order_id}/confirm:
+    post:
+      operationId: confirmRedemption
+      tags: [redemptions]
+      summary: Reserved to confirmed
+      parameters: [ { $ref: '#/components/parameters/OrderId' } ]
+      responses:
+        '200': { description: Confirmed, content: { application/json: { schema: { $ref: '#/components/schemas/TransitionResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+  /v1/redemptions/{order_id}/cancel:
+    post:
+      operationId: cancelRedemption
+      tags: [redemptions]
+      summary: Reserved or confirmed to cancelled, restoring budgets
+      parameters: [ { $ref: '#/components/parameters/OrderId' } ]
+      responses:
+        '200': { description: Cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/TransitionResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+  /v1/policy:
+    get:
+      operationId: getPolicy
+      tags: [catalogue]
+      summary: Current pricing policy
+      responses:
+        '200': { description: Policy, content: { application/json: { schema: { $ref: '#/components/schemas/PricingPolicy' } } } }
+    put:
+      operationId: putPolicy
+      tags: [catalogue]
+      summary: Replace the pricing policy
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PricingPolicy' } } } }
+      responses:
+        '200': { description: Stored policy, content: { application/json: { schema: { $ref: '#/components/schemas/PricingPolicy' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+  /v1/groups:
+    get:
+      operationId: listGroups
+      tags: [catalogue]
+      summary: Stacking groups
+      responses:
+        '200': { description: Groups, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/StackingGroup' } } } } }
+  /v1/groups/{group_id}:
+    parameters: [ { name: group_id, in: path, required: true, schema: { type: string } } ]
+    get:
+      operationId: getGroup
+      tags: [catalogue]
+      summary: One stacking group
+      responses:
+        '200': { description: Group, content: { application/json: { schema: { $ref: '#/components/schemas/StackingGroup' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putGroup
+      tags: [catalogue]
+      summary: Upsert a stacking group (the path id wins over the body)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StackingGroup' } } } }
+      responses:
+        '200': { description: Stored group, content: { application/json: { schema: { $ref: '#/components/schemas/StackingGroup' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+    delete:
+      operationId: deleteGroup
+      tags: [catalogue]
+      summary: Delete a stacking group
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/promotions:
+    get:
+      operationId: listPromotions
+      tags: [catalogue]
+      summary: Non-archived promotions with their remaining budget
+      responses:
+        '200': { description: Promotions, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Promotion' } } } } }
+  /v1/promotions/{promotion_id}:
+    parameters: [ { $ref: '#/components/parameters/PromotionId' } ]
+    get:
+      operationId: getPromotion
+      tags: [catalogue]
+      summary: One promotion with its remaining budget
+      responses:
+        '200': { description: Promotion, content: { application/json: { schema: { $ref: '#/components/schemas/Promotion' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putPromotion
+      tags: [catalogue]
+      summary: Upsert a promotion (`remaining_budget` in the body is ignored, see the budget resource)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Promotion' } } } }
+      responses:
+        '200': { description: Stored promotion, content: { application/json: { schema: { $ref: '#/components/schemas/Promotion' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+    delete:
+      operationId: deletePromotion
+      tags: [catalogue]
+      summary: Archive a promotion (it leaves snapshots; existing redemptions keep their copy)
+      responses:
+        '204': { description: Archived }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/promotions/{promotion_id}/budget:
+    parameters: [ { $ref: '#/components/parameters/PromotionId' } ]
+    get:
+      operationId: getBudget
+      tags: [catalogue]
+      summary: Remaining budget of a promotion
+      responses:
+        '200': { description: Budget, content: { application/json: { schema: { $ref: '#/components/schemas/Budget' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putBudget
+      tags: [catalogue]
+      summary: Set or clear the remaining budget
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Budget' } } } }
+      responses:
+        '200': { description: Stored budget, content: { application/json: { schema: { $ref: '#/components/schemas/Budget' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/coupons:
+    get:
+      operationId: listCoupons
+      tags: [catalogue]
+      summary: Coupons
+      responses:
+        '200': { description: Coupons, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Coupon' } } } } }
+  /v1/coupons/{code}:
+    parameters: [ { name: code, in: path, required: true, schema: { type: string } } ]
+    get:
+      operationId: getCoupon
+      tags: [catalogue]
+      summary: One coupon
+      responses:
+        '200': { description: Coupon, content: { application/json: { schema: { $ref: '#/components/schemas/Coupon' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putCoupon
+      tags: [catalogue]
+      summary: Upsert a coupon (the path code wins over the body)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Coupon' } } } }
+      responses:
+        '200': { description: Stored coupon, content: { application/json: { schema: { $ref: '#/components/schemas/Coupon' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+    delete:
+      operationId: deleteCoupon
+      tags: [catalogue]
+      summary: Delete a coupon
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/exchange-rates:
+    get:
+      operationId: listExchangeRates
+      tags: [catalogue]
+      summary: Exchange rates
+      responses:
+        '200': { description: Rates, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ExchangeRate' } } } } }
+  /v1/exchange-rates/{from}/{to}:
+    parameters:
+      - { name: from, in: path, required: true, schema: { $ref: '#/components/schemas/Currency' } }
+      - { name: to, in: path, required: true, schema: { $ref: '#/components/schemas/Currency' } }
+    put:
+      operationId: putExchangeRate
+      tags: [catalogue]
+      summary: Set the rate converting `from` into `to`
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RateBody' } } } }
+      responses:
+        '200': { description: Stored rate, content: { application/json: { schema: { $ref: '#/components/schemas/ExchangeRate' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+    delete:
+      operationId: deleteExchangeRate
+      tags: [catalogue]
+      summary: Delete a rate
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /healthz:
+    get:
+      operationId: healthz
+      tags: [system]
+      summary: Liveness
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [ok] } }, required: [status] } } } }
+  /openapi.yaml:
+    get:
+      operationId: openapiDocument
+      tags: [system]
+      summary: This document
+      responses:
+        '200': { description: OpenAPI 3.1 document, content: { application/yaml: { schema: { type: string } } } }
+  /docs:
+    get:
+      operationId: swaggerUi
+      tags: [system]
+      summary: Swagger UI for this document
+      responses:
+        '200': { description: HTML, content: { text/html: { schema: { type: string } } } }
+components:
+  parameters:
+    OrderId: { name: order_id, in: path, required: true, schema: { type: string } }
+    PromotionId: { name: promotion_id, in: path, required: true, schema: { type: string } }
+  responses:
+    DecodeError:
+      description: Malformed body (invalid JSON, schema mismatch, unknown key); `decode_error` is set
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
+    PricingError:
+      description: The input was rejected by `validate`; `error` is a PricingError object and nothing is stored
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
+    NotFound:
+      description: Unknown id; `error` is `"NotFound"`
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
+    InvalidTransition:
+      description: The redemption is not in a state that allows this transition; `error` is `"InvalidTransition"` with `from` and `to`
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
+    StorageError:
+      description: The catalogue or redemption store is unavailable; `storage_error` is set
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
+  schemas:
+    ErrorBody:
+      description: |
+        Every non-2xx response carries this shape. Exactly one of `error`, `decode_error` and
+        `storage_error` is present: `error` is the string code `NotFound` or `InvalidTransition`
+        (then `from` and `to` are set) or a `PricingError` object for `422`.
+      type: object
+      properties:
+        error:
+          oneOf:
+            - { type: string, enum: [NotFound, InvalidTransition] }
+            - { $ref: '#/components/schemas/PricingError' }
+        from: { $ref: '#/components/schemas/RedemptionStatus' }
+        to: { $ref: '#/components/schemas/RedemptionStatus' }
+        decode_error: { type: string }
+        storage_error: { type: string }
+    Currency: { type: string, pattern: '^[A-Z]{3}$', description: ISO 4217 alphabetic code }
+    Money:
+      type: object
+      required: [amount, currency]
+      additionalProperties: false
+      properties:
+        amount: { type: integer, format: int64, description: 'Minor units, 0 ..= 10^14' }
+        currency: { $ref: '#/components/schemas/Currency' }
+    BasisPoints: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+    Timestamp: { type: integer, format: int64, description: Unix seconds }
+    RoundingPolicy:
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties: { type: { type: string, enum: [HalfUp, HalfEven, Down] } }
+    StackingPolicy:
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties: { type: { type: string, enum: [Sequential, Additive] } }
+    StackingMode:
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties: { type: { type: string, enum: [Stackable, FirstMatch] } }
+    OrderCap:
+      type: object
+      required: [amount, bps]
+      additionalProperties: false
+      properties:
+        amount: { type: object, allOf: [ { $ref: '#/components/schemas/Money' } ], nullable: true }
+        bps: { type: integer, format: int64, allOf: [ { $ref: '#/components/schemas/BasisPoints' } ], nullable: true }
+    PricingPolicy:
+      type: object
+      required: [rounding, stacking, order_cap]
+      additionalProperties: false
+      properties:
+        rounding: { $ref: '#/components/schemas/RoundingPolicy' }
+        stacking: { $ref: '#/components/schemas/StackingPolicy' }
+        order_cap: { $ref: '#/components/schemas/OrderCap' }
+    CartLine:
+      type: object
+      required: [line_id, unit_price, quantity]
+      additionalProperties: false
+      properties:
+        line_id: { type: string }
+        unit_price: { $ref: '#/components/schemas/Money' }
+        quantity: { type: integer, format: int64, minimum: 1, maximum: 1000000000 }
+    Attribute:
+      type: object
+      required: [key, value]
+      additionalProperties: false
+      properties: { key: { type: string }, value: { type: string } }
+    CartSnapshot:
+      type: object
+      required: [currency, lines, tags, attributes, coupon_codes]
+      additionalProperties: false
+      properties:
+        currency: { $ref: '#/components/schemas/Currency' }
+        lines: { type: array, items: { $ref: '#/components/schemas/CartLine' } }
+        tags: { type: array, items: { type: string } }
+        attributes: { type: array, items: { $ref: '#/components/schemas/Attribute' } }
+        coupon_codes: { type: array, items: { type: string }, description: Each code at most once }
+    PromotionUse:
+      type: object
+      required: [promotion_id, count]
+      additionalProperties: false
+      properties: { promotion_id: { type: string }, count: { type: integer, format: int64, minimum: 0 } }
+    CustomerContext:
+      type: object
+      required: [customer_id, completed_orders, uses]
+      additionalProperties: false
+      properties:
+        customer_id: { type: string, nullable: true }
+        completed_orders: { type: integer, format: int64, minimum: 0 }
+        uses: { type: array, items: { $ref: '#/components/schemas/PromotionUse' }, description: The service adds the customer's reserved and confirmed redemptions to these counts }
+    StackingGroup:
+      type: object
+      required: [group_id, priority, mode]
+      additionalProperties: false
+      properties:
+        group_id: { type: string }
+        priority: { type: integer, format: int64 }
+        mode: { $ref: '#/components/schemas/StackingMode' }
+    Rule:
+      description: See "Rule" in docs/ubiquitous-language.md for the exact semantics.
+      oneOf:
+        - { type: object, additionalProperties: false, required: [type, starts_at, ends_at], properties: { type: { type: string, enum: [DateWindow] }, starts_at: { type: integer, format: int64, nullable: true }, ends_at: { type: integer, format: int64, nullable: true } } }
+        - { type: object, additionalProperties: false, required: [type, min, max], properties: { type: { type: string, enum: [OrderTotalRange] }, min: { type: object, allOf: [ { $ref: '#/components/schemas/Money' } ], nullable: true }, max: { type: object, allOf: [ { $ref: '#/components/schemas/Money' } ], nullable: true } } }
+        - { type: object, additionalProperties: false, required: [type, all, any, none], properties: { type: { type: string, enum: [TagsMatch] }, all: { type: array, items: { type: string } }, any: { type: array, items: { type: string } }, none: { type: array, items: { type: string } } } }
+        - { type: object, additionalProperties: false, required: [type, key, values], properties: { type: { type: string, enum: [AttributeIn] }, key: { type: string }, values: { type: array, items: { type: string } } } }
+        - { type: object, additionalProperties: false, required: [type, key, starts_at, ends_at], properties: { type: { type: string, enum: [AttributeDateWindow] }, key: { type: string }, starts_at: { type: integer, format: int64, nullable: true }, ends_at: { type: integer, format: int64, nullable: true } } }
+        - { type: object, additionalProperties: false, required: [type, max], properties: { type: { type: string, enum: [MaxCompletedOrders] }, max: { type: integer, format: int64, minimum: 0 } } }
+        - { type: object, additionalProperties: false, required: [type, max], properties: { type: { type: string, enum: [MaxUsesPerCustomer] }, max: { type: integer, format: int64, minimum: 0 } } }
+        - { type: object, additionalProperties: false, required: [type], properties: { type: { type: string, enum: [RequiresCoupon] } } }
+    Action:
+      oneOf:
+        - { type: object, additionalProperties: false, required: [type, bps], properties: { type: { type: string, enum: [OrderPercentage] }, bps: { $ref: '#/components/schemas/BasisPoints' } } }
+        - { type: object, additionalProperties: false, required: [type, amount], properties: { type: { type: string, enum: [OrderFixedAmount] }, amount: { $ref: '#/components/schemas/Money' } } }
+    Promotion:
+      type: object
+      required: [promotion_id, group_id, priority, exclusive, cap, remaining_budget, rounding, rules, action]
+      additionalProperties: false
+      properties:
+        promotion_id: { type: string }
+        group_id: { type: string }
+        priority: { type: integer, format: int64 }
+        exclusive: { type: boolean }
+        cap: { type: object, allOf: [ { $ref: '#/components/schemas/Money' } ], nullable: true }
+        remaining_budget: { type: object, allOf: [ { $ref: '#/components/schemas/Money' } ], nullable: true, description: Read-only on this API; set through the budget resource }
+        rounding: { type: object, allOf: [ { $ref: '#/components/schemas/RoundingPolicy' } ], nullable: true }
+        rules: { type: array, items: { $ref: '#/components/schemas/Rule' } }
+        action: { $ref: '#/components/schemas/Action' }
+    Coupon:
+      type: object
+      required: [code, promotion_id, starts_at, ends_at, customer_id]
+      additionalProperties: false
+      properties:
+        code: { type: string }
+        promotion_id: { type: string }
+        starts_at: { type: integer, format: int64, nullable: true }
+        ends_at: { type: integer, format: int64, nullable: true }
+        customer_id: { type: string, nullable: true }
+    ExchangeRate:
+      type: object
+      required: [from, to, numerator, denominator]
+      additionalProperties: false
+      properties:
+        from: { $ref: '#/components/schemas/Currency' }
+        to: { $ref: '#/components/schemas/Currency' }
+        numerator: { type: integer, format: int64, minimum: 1, maximum: 1000000000000 }
+        denominator: { type: integer, format: int64, minimum: 1, maximum: 1000000000000 }
+    RateBody:
+      type: object
+      required: [numerator, denominator]
+      additionalProperties: false
+      properties:
+        numerator: { type: integer, format: int64, minimum: 1 }
+        denominator: { type: integer, format: int64, minimum: 1 }
+    Budget:
+      type: object
+      required: [remaining]
+      additionalProperties: false
+      properties: { remaining: { type: object, allOf: [ { $ref: '#/components/schemas/Money' } ], nullable: true } }
+    EvaluateRequest:
+      type: object
+      required: [cart, customer]
+      additionalProperties: false
+      properties:
+        cart: { $ref: '#/components/schemas/CartSnapshot' }
+        customer: { $ref: '#/components/schemas/CustomerContext' }
+    RedeemRequest:
+      type: object
+      required: [order_id, cart, customer]
+      additionalProperties: false
+      properties:
+        order_id: { type: string }
+        cart: { $ref: '#/components/schemas/CartSnapshot' }
+        customer: { $ref: '#/components/schemas/CustomerContext' }
+    ClampReason:
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties: { type: { type: string, enum: [Cap, Budget, OrderCap, Running] } }
+    SkipReason:
+      oneOf:
+        - { type: object, additionalProperties: false, required: [type, rule_index], properties: { type: { type: string, enum: [NotEligible] }, rule_index: { type: integer, minimum: 0 } } }
+        - { type: object, additionalProperties: false, required: [type, winner], properties: { type: { type: string, enum: [ExclusiveApplied] }, winner: { type: string } } }
+        - { type: object, additionalProperties: false, required: [type, winner], properties: { type: { type: string, enum: [FirstMatchTaken] }, winner: { type: string } } }
+    LineAllocation:
+      type: object
+      required: [line_id, amount]
+      additionalProperties: false
+      properties: { line_id: { type: string }, amount: { $ref: '#/components/schemas/Money' } }
+    AppliedPromotion:
+      type: object
+      required: [promotion_id, discount, clamped_by, allocation]
+      additionalProperties: false
+      properties:
+        promotion_id: { type: string }
+        discount: { $ref: '#/components/schemas/Money' }
+        clamped_by: { type: object, allOf: [ { $ref: '#/components/schemas/ClampReason' } ], nullable: true }
+        allocation: { type: array, items: { $ref: '#/components/schemas/LineAllocation' } }
+    SkippedPromotion:
+      type: object
+      required: [promotion_id, reason]
+      additionalProperties: false
+      properties: { promotion_id: { type: string }, reason: { $ref: '#/components/schemas/SkipReason' } }
+    LineResult:
+      type: object
+      required: [line_id, subtotal, discount, total]
+      additionalProperties: false
+      properties:
+        line_id: { type: string }
+        subtotal: { $ref: '#/components/schemas/Money' }
+        discount: { $ref: '#/components/schemas/Money' }
+        total: { $ref: '#/components/schemas/Money' }
+    PricingResult:
+      type: object
+      required: [currency, original_subtotal, total_discount, final_total, lines, applied, skipped]
+      additionalProperties: false
+      properties:
+        currency: { $ref: '#/components/schemas/Currency' }
+        original_subtotal: { $ref: '#/components/schemas/Money' }
+        total_discount: { $ref: '#/components/schemas/Money' }
+        final_total: { $ref: '#/components/schemas/Money' }
+        lines: { type: array, items: { $ref: '#/components/schemas/LineResult' } }
+        applied: { type: array, items: { $ref: '#/components/schemas/AppliedPromotion' }, description: In application order }
+        skipped: { type: array, items: { $ref: '#/components/schemas/SkippedPromotion' }, description: In the total order }
+    PricingError:
+      description: Variants and the normative check order are in docs/ubiquitous-language.md ("PricingError").
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [InvalidCurrency, MixedCurrencies, CurrencyMismatch, AmountOutOfRange, InvalidBasisPoints, InvalidQuantity, DuplicateLineId, DuplicateGroupId, DuplicatePromotionId, UnknownGroup, DuplicateCouponCode, InvalidCustomerContext, InvalidExchangeRate, DuplicateExchangeRate, InvalidRule, Overflow]
+        field: { type: string }
+        line_index: { type: integer }
+        promotion_index: { type: integer }
+        line_id: { type: string }
+        group_id: { type: string }
+        promotion_id: { type: string }
+        code: { type: string }
+        from: { type: string }
+        to: { type: string }
+    RedemptionStatus: { type: string, enum: [reserved, confirmed, cancelled] }
+    Redemption:
+      type: object
+      required: [order_id, customer_id, status, input, result, created_at, updated_at]
+      properties:
+        order_id: { type: string }
+        customer_id: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/RedemptionStatus' }
+        input: { type: object, description: The PricingInput that was priced; replaying it in either implementation reproduces `result` }
+        result: { $ref: '#/components/schemas/PricingResult' }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+    RedeemResponse:
+      type: object
+      required: [order_id, status, result]
+      properties:
+        order_id: { type: string }
+        status: { $ref: '#/components/schemas/RedemptionStatus' }
+        result: { $ref: '#/components/schemas/PricingResult' }
+    TransitionResponse:
+      type: object
+      required: [order_id, status]
+      properties:
+        order_id: { type: string }
+        status: { $ref: '#/components/schemas/RedemptionStatus' }

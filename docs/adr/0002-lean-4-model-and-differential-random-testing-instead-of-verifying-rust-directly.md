@@ -37,11 +37,11 @@ Options considered:
 ## Decision
 
 1. The Lean 4 model is the primary artifact. Domain types, the `apply` function and the
-   invariant theorems live in `spec/` as a `lake` project. The model is compiled into a
+   invariant theorems live in `verification/spec/` as a `lake` project. The model is compiled into a
    CLI reference: JSON on stdin, JSON on stdout.
 2. The Rust `core` crate mirrors the Lean model structurally: same type names, same
    function decomposition, same order of operations (ADR 8).
-3. Differential random testing (DRT) in `drt/` generates carts, promotions and `now` with
+3. Differential random testing (DRT) in `verification/drt/` generates carts, promotions and `now` with
    `proptest`, runs both implementations and asserts equal results, compared as parsed JSON values
    (key order is not significant), including error results (ADR 6). The Lean reference
    is a long-lived child process speaking one JSON document per line over stdin/stdout.
@@ -49,7 +49,7 @@ Options considered:
 4. Aeneas is optional and later. If used, it is limited to the rounding and allocation
    functions, which stay inside Aeneas' supported subset: safe Rust, no async, no trait
    objects, no closures beyond what Aeneas documents.
-5. Lean toolchain is pinned in `spec/lean-toolchain` (currently `v4.34.1`). No Mathlib.
+5. Lean toolchain is pinned in `verification/spec/lean-toolchain` (currently `v4.34.1`). No Mathlib.
    Integer bounds proofs use `omega`, `decide`, `simp` and core lemmas on `Int`/`Nat`.
    Mathlib would add a multi-GB dependency and tens of minutes to CI for lemmas we do not
    need.
