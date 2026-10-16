@@ -54,7 +54,10 @@ Options considered:
    - `InvalidCustomerContext { field }`: negative `completed_orders` or use count, or a
      promotion listed twice in `customer.uses`.
    - `InvalidExchangeRate { field }`: numerator or denominator outside `1 ..= MAX_RATE_PART`.
-   - `InvalidRule { field }`: negative `max` in `MaxCompletedOrders` / `MaxUsesPerCustomer`.
+   - `InvalidRule { field }`: negative `max` in `MaxCompletedOrders` / `MaxUsesPerCustomer` /
+     `MaxUsesTotal`.
+   - `InvalidCoupon { field }`: negative `uses` or `max_uses` on a coupon snapshot.
+   - `InvalidPromotion { field }`: negative `uses_total` on a promotion snapshot.
    - `Overflow`: reserved for checked arithmetic in Rust; unreachable for valid input
      (ADR 3). Lean never produces it.
    An empty cart is not an error: it prices to zero with no discounts. The exact check

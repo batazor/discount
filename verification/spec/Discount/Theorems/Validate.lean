@@ -168,7 +168,8 @@ theorem checkPromotions_ok {ps : List Promotion} {cur : Currency} {rates : List 
     obtain ⟨h1, h2⟩ := andThen_ok h
     obtain ⟨h3, h4⟩ := andThen_ok h2
     obtain ⟨h5, h6⟩ := andThen_ok h4
-    obtain ⟨_, h8⟩ := andThen_ok h6
+    obtain ⟨_, h7⟩ := andThen_ok h6
+    obtain ⟨_, h8⟩ := andThen_ok h7
     obtain ⟨h9, h10⟩ := andThen_ok h8
     rcases List.mem_cons.mp hx with rfl | hx'
     · obtain ⟨ha1, ha2⟩ := checkAction_ok h1

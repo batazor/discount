@@ -252,6 +252,31 @@ pub fn check_rates(rates: &[ExchangeRate]) -> Result<(), PricingError> {
     }
 }
 
+pub fn check_coupons_each(coupons: &[Coupon]) -> Result<(), PricingError> {
+    for (k, c) in coupons.iter().enumerate() {
+        if c.uses < 0 {
+            return Err(PricingError::InvalidCoupon {
+                field: format!("coupons[{k}].uses"),
+            });
+        }
+        if let Some(m) = c.max_uses
+            && m < 0
+        {
+            return Err(PricingError::InvalidCoupon {
+                field: format!("coupons[{k}].max_uses"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Per-coupon counters, then duplicate codes.
+pub fn check_coupons(coupons: &[Coupon]) -> Result<(), PricingError> {
+    check_coupons_each(coupons)?;
+    let codes: Vec<&str> = coupons.iter().map(|c| c.code.as_str()).collect();
+    check_duplicates(&codes, |code| PricingError::DuplicateCouponCode { code })
+}
+
 pub fn check_order_cap(
     oc: &OrderCap,
     cart_currency: &str,
@@ -319,7 +344,9 @@ pub fn check_rule(
                 &format!("promotions[{i}].rules[{k}].max"),
             )
         }
-        Rule::MaxCompletedOrders { max } | Rule::MaxUsesPerCustomer { max } => {
+        Rule::MaxCompletedOrders { max }
+        | Rule::MaxUsesPerCustomer { max }
+        | Rule::MaxUsesTotal { max } => {
             if *max < 0 {
                 Err(PricingError::InvalidRule {
                     field: format!("promotions[{i}].rules[{k}].max"),
@@ -391,8 +418,7 @@ pub fn validate(i: &PricingInput) -> Result<(), PricingError> {
     }
     check_customer(&i.customer)?;
     check_rates(rates)?;
-    let codes: Vec<&str> = i.coupons.iter().map(|c| c.code.as_str()).collect();
-    check_duplicates(&codes, |code| PricingError::DuplicateCouponCode { code })?;
+    check_coupons(&i.coupons)?;
     check_order_cap(&i.policy.order_cap, cur, rates)?;
     let gids: Vec<&str> = i.groups.iter().map(|g| g.group_id.as_str()).collect();
     check_duplicates(&gids, |group_id| PricingError::DuplicateGroupId {

@@ -155,14 +155,16 @@ instance : FromJson CustomerContext where
 
 instance : ToJson Coupon where
   toJson c := Json.mkObj [("code", toJson c.code), ("promotion_id", toJson c.promotion_id),
-    ("starts_at", optJson c.starts_at), ("ends_at", optJson c.ends_at), ("customer_id", optJson c.customer_id)]
+    ("starts_at", optJson c.starts_at), ("ends_at", optJson c.ends_at), ("customer_id", optJson c.customer_id),
+    ("max_uses", optJson c.max_uses), ("uses", toJson c.uses)]
 
 instance : FromJson Coupon where
   fromJson? j := do
-    checkKeys j ["code", "promotion_id", "starts_at", "ends_at", "customer_id"]
+    checkKeys j ["code", "promotion_id", "starts_at", "ends_at", "customer_id", "max_uses", "uses"]
     pure { code := ← getField j "code", promotion_id := ← getField j "promotion_id",
            starts_at := ← getOpt j "starts_at", ends_at := ← getOpt j "ends_at",
-           customer_id := ← getOpt j "customer_id" }
+           customer_id := ← getOpt j "customer_id", max_uses := ← getOpt j "max_uses",
+           uses := ← getField j "uses" }
 
 instance : ToJson ExchangeRate where
   toJson r := Json.mkObj [("from", toJson r.«from»), ("to", toJson r.to),
@@ -211,6 +213,7 @@ instance : ToJson Rule where
         variant "AttributeDateWindow" [("key", toJson k), ("starts_at", optJson s), ("ends_at", optJson e)]
     | .MaxCompletedOrders m => variant "MaxCompletedOrders" [("max", toJson m)]
     | .MaxUsesPerCustomer m => variant "MaxUsesPerCustomer" [("max", toJson m)]
+    | .MaxUsesTotal m => variant "MaxUsesTotal" [("max", toJson m)]
     | .RequiresCoupon => variant "RequiresCoupon"
 
 instance : FromJson Rule where
@@ -237,6 +240,9 @@ instance : FromJson Rule where
     | "MaxUsesPerCustomer" =>
         checkKeys j ["type", "max"]
         pure (.MaxUsesPerCustomer (← getField j "max"))
+    | "MaxUsesTotal" =>
+        checkKeys j ["type", "max"]
+        pure (.MaxUsesTotal (← getField j "max"))
     | "RequiresCoupon" =>
         checkKeys j ["type"]
         pure .RequiresCoupon
@@ -263,15 +269,17 @@ instance : ToJson Promotion where
     ("promotion_id", toJson p.promotion_id), ("group_id", toJson p.group_id),
     ("priority", toJson p.priority), ("exclusive", toJson p.exclusive),
     ("cap", optJson p.cap), ("remaining_budget", optJson p.remaining_budget),
+    ("uses_total", toJson p.uses_total),
     ("rounding", optJson p.rounding), ("rules", toJson p.rules), ("action", toJson p.action)]
 
 instance : FromJson Promotion where
   fromJson? j := do
     checkKeys j ["promotion_id", "group_id", "priority", "exclusive", "cap",
-      "remaining_budget", "rounding", "rules", "action"]
+      "remaining_budget", "uses_total", "rounding", "rules", "action"]
     pure { promotion_id := ← getField j "promotion_id", group_id := ← getField j "group_id",
            priority := ← getField j "priority", exclusive := ← getField j "exclusive",
            cap := ← getOpt j "cap", remaining_budget := ← getOpt j "remaining_budget",
+           uses_total := ← getField j "uses_total",
            rounding := ← getOpt j "rounding", rules := ← getField j "rules",
            action := ← getField j "action" }
 
@@ -308,6 +316,8 @@ instance : ToJson PricingError where
     | .InvalidExchangeRate f => variant "InvalidExchangeRate" [("field", toJson f)]
     | .DuplicateExchangeRate f t => variant "DuplicateExchangeRate" [("from", toJson f), ("to", toJson t)]
     | .InvalidRule f => variant "InvalidRule" [("field", toJson f)]
+    | .InvalidCoupon f => variant "InvalidCoupon" [("field", toJson f)]
+    | .InvalidPromotion f => variant "InvalidPromotion" [("field", toJson f)]
     | .Overflow => variant "Overflow"
 
 -- Result -------------------------------------------------------------------

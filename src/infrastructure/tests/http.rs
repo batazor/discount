@@ -200,7 +200,7 @@ async fn catalogue_routes() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let promo = json!({"promotion_id": "P10", "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
-        "remaining_budget": null, "rounding": null, "rules": [], "action": {"type": "OrderPercentage", "bps": 1000}});
+        "remaining_budget": null, "uses_total": 0, "rounding": null, "rules": [], "action": {"type": "OrderPercentage", "bps": 1000}});
     let (status, _) = call(
         &app,
         Method::PUT,
@@ -312,7 +312,7 @@ async fn coupon_and_rate_routes() {
     )
     .await;
     let promo = json!({"promotion_id": "P1", "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
-        "remaining_budget": null, "rounding": null, "rules": [{"type": "RequiresCoupon"}],
+        "remaining_budget": null, "uses_total": 0, "rounding": null, "rules": [{"type": "RequiresCoupon"}],
         "action": {"type": "OrderFixedAmount", "amount": {"amount": 1000, "currency": "USD"}}});
     let (status, _) = call(
         &app,
@@ -322,10 +322,10 @@ async fn coupon_and_rate_routes() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, c) = call(&app, Method::PUT, "/v1/coupons/WELCOME", Some(json!({"code": "WELCOME", "promotion_id": "P1", "starts_at": null, "ends_at": null, "customer_id": null}).to_string())).await;
+    let (status, c) = call(&app, Method::PUT, "/v1/coupons/WELCOME", Some(json!({"code": "WELCOME", "promotion_id": "P1", "starts_at": null, "ends_at": null, "customer_id": null, "max_uses": null, "uses": 5}).to_string())).await;
     assert_eq!(
-        (status, c["code"].as_str()),
-        (StatusCode::OK, Some("WELCOME"))
+        (status, c["code"].as_str(), c["uses"].as_i64()),
+        (StatusCode::OK, Some("WELCOME"), Some(0))
     );
     let (status, r) = call(
         &app,
@@ -404,6 +404,10 @@ async fn openapi_covers_every_route() {
         "/v1/promotions/{promotion_id}/budget",
         "/v1/coupons:",
         "/v1/coupons/{code}",
+        "/v1/coupons/generate",
+        "/v1/coupons/grant",
+        "/v1/grant-rules:",
+        "/v1/grant-rules/{rule_id}",
         "/v1/exchange-rates:",
         "/v1/exchange-rates/{from}/{to}",
         "/healthz",
@@ -426,4 +430,217 @@ async fn openapi_covers_every_route() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+}
+
+/// Spec `coupon-lifecycle`: bulk generation, grant rules and grants over HTTP.
+#[tokio::test]
+async fn coupon_lifecycle_routes() {
+    let app = router(state_with(
+        discount_infrastructure::InMemoryStore::new(discount_infrastructure::default_policy()),
+        discount_infrastructure::telemetry::Instruments::noop(),
+    ));
+    call(
+        &app,
+        Method::PUT,
+        "/v1/groups/g",
+        Some(json!({"group_id": "g", "priority": 0, "mode": {"type": "Stackable"}}).to_string()),
+    )
+    .await;
+    let promo = json!({"promotion_id": "P1", "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
+        "remaining_budget": null, "uses_total": 0, "rounding": null, "rules": [{"type": "RequiresCoupon"}],
+        "action": {"type": "OrderFixedAmount", "amount": {"amount": 300, "currency": "EUR"}}});
+    call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P1",
+        Some(promo.to_string()),
+    )
+    .await;
+
+    // generate: 100 distinct single-use codes with the prefix
+    let gen_req = json!({"promotion_id": "P1", "count": 100, "prefix": "SUMMER-", "starts_at": null,
+        "ends_at": null, "max_uses": 1, "customer_id": null});
+    let (status, g) = call(
+        &app,
+        Method::POST,
+        "/v1/coupons/generate",
+        Some(gen_req.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let codes: Vec<String> = serde_json::from_value(g["codes"].clone()).unwrap();
+    assert_eq!(codes.len(), 100);
+    let distinct: std::collections::BTreeSet<&String> = codes.iter().collect();
+    assert_eq!(distinct.len(), 100);
+    assert!(
+        codes
+            .iter()
+            .all(|c| c.starts_with("SUMMER-") && c.len() == "SUMMER-".len() + 8)
+    );
+    let (status, c) = call(
+        &app,
+        Method::GET,
+        &format!("/v1/coupons/{}", codes[0]),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, c["max_uses"].as_i64(), c["uses"].as_i64()),
+        (StatusCode::OK, Some(1), Some(0))
+    );
+    // unknown promotion -> 404, bad count -> 400
+    let mut bad = gen_req.clone();
+    bad["promotion_id"] = json!("nope");
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/coupons/generate",
+            Some(bad.to_string())
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let mut bad = gen_req.clone();
+    bad["count"] = json!(0);
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/coupons/generate",
+            Some(bad.to_string())
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+
+    // single use over HTTP: first redeem applies, second with the same code skips, cancel frees it
+    let mut cart = cart_json();
+    cart["coupon_codes"] = json!([codes[0]]);
+    let redeem = |order: &str| {
+        json!({"order_id": order, "cart": cart, "customer": customer_json()}).to_string()
+    };
+    let (status, r1) = call(&app, Method::POST, "/v1/redeem", Some(redeem("o1"))).await;
+    assert_eq!(
+        (status, r1["result"]["applied"].as_array().unwrap().len()),
+        (StatusCode::OK, 1)
+    );
+    let (_, c) = call(
+        &app,
+        Method::GET,
+        &format!("/v1/coupons/{}", codes[0]),
+        None,
+    )
+    .await;
+    assert_eq!(c["uses"].as_i64(), Some(1));
+    let (_, r2) = call(&app, Method::POST, "/v1/redeem", Some(redeem("o2"))).await;
+    assert_eq!(r2["result"]["skipped"][0]["reason"]["type"], "NotEligible");
+    call(&app, Method::POST, "/v1/redemptions/o1/cancel", None).await;
+    let (_, r3) = call(&app, Method::POST, "/v1/redeem", Some(redeem("o3"))).await;
+    assert_eq!(r3["result"]["applied"].as_array().unwrap().len(), 1);
+
+    // grant rules: no rule -> 404 on grant; PUT, GET, list; grant twice -> same code
+    let grant = json!({"trigger": "cancel", "customer_id": "c1", "order_id": "o9"});
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/coupons/grant",
+            Some(grant.to_string())
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let rule = json!({"rule_id": "r1", "trigger": "cancel", "promotion_id": "P1", "priority": 1, "validity_seconds": 86400, "max_uses": 1});
+    let (status, r) = call(
+        &app,
+        Method::PUT,
+        "/v1/grant-rules/r1",
+        Some(rule.to_string()),
+    )
+    .await;
+    assert_eq!(
+        (status, r["rule_id"].as_str()),
+        (StatusCode::OK, Some("r1"))
+    );
+    let (status, r) = call(&app, Method::GET, "/v1/grant-rules/r1", None).await;
+    assert_eq!((status, r), (StatusCode::OK, rule.clone()));
+    let (status, rs) = call(&app, Method::GET, "/v1/grant-rules", None).await;
+    assert_eq!((status, rs.as_array().unwrap().len()), (StatusCode::OK, 1));
+    let mut bad = rule.clone();
+    bad["validity_seconds"] = json!(0);
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/grant-rules/r1",
+            Some(bad.to_string())
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, g1) = call(
+        &app,
+        Method::POST,
+        "/v1/coupons/grant",
+        Some(grant.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        (
+            g1["promotion_id"].as_str(),
+            g1["customer_id"].as_str(),
+            g1["starts_at"].as_i64(),
+            g1["ends_at"].as_i64(),
+            g1["max_uses"].as_i64()
+        ),
+        (
+            Some("P1"),
+            Some("c1"),
+            Some(NOW),
+            Some(NOW + 86400),
+            Some(1)
+        )
+    );
+    assert!(g1["code"].as_str().unwrap().starts_with("CANCEL-"));
+    let (_, g2) = call(
+        &app,
+        Method::POST,
+        "/v1/coupons/grant",
+        Some(grant.to_string()),
+    )
+    .await;
+    assert_eq!(g1, g2);
+    let (_, cs) = call(&app, Method::GET, "/v1/coupons", None).await;
+    assert_eq!(
+        cs.as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["code"] == g1["code"])
+            .count(),
+        1
+    );
+    // a different order gets a different code
+    let other = json!({"trigger": "cancel", "customer_id": "c1", "order_id": "o10"});
+    let (_, g3) = call(
+        &app,
+        Method::POST,
+        "/v1/coupons/grant",
+        Some(other.to_string()),
+    )
+    .await;
+    assert_ne!(g1["code"], g3["code"]);
+    let (status, _) = call(&app, Method::DELETE, "/v1/grant-rules/r1", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        call(&app, Method::DELETE, "/v1/grant-rules/r1", None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
 }

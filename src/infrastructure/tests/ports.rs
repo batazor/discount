@@ -7,9 +7,13 @@ use std::sync::Arc;
 
 use common::*;
 use discount_application::ports::{
-    PromotionCatalog, RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome,
+    Counters, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog, RedemptionError,
+    RedemptionRepository, RedemptionStatus, ReserveOutcome,
 };
-use discount_application::{CancelRedemption, ConfirmRedemption, Evaluate, Redeem};
+use discount_application::{
+    CancelRedemption, ConfirmRedemption, CouponError, Evaluate, GenerateCouponsUseCase,
+    GrantCoupon, Redeem,
+};
 use discount_domain::*;
 use discount_infrastructure::{FixedClock, NoopEventPublisher, PgStore, default_policy};
 
@@ -327,6 +331,8 @@ async fn coupons_rates_and_uses_flow_into_pricing() {
                 starts_at: None,
                 ends_at: None,
                 customer_id: None,
+                max_uses: None,
+                uses: 0,
             })
             .await
             .unwrap();
@@ -431,6 +437,338 @@ async fn coupons_rates_and_uses_flow_into_pricing() {
         assert!(p.catalog.delete_coupon("WELCOME").await.unwrap());
         assert!(p.catalog.delete_rate("USD", "EUR").await.unwrap());
         assert!(!p.catalog.delete_rate("USD", "EUR").await.unwrap());
+    })
+    .await;
+}
+
+fn coupon(code: &str, max_uses: Option<i64>) -> Coupon {
+    Coupon {
+        code: code.into(),
+        promotion_id: "P1".into(),
+        starts_at: None,
+        ends_at: None,
+        customer_id: None,
+        max_uses,
+        uses: 0,
+    }
+}
+
+fn cart_with(code: &str) -> CartSnapshot {
+    let mut cart = sample_cart();
+    cart.coupon_codes = vec![code.into()];
+    cart
+}
+
+/// Spec `coupon-lifecycle` (single-use code, counters) and `redemption` (counts after a
+/// cancellation), `promotion-catalog` (counters flow into pricing, uses are read-only).
+#[tokio::test]
+async fn single_use_code_and_counters() {
+    for_each_backend(|p| async move {
+        let clock = FixedClock(NOW);
+        p.catalog.put_group(group_g()).await.unwrap();
+        let mut p1 = fixed_300("P1");
+        p1.rules = vec![Rule::RequiresCoupon, Rule::MaxUsesTotal { max: 2 }];
+        p.catalog.put_promotion(p1).await.unwrap();
+        // `uses` on PUT is ignored
+        let mut once = coupon("ONCE", Some(1));
+        once.uses = 5;
+        p.catalog.put_coupon(once).await.unwrap();
+        assert_eq!(p.catalog.get_coupon("ONCE").await.unwrap().unwrap().uses, 0);
+        p.catalog.put_coupon(coupon("MANY", None)).await.unwrap();
+
+        let redeem = redeem(&p, &clock);
+        let customer = CustomerContext::default();
+        // o1 uses ONCE
+        let o1 = redeem
+            .run("o1", cart_with("ONCE"), customer.clone())
+            .await
+            .unwrap();
+        assert_eq!(o1.redemption().result.applied.len(), 1);
+        let snapshot = p.catalog.snapshot().await.unwrap();
+        assert_eq!(
+            snapshot
+                .coupons
+                .iter()
+                .find(|c| c.code == "ONCE")
+                .unwrap()
+                .uses,
+            1
+        );
+        assert_eq!(
+            snapshot
+                .coupons
+                .iter()
+                .find(|c| c.code == "MANY")
+                .unwrap()
+                .uses,
+            0
+        );
+        assert_eq!(snapshot.promotions[0].uses_total, 1);
+        assert_eq!(
+            p.redemptions.counters(&["ONCE".to_string()]).await.unwrap(),
+            Counters {
+                promotion_uses: vec![("P1".into(), 1)],
+                coupon_uses: vec![("ONCE".into(), 1)]
+            }
+        );
+        // o2 with ONCE: exhausted -> NotEligible on RequiresCoupon (rule 0); evaluate agrees
+        let evaluate = Evaluate {
+            catalog: &*p.catalog,
+            redemptions: &*p.redemptions,
+            clock: &clock,
+            events: &NoopEventPublisher,
+        };
+        let r = evaluate
+            .run(cart_with("ONCE"), customer.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            r.skipped[0].reason,
+            SkipReason::NotEligible { rule_index: 0 }
+        );
+        let o2 = redeem
+            .run("o2", cart_with("ONCE"), customer.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            o2.redemption().result.skipped[0].reason,
+            SkipReason::NotEligible { rule_index: 0 }
+        );
+        // a presented code whose promotion did not apply is not a use
+        assert_eq!(p.catalog.get_coupon("ONCE").await.unwrap().unwrap().uses, 1);
+        // MANY applies again -> uses_total reaches MaxUsesTotal
+        let o3 = redeem
+            .run("o3", cart_with("MANY"), customer.clone())
+            .await
+            .unwrap();
+        assert_eq!(o3.redemption().result.applied.len(), 1);
+        let r = evaluate
+            .run(cart_with("MANY"), customer.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            r.skipped[0].reason,
+            SkipReason::NotEligible { rule_index: 1 }
+        );
+        assert_eq!(
+            p.catalog.snapshot().await.unwrap().promotions[0].uses_total,
+            2
+        );
+        // cancelling o1 frees ONCE and one slot of the total
+        let cancel = CancelRedemption {
+            redemptions: &*p.redemptions,
+            clock: &clock,
+            events: &NoopEventPublisher,
+        };
+        cancel.run("o1").await.unwrap();
+        assert_eq!(p.catalog.get_coupon("ONCE").await.unwrap().unwrap().uses, 0);
+        assert_eq!(
+            p.catalog.snapshot().await.unwrap().promotions[0].uses_total,
+            1
+        );
+        let o4 = redeem.run("o4", cart_with("ONCE"), customer).await.unwrap();
+        assert_eq!(o4.redemption().result.applied.len(), 1);
+    })
+    .await;
+}
+
+/// Spec `coupon-lifecycle`, "Concurrent single use": exactly one of two concurrent
+/// reservations with the same single-use code applies the promotion.
+#[tokio::test]
+async fn concurrent_single_use() {
+    for_each_backend(|p| async move {
+        p.catalog.put_group(group_g()).await.unwrap();
+        let mut p1 = fixed_300("P1");
+        p1.rules = vec![Rule::RequiresCoupon];
+        p.catalog.put_promotion(p1).await.unwrap();
+        p.catalog.put_coupon(coupon("ONCE", Some(1))).await.unwrap();
+        let mut handles = Vec::new();
+        for k in 0..8 {
+            let redemptions = p.redemptions.clone();
+            handles.push(tokio::spawn(async move {
+                let clock = FixedClock(NOW);
+                let redeem = Redeem {
+                    redemptions: &*redemptions,
+                    clock: &clock,
+                    events: &NoopEventPublisher,
+                };
+                redeem
+                    .run(
+                        &format!("cc-{k}"),
+                        cart_with("ONCE"),
+                        CustomerContext::default(),
+                    )
+                    .await
+                    .unwrap()
+            }));
+        }
+        let mut applied = 0;
+        for h in handles {
+            applied += h.await.unwrap().redemption().result.applied.len();
+        }
+        assert_eq!(applied, 1);
+        assert_eq!(p.catalog.get_coupon("ONCE").await.unwrap().unwrap().uses, 1);
+    })
+    .await;
+}
+
+/// Spec `coupon-lifecycle`: bulk generation, grant rules and the idempotent grant.
+#[tokio::test]
+async fn generation_and_grants() {
+    for_each_backend(|p| async move {
+        let clock = FixedClock(NOW);
+        let codes = discount_infrastructure::SequentialCodes::default();
+        p.catalog.put_group(group_g()).await.unwrap();
+        let mut p1 = fixed_300("P1");
+        p1.rules = vec![Rule::RequiresCoupon];
+        p.catalog.put_promotion(p1).await.unwrap();
+
+        let generate = GenerateCouponsUseCase {
+            catalog: &*p.catalog,
+            codes: &codes,
+        };
+        let req = GenerateCoupons {
+            promotion_id: "P1".into(),
+            count: 100,
+            prefix: "SUMMER-".into(),
+            starts_at: None,
+            ends_at: Some(NOW + 3600),
+            max_uses: Some(1),
+            customer_id: None,
+        };
+        let generated = generate.run(req.clone()).await.unwrap();
+        assert_eq!(generated.len(), 100);
+        let stored = p.catalog.list_coupons().await.unwrap();
+        assert_eq!(stored.len(), 100);
+        assert!(stored.iter().all(|c| c.code.starts_with("SUMMER-")
+            && c.max_uses == Some(1)
+            && c.ends_at == Some(NOW + 3600)));
+        // a second batch from a fresh sequence collides with the first 100 codes and retries
+        // past them (the retry budget is 10 attempts per requested code)
+        let fresh = discount_infrastructure::SequentialCodes::default();
+        let generate2 = GenerateCouponsUseCase {
+            catalog: &*p.catalog,
+            codes: &fresh,
+        };
+        let more = generate2
+            .run(GenerateCoupons {
+                count: 20,
+                ..req.clone()
+            })
+            .await
+            .unwrap();
+        assert!(more.iter().all(|c| !generated.contains(c)));
+        assert_eq!(p.catalog.list_coupons().await.unwrap().len(), 120);
+        assert_eq!(
+            generate
+                .run(GenerateCoupons {
+                    promotion_id: "nope".into(),
+                    ..req.clone()
+                })
+                .await,
+            Err(CouponError::UnknownPromotion)
+        );
+        assert_eq!(
+            generate.run(GenerateCoupons { count: 0, ..req }).await,
+            Err(CouponError::InvalidCount)
+        );
+
+        // grant rules
+        let grant = GrantCoupon {
+            catalog: &*p.catalog,
+            codes: &codes,
+            clock: &clock,
+        };
+        assert_eq!(
+            grant.run(GrantTrigger::Cancel, "c1", "o9").await,
+            Err(CouponError::NoRuleForTrigger)
+        );
+        let rule = |id: &str, priority: i64| GrantRule {
+            rule_id: id.into(),
+            trigger: GrantTrigger::Cancel,
+            promotion_id: "P1".into(),
+            priority,
+            validity_seconds: 86400,
+            max_uses: Some(1),
+        };
+        p.catalog.put_grant_rule(rule("low", 1)).await.unwrap();
+        p.catalog.put_grant_rule(rule("high", 5)).await.unwrap();
+        assert_eq!(
+            p.catalog.get_grant_rule("low").await.unwrap(),
+            Some(rule("low", 1))
+        );
+        assert_eq!(p.catalog.list_grant_rules().await.unwrap().len(), 2);
+        let g1 = grant.run(GrantTrigger::Cancel, "c1", "o9").await.unwrap();
+        assert_eq!(
+            (
+                g1.promotion_id.as_str(),
+                g1.customer_id.as_deref(),
+                g1.starts_at,
+                g1.ends_at,
+                g1.max_uses,
+                g1.uses
+            ),
+            ("P1", Some("c1"), Some(NOW), Some(NOW + 86400), Some(1), 0)
+        );
+        assert!(g1.code.starts_with("CANCEL-"));
+        let g2 = grant.run(GrantTrigger::Cancel, "c1", "o9").await.unwrap();
+        assert_eq!(g1, g2);
+        assert_eq!(
+            p.catalog
+                .get_grant(GrantTrigger::Cancel, "o9")
+                .await
+                .unwrap(),
+            Some(g1.clone())
+        );
+        assert_eq!(p.catalog.list_coupons().await.unwrap().len(), 121);
+        // the granted code is bound to c1 and single-use
+        let redeem = redeem(&p, &clock);
+        let c1 = CustomerContext {
+            customer_id: Some("c1".into()),
+            ..CustomerContext::default()
+        };
+        let c2 = CustomerContext {
+            customer_id: Some("c2".into()),
+            ..CustomerContext::default()
+        };
+        assert!(
+            redeem
+                .run("g-wrong", cart_with(&g1.code), c2)
+                .await
+                .unwrap()
+                .redemption()
+                .result
+                .applied
+                .is_empty()
+        );
+        assert_eq!(
+            redeem
+                .run("g-ok", cart_with(&g1.code), c1.clone())
+                .await
+                .unwrap()
+                .redemption()
+                .result
+                .applied
+                .len(),
+            1
+        );
+        assert!(
+            redeem
+                .run("g-again", cart_with(&g1.code), c1)
+                .await
+                .unwrap()
+                .redemption()
+                .result
+                .applied
+                .is_empty()
+        );
+        // no rule for the other trigger
+        assert_eq!(
+            grant.run(GrantTrigger::Review, "c1", "o9").await,
+            Err(CouponError::NoRuleForTrigger)
+        );
+        assert!(p.catalog.delete_grant_rule("high").await.unwrap());
+        assert!(!p.catalog.delete_grant_rule("high").await.unwrap());
     })
     .await;
 }

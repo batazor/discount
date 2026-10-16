@@ -55,6 +55,7 @@ pub fn state_with(store: InMemoryStore, instruments: Instruments) -> Arc<AppStat
         redemptions: Arc::new(store),
         clock: Arc::new(FixedClock(NOW)),
         events: Arc::new(NoopEventPublisher),
+        codes: Arc::new(discount_infrastructure::SequentialCodes::default()),
         instruments,
     })
 }
@@ -72,6 +73,7 @@ pub fn fixed_300(id: &str) -> Promotion {
         exclusive: false,
         cap: None,
         remaining_budget: None,
+        uses_total: 0,
         rounding: None,
         rules: vec![],
         action: Action::OrderFixedAmount { amount: eur(300) },

@@ -42,6 +42,14 @@ pub fn uses_of(c: &CustomerContext, pid: &str) -> i64 {
     }
 }
 
+/// Remaining uses: `max_uses` absent, or `uses < max_uses`.
+pub fn coupon_has_uses(c: &Coupon) -> bool {
+    match c.max_uses {
+        None => true,
+        Some(m) => c.uses < m,
+    }
+}
+
 pub fn coupon_valid(i: &PricingInput, pid: &str, c: &Coupon) -> bool {
     c.promotion_id == pid
         && i.cart.coupon_codes.iter().any(|code| code == &c.code)
@@ -50,6 +58,7 @@ pub fn coupon_valid(i: &PricingInput, pid: &str, c: &Coupon) -> bool {
             None => true,
             Some(cid) => i.customer.customer_id.as_deref() == Some(cid.as_str()),
         }
+        && coupon_has_uses(c)
 }
 
 pub fn rule_holds(r: &Rule, p: &Promotion, i: &PricingInput) -> bool {
@@ -92,6 +101,7 @@ pub fn rule_holds(r: &Rule, p: &Promotion, i: &PricingInput) -> bool {
         },
         Rule::MaxCompletedOrders { max } => i.customer.completed_orders <= *max,
         Rule::MaxUsesPerCustomer { max } => uses_of(&i.customer, &p.promotion_id) < *max,
+        Rule::MaxUsesTotal { max } => p.uses_total < *max,
         Rule::RequiresCoupon => i
             .coupons
             .iter()

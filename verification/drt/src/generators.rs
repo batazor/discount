@@ -213,12 +213,14 @@ pub fn coupons(n_promotions: usize) -> impl Strategy<Value = Vec<Coupon>> {
             prop::option::of(NOW - 50..NOW + 50),
             prop::option::of(NOW - 50..NOW + 50),
             prop::option::weighted(0.3, prop::sample::select(vec!["c1", "c2"])),
+            prop::option::weighted(0.5, 0..=2i64),
+            0..=2i64,
         ),
         0..=3,
     )
     .prop_map(|v| {
         let mut out: Vec<Coupon> = Vec::new();
-        for (code, k, starts_at, ends_at, cid) in v {
+        for (code, k, starts_at, ends_at, cid, max_uses, uses) in v {
             if !out.iter().any(|c| c.code == code) {
                 out.push(Coupon {
                     code: code.to_string(),
@@ -226,6 +228,8 @@ pub fn coupons(n_promotions: usize) -> impl Strategy<Value = Vec<Coupon>> {
                     starts_at,
                     ends_at,
                     customer_id: cid.map(|c| c.to_string()),
+                    max_uses,
+                    uses,
                 });
             }
         }
@@ -292,6 +296,7 @@ pub fn rule(cur: Currency) -> impl Strategy<Value = Rule> {
         1 => window.prop_map(|(starts_at, ends_at)| Rule::AttributeDateWindow { key: "checkin".into(), starts_at, ends_at }),
         1 => (0..=2i64).prop_map(|max| Rule::MaxCompletedOrders { max }),
         1 => (0..=3i64).prop_map(|max| Rule::MaxUsesPerCustomer { max }),
+        1 => (0..=3i64).prop_map(|max| Rule::MaxUsesTotal { max }),
         2 => Just(Rule::RequiresCoupon),
     ]
 }
@@ -313,9 +318,20 @@ pub fn promotion(idx: usize, cur: Currency, n_groups: usize) -> impl Strategy<Va
         prop::option::weighted(0.3, rounding_policy()),
         prop::collection::vec(rule(cur.clone()), 0..=2),
         action(cur),
+        0..=3i64,
     )
         .prop_map(
-            move |(g, priority, exclusive, cap, remaining_budget, rounding, rules, action)| {
+            move |(
+                g,
+                priority,
+                exclusive,
+                cap,
+                remaining_budget,
+                rounding,
+                rules,
+                action,
+                uses_total,
+            )| {
                 Promotion {
                     promotion_id: format!("P{idx}"),
                     group_id: format!("g{g}"),
@@ -323,6 +339,7 @@ pub fn promotion(idx: usize, cur: Currency, n_groups: usize) -> impl Strategy<Va
                     exclusive,
                     cap,
                     remaining_budget,
+                    uses_total,
                     rounding,
                     rules,
                     action,
@@ -371,7 +388,7 @@ pub fn valid_input() -> impl Strategy<Value = PricingInput> {
 
 /// The violations `validate` must report, one per case. Some are no-ops on inputs without
 /// the relevant element; those cases simply stay valid.
-pub const MUTATIONS: usize = 22;
+pub const MUTATIONS: usize = 25;
 
 pub fn mutate(i: &mut PricingInput, which: usize) {
     let cur = i.cart.currency.clone();
@@ -509,6 +526,8 @@ pub fn mutate(i: &mut PricingInput, which: usize) {
                 starts_at: None,
                 ends_at: None,
                 customer_id: None,
+                max_uses: None,
+                uses: 0,
             };
             i.coupons.push(c.clone());
             i.coupons.push(c);

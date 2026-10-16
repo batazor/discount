@@ -1,5 +1,5 @@
-//! HTTP adapter: specs `evaluate-http-api`, `redemption` (routes) and `promotion-catalog`
-//! (routes).
+//! HTTP adapter: specs `evaluate-http-api`, `redemption` (routes), `promotion-catalog`
+//! (routes) and `coupon-lifecycle` (generation, grants, grant rules).
 
 use std::sync::Arc;
 
@@ -10,10 +10,13 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use discount_application::ports::{
-    Clock, EventPublisher, PromotionCatalog, RedemptionError, RedemptionRepository, ReserveOutcome,
-    StorageError,
+    Clock, EventPublisher, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog,
+    RedemptionError, RedemptionRepository, ReserveOutcome, StorageError,
 };
-use discount_application::{CancelRedemption, ConfirmRedemption, Evaluate, EvaluateError, Redeem};
+use discount_application::{
+    CancelRedemption, CodeSource, ConfirmRedemption, CouponError, Evaluate, EvaluateError,
+    GenerateCouponsUseCase, GrantCoupon, Redeem,
+};
 use discount_domain::{
     CartSnapshot, Coupon, CustomerContext, ExchangeRate, Money, PricingPolicy, PricingResult,
     Promotion, StackingGroup,
@@ -31,6 +34,7 @@ pub struct AppState {
     pub redemptions: Arc<dyn RedemptionRepository>,
     pub clock: Arc<dyn Clock>,
     pub events: Arc<dyn EventPublisher>,
+    pub codes: Arc<dyn CodeSource>,
     pub instruments: Instruments,
 }
 
@@ -80,6 +84,15 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_budget).put(put_budget),
         )
         .route("/v1/coupons", get(list_coupons))
+        .route("/v1/coupons/generate", post(generate_coupons))
+        .route("/v1/coupons/grant", post(grant_coupon))
+        .route("/v1/grant-rules", get(list_grant_rules))
+        .route(
+            "/v1/grant-rules/{rule_id}",
+            get(get_grant_rule)
+                .put(put_grant_rule)
+                .delete(delete_grant_rule),
+        )
         .route(
             "/v1/coupons/{code}",
             get(get_coupon).put(put_coupon).delete(delete_coupon),
@@ -459,6 +472,7 @@ async fn put_coupon(
     StrictJson(mut coupon): StrictJson<Coupon>,
 ) -> Response {
     coupon.code = code;
+    coupon.uses = 0; // derived from redemptions, never stored
     match state.catalog.put_coupon(coupon.clone()).await {
         Ok(()) => ok_json(&coupon),
         Err(e) => storage_error(&e),
@@ -509,6 +523,102 @@ async fn delete_rate(
     Path((from, to)): Path<(String, String)>,
 ) -> Response {
     match state.catalog.delete_rate(&from, &to).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+// ---------------------------------------------------------------- coupon lifecycle
+
+fn coupon_error(e: CouponError) -> Response {
+    match e {
+        CouponError::UnknownPromotion | CouponError::NoRuleForTrigger => not_found(),
+        CouponError::InvalidCount => decode_error("count must be between 1 and 10000".into()),
+        CouponError::CodeSpaceExhausted => (
+            StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({ "error": "CodeSpaceExhausted" })),
+        )
+            .into_response(),
+        CouponError::Storage(e) => storage_error(&e),
+    }
+}
+
+async fn generate_coupons(
+    State(state): State<Arc<AppState>>,
+    StrictJson(req): StrictJson<GenerateCoupons>,
+) -> Response {
+    let uc = GenerateCouponsUseCase {
+        catalog: &*state.catalog,
+        codes: &*state.codes,
+    };
+    match uc.run(req).await {
+        Ok(codes) => ok_json(&serde_json::json!({ "codes": codes })),
+        Err(e) => coupon_error(e),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrantRequest {
+    pub trigger: GrantTrigger,
+    pub customer_id: String,
+    pub order_id: String,
+}
+
+async fn grant_coupon(
+    State(state): State<Arc<AppState>>,
+    StrictJson(req): StrictJson<GrantRequest>,
+) -> Response {
+    let uc = GrantCoupon {
+        catalog: &*state.catalog,
+        codes: &*state.codes,
+        clock: &*state.clock,
+    };
+    match uc.run(req.trigger, &req.customer_id, &req.order_id).await {
+        Ok(c) => ok_json(&c),
+        Err(e) => coupon_error(e),
+    }
+}
+
+async fn list_grant_rules(State(state): State<Arc<AppState>>) -> Response {
+    match state.catalog.list_grant_rules().await {
+        Ok(rs) => ok_json(&rs),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn get_grant_rule(
+    State(state): State<Arc<AppState>>,
+    Path(rule_id): Path<String>,
+) -> Response {
+    match state.catalog.get_grant_rule(&rule_id).await {
+        Ok(Some(r)) => ok_json(&r),
+        Ok(None) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn put_grant_rule(
+    State(state): State<Arc<AppState>>,
+    Path(rule_id): Path<String>,
+    StrictJson(mut rule): StrictJson<GrantRule>,
+) -> Response {
+    rule.rule_id = rule_id;
+    if rule.validity_seconds < 1 || rule.max_uses.is_some_and(|m| m < 0) {
+        return decode_error("validity_seconds must be >= 1 and max_uses >= 0".into());
+    }
+    match state.catalog.put_grant_rule(rule.clone()).await {
+        Ok(()) => ok_json(&rule),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn delete_grant_rule(
+    State(state): State<Arc<AppState>>,
+    Path(rule_id): Path<String>,
+) -> Response {
+    match state.catalog.delete_grant_rule(&rule_id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),

@@ -13,6 +13,7 @@ pub mod telemetry;
 
 pub use config::Config;
 pub use persistence::memory::{
-    CatalogFixture, FixedClock, InMemoryStore, NoopEventPublisher, SystemClock, default_policy,
+    CatalogFixture, FixedClock, InMemoryStore, NoopEventPublisher, RandomCodes, SequentialCodes,
+    SystemClock, default_policy,
 };
 pub use persistence::postgres::PgStore;

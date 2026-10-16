@@ -65,6 +65,82 @@ pub struct CatalogSnapshot {
 /// Use counts of one customer: reserved and confirmed redemptions per applied promotion.
 pub type Uses = Vec<(PromotionId, i64)>;
 
+/// Everything the counters of a snapshot are derived from: per promotion, how many reserved
+/// or confirmed redemptions applied it; per coupon code, how many of them presented the code
+/// and applied the coupon's promotion.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Counters {
+    pub promotion_uses: Vec<(PromotionId, i64)>,
+    pub coupon_uses: Vec<(String, i64)>,
+}
+
+impl Counters {
+    pub fn promotion(&self, pid: &str) -> i64 {
+        self.promotion_uses
+            .iter()
+            .find(|(p, _)| p == pid)
+            .map(|(_, n)| *n)
+            .unwrap_or(0)
+    }
+    pub fn coupon(&self, code: &str) -> i64 {
+        self.coupon_uses
+            .iter()
+            .find(|(c, _)| c == code)
+            .map(|(_, n)| *n)
+            .unwrap_or(0)
+    }
+    /// Fill `uses_total` and `uses` into a snapshot.
+    pub fn apply_to(&self, snapshot: &mut CatalogSnapshot) {
+        for p in &mut snapshot.promotions {
+            p.uses_total = self.promotion(&p.promotion_id);
+        }
+        for c in &mut snapshot.coupons {
+            c.uses = self.coupon(&c.code);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GrantTrigger {
+    Cancel,
+    Review,
+}
+
+impl GrantTrigger {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GrantTrigger::Cancel => "cancel",
+            GrantTrigger::Review => "review",
+        }
+    }
+}
+
+/// How a coupon is issued when an event happens (spec `coupon-lifecycle`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrantRule {
+    pub rule_id: String,
+    pub trigger: GrantTrigger,
+    pub promotion_id: PromotionId,
+    pub priority: i64,
+    pub validity_seconds: i64,
+    pub max_uses: Option<i64>,
+}
+
+/// Request to generate a batch of coupon codes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenerateCoupons {
+    pub promotion_id: PromotionId,
+    pub count: u32,
+    pub prefix: String,
+    pub starts_at: Option<Timestamp>,
+    pub ends_at: Option<Timestamp>,
+    pub max_uses: Option<i64>,
+    pub customer_id: Option<String>,
+}
+
 /// The promotion catalogue (spec `promotion-catalog`).
 #[async_trait]
 pub trait PromotionCatalog: Send + Sync {
@@ -100,6 +176,27 @@ pub trait PromotionCatalog: Send + Sync {
     async fn list_rates(&self) -> Result<Vec<ExchangeRate>, StorageError>;
     async fn put_rate(&self, rate: ExchangeRate) -> Result<(), StorageError>;
     async fn delete_rate(&self, from: &str, to: &str) -> Result<bool, StorageError>;
+    async fn list_grant_rules(&self) -> Result<Vec<GrantRule>, StorageError>;
+    async fn get_grant_rule(&self, rule_id: &str) -> Result<Option<GrantRule>, StorageError>;
+    async fn put_grant_rule(&self, rule: GrantRule) -> Result<(), StorageError>;
+    async fn delete_grant_rule(&self, rule_id: &str) -> Result<bool, StorageError>;
+    /// Store a batch of new coupons; fails on a code that already exists.
+    async fn put_coupons(&self, coupons: Vec<Coupon>) -> Result<(), StorageError>;
+    /// The coupon issued for `(trigger, order_id)`, if any (idempotency record of `grant`).
+    async fn get_grant(
+        &self,
+        trigger: GrantTrigger,
+        order_id: &str,
+    ) -> Result<Option<Coupon>, StorageError>;
+    /// Record the grant and store its coupon atomically. Returns the coupon now on record for
+    /// `(trigger, order_id)`: `coupon`, unless another grant for the same key won the race.
+    async fn record_grant(
+        &self,
+        trigger: GrantTrigger,
+        order_id: &str,
+        coupon: Coupon,
+        now: Timestamp,
+    ) -> Result<Coupon, StorageError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,11 +278,15 @@ pub trait RedemptionRepository: Send + Sync {
         &self,
         order_id: &str,
         customer_id: Option<&str>,
+        codes: &[String],
         now: Timestamp,
         price: &PricingFn<'_>,
     ) -> Result<ReserveOutcome, RedemptionError>;
     /// Reserved and confirmed redemptions of `customer_id`, counted per applied promotion.
     async fn uses_for_customer(&self, customer_id: &str) -> Result<Uses, RedemptionError>;
+    /// Promotion and coupon counters over all reserved and confirmed redemptions, for the
+    /// given coupon codes.
+    async fn counters(&self, codes: &[String]) -> Result<Counters, RedemptionError>;
     /// `reserved → confirmed`, `reserved|confirmed → cancelled` (restoring budgets).
     async fn transition(
         &self,

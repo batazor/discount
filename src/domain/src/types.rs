@@ -160,6 +160,10 @@ pub struct Coupon {
     pub starts_at: Option<Timestamp>,
     pub ends_at: Option<Timestamp>,
     pub customer_id: Option<String>,
+    /// Absent = unlimited, `1` = single use.
+    pub max_uses: Option<i64>,
+    /// Snapshot counter: reserved or confirmed redemptions that used the code.
+    pub uses: i64,
 }
 
 /// One minor unit of `from` is `numerator / denominator` minor units of `to`.
@@ -231,6 +235,8 @@ pub enum Rule {
     MaxCompletedOrders { max: i64 },
     /// The customer's use count of this promotion is `< max`.
     MaxUsesPerCustomer { max: i64 },
+    /// The promotion's `uses_total` is `< max`.
+    MaxUsesTotal { max: i64 },
     /// A presented, valid coupon of this promotion exists.
     RequiresCoupon,
 }
@@ -251,6 +257,8 @@ pub struct Promotion {
     pub exclusive: bool,
     pub cap: Option<Money>,
     pub remaining_budget: Option<Money>,
+    /// Snapshot counter: reserved or confirmed redemptions that applied the promotion.
+    pub uses_total: i64,
     pub rounding: Option<RoundingPolicy>,
     pub rules: Vec<Rule>,
     pub action: Action,
@@ -316,6 +324,12 @@ pub enum PricingError {
         to: Currency,
     },
     InvalidRule {
+        field: String,
+    },
+    InvalidCoupon {
+        field: String,
+    },
+    InvalidPromotion {
         field: String,
     },
     /// Rust only; the Lean model never produces it (ADR 3). Unreachable for validated input.

@@ -1,25 +1,76 @@
 {
   "groups": [
-    { "group_id": "g", "priority": 0, "mode": { "type": "Stackable" } }
+    {
+      "group_id": "g",
+      "priority": 0,
+      "mode": {
+        "type": "Stackable"
+      }
+    }
   ],
   "promotions": [
     {
-      "promotion_id": "P1", "group_id": "g", "priority": 10, "exclusive": false,
-      "cap": null, "remaining_budget": null, "rounding": null,
-      "rules": [ { "type": "DateWindow", "starts_at": null, "ends_at": null } ],
-      "action": { "type": "OrderPercentage", "bps": 1000 }
+      "promotion_id": "P1",
+      "group_id": "g",
+      "priority": 10,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "DateWindow",
+          "starts_at": null,
+          "ends_at": null
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 1000
+      },
+      "uses_total": 0
     },
     {
-      "promotion_id": "P2", "group_id": "g", "priority": 5, "exclusive": false,
-      "cap": { "amount": 300, "currency": "EUR" }, "remaining_budget": null, "rounding": null,
+      "promotion_id": "P2",
+      "group_id": "g",
+      "priority": 5,
+      "exclusive": false,
+      "cap": {
+        "amount": 300,
+        "currency": "EUR"
+      },
+      "remaining_budget": null,
+      "rounding": null,
       "rules": [],
-      "action": { "type": "OrderFixedAmount", "amount": { "amount": 500, "currency": "EUR" } }
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 500,
+          "currency": "EUR"
+        }
+      },
+      "uses_total": 0
     },
     {
-      "promotion_id": "P3", "group_id": "g", "priority": 1, "exclusive": false,
-      "cap": null, "remaining_budget": null, "rounding": null,
-      "rules": [ { "type": "DateWindow", "starts_at": 4102444800, "ends_at": null } ],
-      "action": { "type": "OrderPercentage", "bps": 5000 }
+      "promotion_id": "P3",
+      "group_id": "g",
+      "priority": 1,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "DateWindow",
+          "starts_at": 4102444800,
+          "ends_at": null
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 5000
+      },
+      "uses_total": 0
     }
   ]
 }

@@ -115,6 +115,19 @@ def checkRates (rates : List ExchangeRate) : Except PricingError Unit :=
     | some (f, t) => .error (.DuplicateExchangeRate f t)
     | none => .ok ())
 
+def checkCouponsEach : List Coupon → Nat → Except PricingError Unit
+  | [], _ => .ok ()
+  | c :: cs, k =>
+    if c.uses < 0 then .error (.InvalidCoupon s!"coupons[{k}].uses")
+    else match c.max_uses with
+      | some m => if m < 0 then .error (.InvalidCoupon s!"coupons[{k}].max_uses") else checkCouponsEach cs (k + 1)
+      | none => checkCouponsEach cs (k + 1)
+
+/-- Per-coupon counters, then duplicate codes. -/
+def checkCoupons (coupons : List Coupon) : Except PricingError Unit :=
+  andThen (checkCouponsEach coupons 0)
+    (checkDuplicates (coupons.map (·.code)) PricingError.DuplicateCouponCode)
+
 def checkOrderCap (oc : OrderCap) (cartCurrency : Currency) (rates : List ExchangeRate) : Except PricingError Unit :=
   andThen (checkOptMoney oc.amount cartCurrency rates "policy.order_cap.amount")
     (match oc.bps with
@@ -134,6 +147,7 @@ def checkRule (r : Rule) (cartCurrency : Currency) (rates : List ExchangeRate) (
         (checkOptMoney mx cartCurrency rates s!"promotions[{i}].rules[{k}].max")
   | .MaxCompletedOrders m => if m < 0 then .error (.InvalidRule s!"promotions[{i}].rules[{k}].max") else .ok ()
   | .MaxUsesPerCustomer m => if m < 0 then .error (.InvalidRule s!"promotions[{i}].rules[{k}].max") else .ok ()
+  | .MaxUsesTotal m => if m < 0 then .error (.InvalidRule s!"promotions[{i}].rules[{k}].max") else .ok ()
   | _ => .ok ()
 
 def checkRules : List Rule → Currency → List ExchangeRate → Nat → Nat → Except PricingError Unit
@@ -146,9 +160,10 @@ def checkPromotions : List Promotion → Currency → List ExchangeRate → List
     andThen (checkAction p.action cur rates i)
     (andThen (checkOptMoney p.cap cur rates s!"promotions[{i}].cap")
     (andThen (checkOptMoney p.remaining_budget cur rates s!"promotions[{i}].remaining_budget")
+    (andThen (if p.uses_total < 0 then .error (.InvalidPromotion s!"promotions[{i}].uses_total") else .ok ())
     (andThen (checkRules p.rules cur rates i 0)
     (andThen (if p.group_id ∈ gids then .ok () else .error (.UnknownGroup i))
-    (checkPromotions ps cur rates gids (i + 1))))))
+    (checkPromotions ps cur rates gids (i + 1)))))))
 
 def validate (i : PricingInput) : Except PricingError Unit :=
   let cur := i.cart.currency
@@ -160,7 +175,7 @@ def validate (i : PricingInput) : Except PricingError Unit :=
   (andThen (if orderSubtotal i.cart > MAX_MINOR_UNITS then .error (.AmountOutOfRange "cart.subtotal") else .ok ())
   (andThen (checkCustomer i.customer)
   (andThen (checkRates rates)
-  (andThen (checkDuplicates (i.coupons.map (·.code)) PricingError.DuplicateCouponCode)
+  (andThen (checkCoupons i.coupons)
   (andThen (checkOrderCap i.policy.order_cap cur rates)
   (andThen (checkDuplicates (i.groups.map (·.group_id)) PricingError.DuplicateGroupId)
   (andThen (checkPromotions i.promotions cur rates (i.groups.map (·.group_id)) 0)

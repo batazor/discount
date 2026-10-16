@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use discount_application::ports::{
-    CatalogSnapshot, PricingFn, PromotionCatalog, Redemption, RedemptionError,
-    RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError, Uses, transition_allowed,
+    CatalogSnapshot, Counters, GrantRule, GrantTrigger, PricingFn, PromotionCatalog, Redemption,
+    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError, Uses,
+    transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, PricingInput, PricingPolicy, PricingResult, Promotion,
@@ -74,16 +75,18 @@ impl PgStore {
     /// Empty every table and reset the policy; for integration tests only. Tests wipe the
     /// database they point at, so give them a dedicated one.
     pub async fn reset_for_tests(&self, policy: &PricingPolicy) -> Result<(), StorageError> {
-        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates")
+        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants")
             .execute(&self.pool)
             .await
             .map_err(storage)?;
         self.put_policy(policy.clone()).await
     }
 
+    /// With `lock`, the budget and promotion rows are taken `FOR UPDATE`, so concurrent
+    /// reservations serialize and each one counts the uses the previous one committed.
     async fn snapshot_in(
         tx: &mut Transaction<'_, Postgres>,
-        lock_budgets: bool,
+        lock: bool,
     ) -> Result<(CatalogSnapshot, BTreeMap<String, Money>), sqlx::Error> {
         let policy: Json<PricingPolicy> =
             sqlx::query("SELECT body FROM pricing_policy WHERE id = 1")
@@ -96,7 +99,7 @@ impl PgStore {
             .into_iter()
             .map(|r| r.try_get::<Json<StackingGroup>, _>("body").map(|j| j.0))
             .collect::<Result<Vec<_>, _>>()?;
-        let budget_sql = if lock_budgets {
+        let budget_sql = if lock {
             "SELECT promotion_id, remaining, currency FROM promotion_budgets ORDER BY promotion_id FOR UPDATE"
         } else {
             "SELECT promotion_id, remaining, currency FROM promotion_budgets ORDER BY promotion_id"
@@ -114,19 +117,23 @@ impl PgStore {
                 },
             );
         }
-        let promotions =
-            sqlx::query("SELECT body FROM promotions WHERE NOT archived ORDER BY promotion_id")
-                .fetch_all(&mut **tx)
-                .await?
-                .into_iter()
-                .map(|r| {
-                    r.try_get::<Json<Promotion>, _>("body").map(|j| {
-                        let mut p = j.0;
-                        p.remaining_budget = budgets.get(&p.promotion_id).cloned();
-                        p
-                    })
+        let promotion_sql = if lock {
+            "SELECT body FROM promotions WHERE NOT archived ORDER BY promotion_id FOR UPDATE"
+        } else {
+            "SELECT body FROM promotions WHERE NOT archived ORDER BY promotion_id"
+        };
+        let promotions = sqlx::query(promotion_sql)
+            .fetch_all(&mut **tx)
+            .await?
+            .into_iter()
+            .map(|r| {
+                r.try_get::<Json<Promotion>, _>("body").map(|j| {
+                    let mut p = j.0;
+                    p.remaining_budget = budgets.get(&p.promotion_id).cloned();
+                    p
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let coupons = sqlx::query("SELECT body FROM coupons ORDER BY code")
             .fetch_all(&mut **tx)
             .await?
@@ -146,16 +153,74 @@ impl PgStore {
                 })
             })
             .collect::<Result<Vec<_>, sqlx::Error>>()?;
-        Ok((
-            CatalogSnapshot {
-                policy: policy.0,
-                groups,
-                promotions,
-                coupons,
-                exchange_rates,
-            },
-            budgets,
-        ))
+        let mut snapshot = CatalogSnapshot {
+            policy: policy.0,
+            groups,
+            promotions,
+            coupons,
+            exchange_rates,
+        };
+        PgStore::counters_in(tx, None)
+            .await?
+            .apply_to(&mut snapshot);
+        Ok((snapshot, budgets))
+    }
+
+    /// Spec `redemption`, "Counting uses per coupon and per promotion", over reserved and
+    /// confirmed redemptions. `codes = None` counts every stored coupon.
+    async fn counters_in(
+        tx: &mut Transaction<'_, Postgres>,
+        codes: Option<&[String]>,
+    ) -> Result<Counters, sqlx::Error> {
+        let promotion_uses = sqlx::query(
+            "SELECT a->>'promotion_id' AS pid, COUNT(*)::BIGINT AS n FROM redemptions r, jsonb_array_elements(r.result->'applied') a \
+             WHERE r.status <> 'cancelled' GROUP BY 1 ORDER BY 1",
+        )
+        .fetch_all(&mut **tx)
+        .await?
+        .into_iter()
+        .map(|r| Ok((r.try_get::<String, _>("pid")?, r.try_get::<i64, _>("n")?)))
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        let all: Vec<String> = Vec::new();
+        let coupon_uses = sqlx::query(
+            "SELECT c.code AS code, COUNT(*)::BIGINT AS n FROM redemptions r \
+             JOIN LATERAL jsonb_array_elements_text(r.input->'cart'->'coupon_codes') AS presented(code) ON TRUE \
+             JOIN coupons c ON c.code = presented.code \
+             WHERE r.status <> 'cancelled' AND ($1 OR c.code = ANY($2)) \
+               AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.result->'applied') a WHERE a->>'promotion_id' = c.body->>'promotion_id') \
+             GROUP BY 1 ORDER BY 1",
+        )
+        .bind(codes.is_none())
+        .bind(codes.unwrap_or(&all))
+        .fetch_all(&mut **tx)
+        .await?
+        .into_iter()
+        .map(|r| Ok((r.try_get::<String, _>("code")?, r.try_get::<i64, _>("n")?)))
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        Ok(Counters {
+            promotion_uses,
+            coupon_uses,
+        })
+    }
+
+    async fn coupon_in(
+        tx: &mut Transaction<'_, Postgres>,
+        code: &str,
+    ) -> Result<Option<Coupon>, sqlx::Error> {
+        let row = sqlx::query("SELECT body FROM coupons WHERE code = $1")
+            .bind(code)
+            .fetch_optional(&mut **tx)
+            .await?;
+        let Some(row) = row else { return Ok(None) };
+        let mut c = row.try_get::<Json<Coupon>, _>("body")?.0;
+        c.uses = PgStore::counters_in(tx, Some(&[code.to_string()]))
+            .await?
+            .coupon(code);
+        Ok(Some(c))
+    }
+
+    fn row_to_grant_rule(r: &sqlx::postgres::PgRow) -> Result<GrantRule, sqlx::Error> {
+        r.try_get::<Json<GrantRule>, _>("body").map(|j| j.0)
     }
 
     async fn uses_in(
@@ -408,17 +473,10 @@ impl PromotionCatalog for PgStore {
     }
 
     async fn get_coupon(&self, code: &str) -> Result<Option<Coupon>, StorageError> {
-        let row = sqlx::query("SELECT body FROM coupons WHERE code = $1")
-            .bind(code)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(storage)?;
-        row.map(|r| {
-            r.try_get::<Json<Coupon>, _>("body")
-                .map(|j| j.0)
-                .map_err(storage)
-        })
-        .transpose()
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let c = PgStore::coupon_in(&mut tx, code).await.map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+        Ok(c)
     }
 
     async fn put_coupon(&self, coupon: Coupon) -> Result<(), StorageError> {
@@ -471,6 +529,130 @@ impl PromotionCatalog for PgStore {
                 .map_err(storage)?;
         Ok(r.rows_affected() > 0)
     }
+
+    async fn list_grant_rules(&self) -> Result<Vec<GrantRule>, StorageError> {
+        sqlx::query("SELECT body FROM grant_rules ORDER BY rule_id")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage)?
+            .iter()
+            .map(|r| PgStore::row_to_grant_rule(r).map_err(storage))
+            .collect()
+    }
+
+    async fn get_grant_rule(&self, rule_id: &str) -> Result<Option<GrantRule>, StorageError> {
+        sqlx::query("SELECT body FROM grant_rules WHERE rule_id = $1")
+            .bind(rule_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?
+            .map(|r| PgStore::row_to_grant_rule(&r).map_err(storage))
+            .transpose()
+    }
+
+    async fn put_grant_rule(&self, rule: GrantRule) -> Result<(), StorageError> {
+        sqlx::query("INSERT INTO grant_rules (rule_id, body, updated_at) VALUES ($1, $2, $3) ON CONFLICT (rule_id) DO UPDATE SET body = $2, updated_at = $3")
+            .bind(&rule.rule_id)
+            .bind(Json(&rule))
+            .bind(epoch())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn delete_grant_rule(&self, rule_id: &str) -> Result<bool, StorageError> {
+        let r = sqlx::query("DELETE FROM grant_rules WHERE rule_id = $1")
+            .bind(rule_id)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    async fn put_coupons(&self, coupons: Vec<Coupon>) -> Result<(), StorageError> {
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let now = epoch();
+        for c in &coupons {
+            // A plain INSERT: an existing code aborts the whole batch.
+            sqlx::query("INSERT INTO coupons (code, body, updated_at) VALUES ($1, $2, $3)")
+                .bind(&c.code)
+                .bind(Json(c))
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+        }
+        tx.commit().await.map_err(storage)?;
+        Ok(())
+    }
+
+    async fn get_grant(
+        &self,
+        trigger: GrantTrigger,
+        order_id: &str,
+    ) -> Result<Option<Coupon>, StorageError> {
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let code: Option<String> =
+            sqlx::query("SELECT code FROM grants WHERE trigger = $1 AND order_id = $2")
+                .bind(trigger.as_str())
+                .bind(order_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(storage)?
+                .map(|r| r.try_get("code"))
+                .transpose()
+                .map_err(storage)?;
+        let c = match code {
+            Some(code) => PgStore::coupon_in(&mut tx, &code).await.map_err(storage)?,
+            None => None,
+        };
+        tx.commit().await.map_err(storage)?;
+        Ok(c)
+    }
+
+    async fn record_grant(
+        &self,
+        trigger: GrantTrigger,
+        order_id: &str,
+        coupon: Coupon,
+        now: Timestamp,
+    ) -> Result<Coupon, StorageError> {
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let inserted = sqlx::query("INSERT INTO grants (trigger, order_id, code, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (trigger, order_id) DO NOTHING")
+            .bind(trigger.as_str())
+            .bind(order_id)
+            .bind(&coupon.code)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?
+            .rows_affected();
+        if inserted == 0 {
+            // Another grant for the same key won: hand back what it issued.
+            let code: String =
+                sqlx::query("SELECT code FROM grants WHERE trigger = $1 AND order_id = $2")
+                    .bind(trigger.as_str())
+                    .bind(order_id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(storage)?
+                    .try_get("code")
+                    .map_err(storage)?;
+            let existing = PgStore::coupon_in(&mut tx, &code).await.map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            return Ok(existing.unwrap_or(coupon));
+        }
+        sqlx::query("INSERT INTO coupons (code, body, updated_at) VALUES ($1, $2, $3)")
+            .bind(&coupon.code)
+            .bind(Json(&coupon))
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+        Ok(coupon)
+    }
 }
 
 #[async_trait]
@@ -479,6 +661,7 @@ impl RedemptionRepository for PgStore {
         &self,
         order_id: &str,
         customer_id: Option<&str>,
+        _codes: &[String],
         now: Timestamp,
         price: &PricingFn<'_>,
     ) -> Result<ReserveOutcome, RedemptionError> {
@@ -590,6 +773,15 @@ impl RedemptionRepository for PgStore {
             .map_err(redemption_storage)?;
         tx.commit().await.map_err(redemption_storage)?;
         Ok(uses)
+    }
+
+    async fn counters(&self, codes: &[String]) -> Result<Counters, RedemptionError> {
+        let mut tx = self.pool.begin().await.map_err(redemption_storage)?;
+        let c = PgStore::counters_in(&mut tx, Some(codes))
+            .await
+            .map_err(redemption_storage)?;
+        tx.commit().await.map_err(redemption_storage)?;
+        Ok(c)
     }
 
     async fn get(&self, order_id: &str) -> Result<Option<Redemption>, RedemptionError> {

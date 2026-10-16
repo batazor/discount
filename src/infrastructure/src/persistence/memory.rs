@@ -8,10 +8,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use discount_application::CodeSource;
+use discount_application::coupons::CODE_LENGTH;
 use discount_application::ports::{
-    CatalogSnapshot, Clock, Event, EventPublisher, PricingFn, PromotionCatalog, Redemption,
-    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError, Uses,
-    transition_allowed,
+    CatalogSnapshot, Clock, Counters, Event, EventPublisher, GrantRule, GrantTrigger, PricingFn,
+    PromotionCatalog, Redemption, RedemptionError, RedemptionRepository, RedemptionStatus,
+    ReserveOutcome, StorageError, Uses, transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, OrderCap, PricingPolicy, Promotion, PromotionId, RoundingPolicy,
@@ -54,6 +56,8 @@ struct Store {
     coupons: BTreeMap<String, Coupon>,
     rates: BTreeMap<(String, String), ExchangeRate>,
     redemptions: BTreeMap<String, Redemption>,
+    grant_rules: BTreeMap<String, GrantRule>,
+    grants: BTreeMap<(String, String), String>,
 }
 
 /// In-memory catalogue and redemption store.
@@ -111,7 +115,7 @@ impl InMemoryStore {
     }
 
     fn snapshot_locked(s: &Store) -> CatalogSnapshot {
-        CatalogSnapshot {
+        let mut snapshot = CatalogSnapshot {
             policy: s.policy.clone().unwrap_or_else(default_policy),
             groups: s.groups.values().cloned().collect(),
             promotions: s
@@ -126,7 +130,56 @@ impl InMemoryStore {
                 .collect(),
             coupons: s.coupons.values().cloned().collect(),
             exchange_rates: s.rates.values().cloned().collect(),
+        };
+        InMemoryStore::counters_locked(s, None).apply_to(&mut snapshot);
+        snapshot
+    }
+
+    /// Spec `redemption`, "Counting uses per coupon and per promotion": over reserved and
+    /// confirmed redemptions, per promotion the redemptions that applied it; per coupon code
+    /// (all stored codes, or only `codes`) the redemptions that presented it and applied its
+    /// promotion.
+    fn counters_locked(s: &Store, codes: Option<&[String]>) -> Counters {
+        let mut out = Counters::default();
+        for r in s.redemptions.values() {
+            if r.status == RedemptionStatus::Cancelled {
+                continue;
+            }
+            for a in &r.result.applied {
+                bump(&mut out.promotion_uses, &a.promotion_id);
+            }
+            for code in &r.input.cart.coupon_codes {
+                if codes.is_some_and(|cs| !cs.contains(code)) {
+                    continue;
+                }
+                let Some(c) = s.coupons.get(code) else {
+                    continue;
+                };
+                if r.result
+                    .applied
+                    .iter()
+                    .any(|a| a.promotion_id == c.promotion_id)
+                {
+                    bump(&mut out.coupon_uses, code);
+                }
+            }
         }
+        out.promotion_uses.sort();
+        out.coupon_uses.sort();
+        out
+    }
+
+    fn coupon_with_uses(s: &Store, code: &str) -> Option<Coupon> {
+        let mut c = s.coupons.get(code).cloned()?;
+        c.uses = InMemoryStore::counters_locked(s, Some(&[code.to_string()])).coupon(code);
+        Some(c)
+    }
+}
+
+fn bump(v: &mut Vec<(String, i64)>, key: &str) {
+    match v.iter_mut().find(|(k, _)| k == key) {
+        Some(e) => e.1 += 1,
+        None => v.push((key.to_string(), 1)),
     }
 }
 
@@ -261,17 +314,13 @@ impl PromotionCatalog for InMemoryStore {
             .collect())
     }
     async fn list_coupons(&self) -> Result<Vec<Coupon>, StorageError> {
-        Ok(self
-            .inner
-            .lock()
-            .unwrap()
-            .coupons
-            .values()
-            .cloned()
-            .collect())
+        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap()).coupons)
     }
     async fn get_coupon(&self, code: &str) -> Result<Option<Coupon>, StorageError> {
-        Ok(self.inner.lock().unwrap().coupons.get(code).cloned())
+        Ok(InMemoryStore::coupon_with_uses(
+            &self.inner.lock().unwrap(),
+            code,
+        ))
     }
     async fn put_coupon(&self, coupon: Coupon) -> Result<(), StorageError> {
         self.inner
@@ -304,6 +353,75 @@ impl PromotionCatalog for InMemoryStore {
             .remove(&(from.to_string(), to.to_string()))
             .is_some())
     }
+    async fn list_grant_rules(&self) -> Result<Vec<GrantRule>, StorageError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .grant_rules
+            .values()
+            .cloned()
+            .collect())
+    }
+    async fn get_grant_rule(&self, rule_id: &str) -> Result<Option<GrantRule>, StorageError> {
+        Ok(self.inner.lock().unwrap().grant_rules.get(rule_id).cloned())
+    }
+    async fn put_grant_rule(&self, rule: GrantRule) -> Result<(), StorageError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .grant_rules
+            .insert(rule.rule_id.clone(), rule);
+        Ok(())
+    }
+    async fn delete_grant_rule(&self, rule_id: &str) -> Result<bool, StorageError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .grant_rules
+            .remove(rule_id)
+            .is_some())
+    }
+    async fn put_coupons(&self, coupons: Vec<Coupon>) -> Result<(), StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        if let Some(c) = coupons.iter().find(|c| s.coupons.contains_key(&c.code)) {
+            return Err(StorageError::Unavailable(format!(
+                "coupon {} already exists",
+                c.code
+            )));
+        }
+        for c in coupons {
+            s.coupons.insert(c.code.clone(), c);
+        }
+        Ok(())
+    }
+    async fn get_grant(
+        &self,
+        trigger: GrantTrigger,
+        order_id: &str,
+    ) -> Result<Option<Coupon>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        Ok(s.grants
+            .get(&(trigger.as_str().to_string(), order_id.to_string()))
+            .and_then(|code| InMemoryStore::coupon_with_uses(&s, code)))
+    }
+    async fn record_grant(
+        &self,
+        trigger: GrantTrigger,
+        order_id: &str,
+        coupon: Coupon,
+        _now: Timestamp,
+    ) -> Result<Coupon, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        let key = (trigger.as_str().to_string(), order_id.to_string());
+        if let Some(code) = s.grants.get(&key).cloned() {
+            return Ok(InMemoryStore::coupon_with_uses(&s, &code).unwrap_or(coupon));
+        }
+        s.grants.insert(key, coupon.code.clone());
+        s.coupons.insert(coupon.code.clone(), coupon.clone());
+        Ok(coupon)
+    }
 }
 
 /// Budget bookkeeping shared with the Postgres adapter's logic: what each applied promotion
@@ -326,6 +444,7 @@ impl RedemptionRepository for InMemoryStore {
         &self,
         order_id: &str,
         customer_id: Option<&str>,
+        _codes: &[String],
         now: Timestamp,
         price: &PricingFn<'_>,
     ) -> Result<ReserveOutcome, RedemptionError> {
@@ -396,6 +515,13 @@ impl RedemptionRepository for InMemoryStore {
         ))
     }
 
+    async fn counters(&self, codes: &[String]) -> Result<Counters, RedemptionError> {
+        Ok(InMemoryStore::counters_locked(
+            &self.inner.lock().unwrap(),
+            Some(codes),
+        ))
+    }
+
     async fn get(&self, order_id: &str) -> Result<Option<Redemption>, RedemptionError> {
         Ok(self
             .inner
@@ -408,6 +534,54 @@ impl RedemptionRepository for InMemoryStore {
 }
 
 pub struct SystemClock;
+
+/// Codes from the standard library's randomly keyed hasher over a counter: unpredictable
+/// enough for coupon codes, no extra dependency.
+#[derive(Default)]
+pub struct RandomCodes {
+    counter: std::sync::atomic::AtomicU64,
+    keys: std::collections::hash_map::RandomState,
+}
+
+impl CodeSource for RandomCodes {
+    fn next_code(&self) -> [u8; CODE_LENGTH] {
+        use std::hash::{BuildHasher, Hasher};
+        let n = self
+            .counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut h = self.keys.build_hasher();
+        h.write_u64(n);
+        h.write_u128(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        );
+        let mut bits = h.finish();
+        let mut out = [0u8; CODE_LENGTH];
+        for b in &mut out {
+            *b = (bits & 31) as u8;
+            bits >>= 5;
+        }
+        out
+    }
+}
+
+/// Fixed sequence of codes for tests: `AAAAAAAA`, `AAAAAAAB`, ...
+#[derive(Default)]
+pub struct SequentialCodes(std::sync::atomic::AtomicU64);
+
+impl CodeSource for SequentialCodes {
+    fn next_code(&self) -> [u8; CODE_LENGTH] {
+        let mut n = self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut out = [0u8; CODE_LENGTH];
+        for b in out.iter_mut().rev() {
+            *b = (n & 31) as u8;
+            n >>= 5;
+        }
+        out
+    }
+}
 
 impl Clock for SystemClock {
     fn now(&self) -> Timestamp {

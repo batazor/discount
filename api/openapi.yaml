@@ -241,6 +241,58 @@ paths:
       responses:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/coupons/generate:
+    post:
+      operationId: generateCoupons
+      tags: [catalogue]
+      summary: Create a batch of distinct coupon codes for a promotion
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GenerateCouponsRequest' } } } }
+      responses:
+        '200': { description: The generated codes, content: { application/json: { schema: { $ref: '#/components/schemas/GenerateCouponsResponse' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/coupons/grant:
+    post:
+      operationId: grantCoupon
+      tags: [catalogue]
+      summary: Issue a coupon to a customer for an event, by the highest-priority grant rule
+      description: Idempotent per `(trigger, order_id)`; a repeat returns the same coupon.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GrantRequest' } } } }
+      responses:
+        '200': { description: The issued coupon, content: { application/json: { schema: { $ref: '#/components/schemas/Coupon' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/grant-rules:
+    get:
+      operationId: listGrantRules
+      tags: [catalogue]
+      summary: Grant rules
+      responses:
+        '200': { description: Rules, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/GrantRule' } } } } }
+  /v1/grant-rules/{rule_id}:
+    parameters: [ { name: rule_id, in: path, required: true, schema: { type: string } } ]
+    get:
+      operationId: getGrantRule
+      tags: [catalogue]
+      summary: One grant rule
+      responses:
+        '200': { description: Rule, content: { application/json: { schema: { $ref: '#/components/schemas/GrantRule' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putGrantRule
+      tags: [catalogue]
+      summary: Upsert a grant rule (the path id wins over the body)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GrantRule' } } } }
+      responses:
+        '200': { description: Stored rule, content: { application/json: { schema: { $ref: '#/components/schemas/GrantRule' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+    delete:
+      operationId: deleteGrantRule
+      tags: [catalogue]
+      summary: Delete a grant rule
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
   /healthz:
     get:
       operationId: healthz
@@ -392,6 +444,7 @@ components:
         - { type: object, additionalProperties: false, required: [type, key, starts_at, ends_at], properties: { type: { type: string, enum: [AttributeDateWindow] }, key: { type: string }, starts_at: { type: integer, format: int64, nullable: true }, ends_at: { type: integer, format: int64, nullable: true } } }
         - { type: object, additionalProperties: false, required: [type, max], properties: { type: { type: string, enum: [MaxCompletedOrders] }, max: { type: integer, format: int64, minimum: 0 } } }
         - { type: object, additionalProperties: false, required: [type, max], properties: { type: { type: string, enum: [MaxUsesPerCustomer] }, max: { type: integer, format: int64, minimum: 0 } } }
+        - { type: object, additionalProperties: false, required: [type, max], properties: { type: { type: string, enum: [MaxUsesTotal] }, max: { type: integer, format: int64, minimum: 0 } } }
         - { type: object, additionalProperties: false, required: [type], properties: { type: { type: string, enum: [RequiresCoupon] } } }
     Action:
       oneOf:
@@ -399,13 +452,14 @@ components:
         - { type: object, additionalProperties: false, required: [type, amount], properties: { type: { type: string, enum: [OrderFixedAmount] }, amount: { $ref: '#/components/schemas/Money' } } }
     Promotion:
       type: object
-      required: [promotion_id, group_id, priority, exclusive, cap, remaining_budget, rounding, rules, action]
+      required: [promotion_id, group_id, priority, exclusive, cap, remaining_budget, uses_total, rounding, rules, action]
       additionalProperties: false
       properties:
         promotion_id: { type: string }
         group_id: { type: string }
         priority: { type: integer, format: int64 }
         exclusive: { type: boolean }
+        uses_total: { type: integer, format: int64, minimum: 0, description: 'Reserved and confirmed redemptions that applied the promotion; derived, ignored on PUT' }
         cap: { type: object, allOf: [ { $ref: '#/components/schemas/Money' } ], nullable: true }
         remaining_budget: { type: object, allOf: [ { $ref: '#/components/schemas/Money' } ], nullable: true, description: Read-only on this API; set through the budget resource }
         rounding: { type: object, allOf: [ { $ref: '#/components/schemas/RoundingPolicy' } ], nullable: true }
@@ -413,7 +467,7 @@ components:
         action: { $ref: '#/components/schemas/Action' }
     Coupon:
       type: object
-      required: [code, promotion_id, starts_at, ends_at, customer_id]
+      required: [code, promotion_id, starts_at, ends_at, customer_id, max_uses, uses]
       additionalProperties: false
       properties:
         code: { type: string }
@@ -421,6 +475,8 @@ components:
         starts_at: { type: integer, format: int64, nullable: true }
         ends_at: { type: integer, format: int64, nullable: true }
         customer_id: { type: string, nullable: true }
+        max_uses: { type: integer, format: int64, minimum: 0, nullable: true, description: 'Absent = unlimited; 1 = single use' }
+        uses: { type: integer, format: int64, minimum: 0, description: 'Reserved and confirmed redemptions that used the code; derived, ignored on PUT' }
     ExchangeRate:
       type: object
       required: [from, to, numerator, denominator]
@@ -437,6 +493,43 @@ components:
       properties:
         numerator: { type: integer, format: int64, minimum: 1 }
         denominator: { type: integer, format: int64, minimum: 1 }
+    GenerateCouponsRequest:
+      type: object
+      required: [promotion_id, count, prefix, starts_at, ends_at, max_uses, customer_id]
+      additionalProperties: false
+      properties:
+        promotion_id: { type: string }
+        count: { type: integer, minimum: 1, maximum: 10000 }
+        prefix: { type: string, description: 'Codes are prefix + 8 characters from ABCDEFGHJKLMNPQRSTUVWXYZ23456789' }
+        starts_at: { type: integer, format: int64, nullable: true }
+        ends_at: { type: integer, format: int64, nullable: true }
+        max_uses: { type: integer, format: int64, minimum: 0, nullable: true }
+        customer_id: { type: string, nullable: true }
+    GenerateCouponsResponse:
+      type: object
+      required: [codes]
+      properties:
+        codes: { type: array, items: { type: string } }
+    GrantTrigger: { type: string, enum: [cancel, review] }
+    GrantRule:
+      type: object
+      required: [rule_id, trigger, promotion_id, priority, validity_seconds, max_uses]
+      additionalProperties: false
+      properties:
+        rule_id: { type: string }
+        trigger: { $ref: '#/components/schemas/GrantTrigger' }
+        promotion_id: { type: string }
+        priority: { type: integer, format: int64, description: Higher wins; ties by rule_id }
+        validity_seconds: { type: integer, format: int64, minimum: 1 }
+        max_uses: { type: integer, format: int64, minimum: 0, nullable: true }
+    GrantRequest:
+      type: object
+      required: [trigger, customer_id, order_id]
+      additionalProperties: false
+      properties:
+        trigger: { $ref: '#/components/schemas/GrantTrigger' }
+        customer_id: { type: string }
+        order_id: { type: string }
     Budget:
       type: object
       required: [remaining]
@@ -514,7 +607,7 @@ components:
       properties:
         type:
           type: string
-          enum: [InvalidCurrency, MixedCurrencies, CurrencyMismatch, AmountOutOfRange, InvalidBasisPoints, InvalidQuantity, DuplicateLineId, DuplicateGroupId, DuplicatePromotionId, UnknownGroup, DuplicateCouponCode, InvalidCustomerContext, InvalidExchangeRate, DuplicateExchangeRate, InvalidRule, Overflow]
+          enum: [InvalidCurrency, MixedCurrencies, CurrencyMismatch, AmountOutOfRange, InvalidBasisPoints, InvalidQuantity, DuplicateLineId, DuplicateGroupId, DuplicatePromotionId, UnknownGroup, DuplicateCouponCode, InvalidCustomerContext, InvalidExchangeRate, DuplicateExchangeRate, InvalidRule, InvalidCoupon, InvalidPromotion, Overflow]
         field: { type: string }
         line_index: { type: integer }
         promotion_index: { type: integer }

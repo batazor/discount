@@ -90,6 +90,10 @@ structure Coupon where
   starts_at : Option Timestamp
   ends_at : Option Timestamp
   customer_id : Option String
+  /-- Absent = unlimited, `1` = single use. -/
+  max_uses : Option Int
+  /-- Snapshot counter: reserved or confirmed redemptions that used the code. -/
+  uses : Int
   deriving Repr, DecidableEq, Inhabited
 
 /-- One minor unit of `from` is `numerator / denominator` minor units of `to`. -/
@@ -126,6 +130,8 @@ inductive Rule where
   | MaxCompletedOrders (max : Int)
   /-- The customer's use count of this promotion is `< max`. -/
   | MaxUsesPerCustomer (max : Int)
+  /-- The promotion's `uses_total` is `< max`. -/
+  | MaxUsesTotal (max : Int)
   /-- A presented, valid coupon of this promotion exists. -/
   | RequiresCoupon
   deriving Repr, DecidableEq, Inhabited
@@ -142,6 +148,8 @@ structure Promotion where
   exclusive : Bool
   cap : Option Money
   remaining_budget : Option Money
+  /-- Snapshot counter: reserved or confirmed redemptions that applied the promotion. -/
+  uses_total : Int
   rounding : Option RoundingPolicy
   rules : List Rule
   action : Action
@@ -174,6 +182,8 @@ inductive PricingError where
   | InvalidExchangeRate (field : String)
   | DuplicateExchangeRate («from» : Currency) (to : Currency)
   | InvalidRule (field : String)
+  | InvalidCoupon (field : String)
+  | InvalidPromotion (field : String)
   /-- Rust only; the Lean model never produces it (ADR 3). -/
   | Overflow
   deriving Repr, DecidableEq, Inhabited

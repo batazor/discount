@@ -65,9 +65,12 @@ JSON: `{"key": "checkin", "value": "1760227200"}`.
 ### Coupon
 A code that turns a promotion on. Fields: `code`, `promotion_id`,
 `starts_at : Option Timestamp`, `ends_at : Option Timestamp` (half-open window on `now`),
-`customer_id : Option String` (the only customer allowed to use it). Pricing receives the
-coupons whose code the cart presents in `PricingInput.coupons`.
-JSON: `{"code": "WELCOME", "promotion_id": "P1", "starts_at": null, "ends_at": null, "customer_id": null}`.
+`customer_id : Option String` (the only customer allowed to use it),
+`max_uses : Option Int` (absent = unlimited, `1` = single use), `uses : Int` (`≥ 0`, how many
+reserved or confirmed redemptions already used the code; a snapshot counter the application
+layer derives, like `remaining_budget`). Pricing receives the coupons whose code the cart
+presents in `PricingInput.coupons`.
+JSON: `{"code": "WELCOME", "promotion_id": "P1", "starts_at": null, "ends_at": null, "customer_id": null, "max_uses": 1, "uses": 0}`.
 
 ### ExchangeRate
 One minor unit of `from` is `numerator / denominator` minor units of `to`. Fields: `from`,
@@ -163,16 +166,17 @@ A predicate over `(cart, customer, coupons, now)` and the promotion being evalua
 - `MaxCompletedOrders { max : Int }`: `customer.completed_orders ≤ max` (`0` = first order only).
 - `MaxUsesPerCustomer { max : Int }`: the `count` in `customer.uses` for this promotion
   (`0` when absent) is `< max`.
+- `MaxUsesTotal { max : Int }`: the promotion's `uses_total` is `< max`.
 - `RequiresCoupon`: some coupon in `coupons` has this `promotion_id`, its `code` is in
-  `cart.coupon_codes`, its window contains `now`, and its `customer_id` is absent or equals
-  `customer.customer_id`.
+  `cart.coupon_codes`, its window contains `now`, its `customer_id` is absent or equals
+  `customer.customer_id`, and it has remaining uses (`max_uses` absent or `uses < max_uses`).
 JSON: `{"type": "DateWindow", "starts_at": 1760227200, "ends_at": null}`,
 `{"type": "OrderTotalRange", "min": {"amount": 5000, "currency": "EUR"}, "max": null}`,
 `{"type": "TagsMatch", "all": [], "any": ["#ios", "#android"], "none": ["#partner"]}`,
 `{"type": "AttributeIn", "key": "hotel_kind", "values": ["resort"]}`,
 `{"type": "AttributeDateWindow", "key": "checkin", "starts_at": 100, "ends_at": 200}`,
 `{"type": "MaxCompletedOrders", "max": 0}`, `{"type": "MaxUsesPerCustomer", "max": 1}`,
-`{"type": "RequiresCoupon"}`.
+`{"type": "MaxUsesTotal", "max": 100}`, `{"type": "RequiresCoupon"}`.
 
 ### Eligibility
 A promotion is **eligible** for an input when every one of its rules holds (`eligible`).
@@ -206,9 +210,15 @@ budget is the application layer's job (`Redeem`).
 ### Priority
 `priority : Int`, part of the total order. Higher applies first.
 
+### Uses total
+`uses_total : Int` on a promotion **snapshot** (`≥ 0`): how many reserved or confirmed
+redemptions applied it. Derived by the application layer like `remaining_budget`; read by
+`MaxUsesTotal`.
+
 ### Promotion
 Fields, in JSON order: `promotion_id`, `group_id`, `priority`, `exclusive`, `cap`,
-`remaining_budget`, `rounding : Option RoundingPolicy`, `rules : List Rule`, `action : Action`.
+`remaining_budget`, `uses_total`, `rounding : Option RoundingPolicy`, `rules : List Rule`,
+`action : Action`.
 
 ## Pricing
 
@@ -300,23 +310,27 @@ converted amount.
 7. For each `exchange_rates[k]` in order: `InvalidCurrency` on `.from`, on `.to`;
    `InvalidExchangeRate { field }` for `.numerator`, `.denominator` outside `1 ..= MAX_RATE_PART`;
    then `DuplicateExchangeRate { from, to }` for the first pair seen twice.
-8. `DuplicateCouponCode { code }` — first code seen twice in `coupons`.
+8. For each `coupons[k]` in order: `InvalidCoupon { field }` for `.uses` or `.max_uses`
+   negative (`coupons[<k>].uses|max_uses`); then `DuplicateCouponCode { code }` — first code
+   seen twice in `coupons`.
 9. `policy.order_cap`: if `amount` present, `checkMoney` on `policy.order_cap.amount`; if
    `bps` present, `InvalidBasisPoints { field: "policy.order_cap.bps" }`.
 10. `DuplicateGroupId { group_id }` — first `group_id` seen twice, scanning in order.
 11. For each promotion `i` in order: `InvalidBasisPoints` for `promotions[<i>].action.bps`;
     `checkMoney` for each of `action.amount`, `cap`, `remaining_budget` that is present, in
-    that order; for each `rules[k]` in order: `OrderTotalRange` → `checkMoney` on `.min`,
-    `.max` when present (`promotions[<i>].rules[<k>].min|max`); `MaxCompletedOrders`,
-    `MaxUsesPerCustomer` → `InvalidRule { field: "promotions[<i>].rules[<k>].max" }` if
-    negative; then `UnknownGroup { promotion_index }` if `group_id` is not in `groups`.
+    that order; `InvalidPromotion { field: "promotions[<i>].uses_total" }` if negative; for
+    each `rules[k]` in order: `OrderTotalRange` → `checkMoney` on `.min`, `.max` when present
+    (`promotions[<i>].rules[<k>].min|max`); `MaxCompletedOrders`, `MaxUsesPerCustomer`,
+    `MaxUsesTotal` → `InvalidRule { field: "promotions[<i>].rules[<k>].max" }` if negative;
+    then `UnknownGroup { promotion_index }` if `group_id` is not in `groups`.
 12. `DuplicatePromotionId { promotion_id }` — first id seen twice, scanning in order.
 13. `Overflow` — Rust only, from checked arithmetic after validation; unreachable for
     validated input (ADR 3). Lean never produces it.
 
 `field` is a path string: `cart.currency`, `cart.lines[<i>].unit_price`, `cart.subtotal`,
 `customer.completed_orders`, `customer.uses[<k>]`, `customer.uses[<k>].count`,
-`exchange_rates[<k>].from|to|numerator|denominator`, `policy.order_cap.amount`,
+`exchange_rates[<k>].from|to|numerator|denominator`, `coupons[<k>].uses|max_uses`,
+`promotions[<i>].uses_total`, `policy.order_cap.amount`,
 `policy.order_cap.bps`, `promotions[<i>].action.bps`, `promotions[<i>].action.amount`,
 `promotions[<i>].cap`, `promotions[<i>].remaining_budget`, `promotions[<i>].rules[<k>].min|max`,
 with `<i>`, `<k>` decimal indexes without padding.

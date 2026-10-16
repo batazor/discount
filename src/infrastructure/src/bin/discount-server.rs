@@ -56,6 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         redemptions,
         clock: Arc::new(SystemClock),
         events: Arc::new(NoopEventPublisher),
+        codes: Arc::new(discount_infrastructure::RandomCodes::default()),
         instruments,
     });
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;

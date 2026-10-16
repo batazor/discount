@@ -18,6 +18,7 @@ async fn start_server() -> String {
         redemptions: Arc::new(store),
         clock: Arc::new(FixedClock(1_760_227_200)),
         events: Arc::new(NoopEventPublisher),
+        codes: Arc::new(discount_infrastructure::RandomCodes::default()),
         instruments: Instruments::noop(),
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -61,7 +62,7 @@ async fn generated_client_drives_the_documented_flows() {
     assert_eq!(g.group_id, "g");
     let promo: types::Promotion = from_json(json!({
         "promotion_id": "P1", "group_id": "g", "priority": 10, "exclusive": false, "cap": null,
-        "remaining_budget": null, "rounding": null, "rules": [{"type": "DateWindow", "starts_at": null, "ends_at": null}],
+        "remaining_budget": null, "uses_total": 0, "rounding": null, "rules": [{"type": "DateWindow", "starts_at": null, "ends_at": null}],
         "action": {"type": "OrderPercentage", "bps": 1000}
     }));
     client
@@ -173,6 +174,54 @@ async fn generated_client_drives_the_documented_flows() {
         )
         .is_err()
     );
+
+    // coupon lifecycle: generate, grant rules, idempotent grant
+    let gen_req: types::GenerateCouponsRequest = from_json(json!({
+        "promotion_id": "P1", "count": 3, "prefix": "SUMMER-", "starts_at": null, "ends_at": null,
+        "max_uses": 1, "customer_id": null
+    }));
+    let generated = client
+        .generate_coupons(&gen_req)
+        .await
+        .expect("generate")
+        .into_inner();
+    assert_eq!(generated.codes.len(), 3);
+    assert!(generated.codes.iter().all(|c| c.starts_with("SUMMER-")));
+    let c = client
+        .get_coupon(&generated.codes[0])
+        .await
+        .expect("get coupon")
+        .into_inner();
+    assert_eq!((c.max_uses, c.uses), (Some(1), 0));
+    let rule: types::GrantRule = from_json(json!({
+        "rule_id": "r1", "trigger": "cancel", "promotion_id": "P1", "priority": 1,
+        "validity_seconds": 86400, "max_uses": 1
+    }));
+    client.put_grant_rule("r1", &rule).await.expect("put rule");
+    assert_eq!(
+        client.list_grant_rules().await.expect("list rules").len(),
+        1
+    );
+    let grant: types::GrantRequest =
+        from_json(json!({"trigger": "cancel", "customer_id": "c1", "order_id": "o9"}));
+    let g1 = client
+        .grant_coupon(&grant)
+        .await
+        .expect("grant")
+        .into_inner();
+    let g2 = client
+        .grant_coupon(&grant)
+        .await
+        .expect("grant again")
+        .into_inner();
+    assert_eq!(g1.code, g2.code);
+    assert_eq!(g1.customer_id.as_deref(), Some("c1"));
+    assert_eq!(g1.ends_at, Some(1_760_227_200 + 86400));
+    client.delete_grant_rule("r1").await.expect("delete rule");
+    match client.get_grant_rule("r1").await {
+        Err(discount_client::Error::ErrorResponse(e)) => assert_eq!(e.status(), 404),
+        other => panic!("expected 404, got {other:?}"),
+    }
 
     // the service serves the very document the client was generated from
     let doc = client.openapi_document().await.expect("openapi document");

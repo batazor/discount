@@ -31,10 +31,17 @@ def usesOf (c : CustomerContext) (pid : PromotionId) : Int :=
   | some u => u.count
   | none => 0
 
+/-- Remaining uses: `max_uses` absent, or `uses < max_uses`. -/
+def couponHasUses (c : Coupon) : Bool :=
+  match c.max_uses with
+  | none => true
+  | some m => decide (c.uses < m)
+
 def couponValid (i : PricingInput) (pid : PromotionId) (c : Coupon) : Bool :=
   c.promotion_id == pid && i.cart.coupon_codes.contains c.code &&
     inWindow c.starts_at c.ends_at i.now &&
-    (match c.customer_id with | none => true | some cid => i.customer.customer_id == some cid)
+    (match c.customer_id with | none => true | some cid => i.customer.customer_id == some cid) &&
+    couponHasUses c
 
 def ruleHolds (r : Rule) (p : Promotion) (i : PricingInput) : Bool :=
   match r with
@@ -58,6 +65,7 @@ def ruleHolds (r : Rule) (p : Promotion) (i : PricingInput) : Bool :=
         | some t => inWindow starts_at ends_at t
   | .MaxCompletedOrders m => decide (i.customer.completed_orders ≤ m)
   | .MaxUsesPerCustomer m => decide (usesOf i.customer p.promotion_id < m)
+  | .MaxUsesTotal m => decide (p.uses_total < m)
   | .RequiresCoupon => i.coupons.any (couponValid i p.promotion_id)
 
 def firstFailingRule : List Rule → Promotion → PricingInput → Nat → Option Nat

@@ -127,8 +127,9 @@ iteration 2 together with `Redeem`.
 input.coupons)` and `P`. The theorem states it as a congruence: two inputs that agree on
 those four fields give the same eligibility for every promotion. The core has no other
 inputs: no clock, no repository, no randomness (ADR 7). Coupon resolution and usage
-counters are inputs supplied by the application layer, so `RequiresCoupon` and
-`MaxUsesPerCustomer` are covered too.
+counters are inputs supplied by the application layer (`customer.uses`, `Coupon.uses`,
+`Promotion.uses_total`), so `RequiresCoupon`, `MaxUsesPerCustomer` and `MaxUsesTotal` are
+covered too.
 
 ## Structural lemmas
 

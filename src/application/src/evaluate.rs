@@ -123,6 +123,7 @@ impl Redeem<'_> {
     ) -> Result<ReserveOutcome, RedemptionError> {
         let now = self.clock.now();
         let customer_id = customer.customer_id.clone();
+        let codes = cart.coupon_codes.clone();
         let price = move |snapshot: CatalogSnapshot, uses: Uses| {
             let input = pricing_input(snapshot, now, cart.clone(), customer.clone(), uses);
             let result = apply(&input)?;
@@ -130,7 +131,7 @@ impl Redeem<'_> {
         };
         let outcome = self
             .redemptions
-            .reserve(order_id, customer_id.as_deref(), now, &price)
+            .reserve(order_id, customer_id.as_deref(), &codes, now, &price)
             .await?;
         if let ReserveOutcome::Reserved(r) = &outcome {
             self.events

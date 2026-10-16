@@ -21,14 +21,16 @@ def customer : CustomerContext :=
 
 def promo (rules : List Rule) : Promotion :=
   { promotion_id := "P1", group_id := "g", priority := 0, exclusive := false, cap := none,
-    remaining_budget := none, rounding := none, rules := rules, action := .OrderPercentage 1000 }
+    remaining_budget := none, uses_total := 100, rounding := none, rules := rules,
+    action := .OrderPercentage 1000 }
 
 def input : PricingInput :=
   { now := 1000
     policy := { rounding := .Down, stacking := .Sequential, order_cap := { amount := none, bps := none } }
     customer := customer
     cart := cart
-    coupons := [{ code := "WELCOME", promotion_id := "P1", starts_at := none, ends_at := some 2000, customer_id := some "c1" }]
+    coupons := [{ code := "WELCOME", promotion_id := "P1", starts_at := none, ends_at := some 2000,
+                  customer_id := some "c1", max_uses := some 1, uses := 0 }]
     exchange_rates := []
     groups := [{ group_id := "g", priority := 0, mode := .Stackable }]
     promotions := [] }
@@ -62,6 +64,12 @@ def holds (r : Rule) : Bool := ruleHolds r (promo [r]) input
 #guard (ruleHolds .RequiresCoupon (promo []) { input with now := 2000 }) = false
 #guard (ruleHolds .RequiresCoupon (promo []) { input with customer := { customer with customer_id := some "c2" } }) = false
 #guard (ruleHolds .RequiresCoupon (promo []) { input with cart := { cart with coupon_codes := ["NOPE"] } }) = false
+-- Exhausted coupon and total usage cap
+#guard (ruleHolds .RequiresCoupon (promo [])
+          { input with coupons := [{ code := "WELCOME", promotion_id := "P1", starts_at := none, ends_at := none,
+                                     customer_id := none, max_uses := some 1, uses := 1 }] }) = false
+#guard holds (.MaxUsesTotal 100) = false
+#guard holds (.MaxUsesTotal 101) = true
 -- parseDecimal
 #guard parseDecimal "150" = some 150
 #guard parseDecimal "-7" = some (-7)

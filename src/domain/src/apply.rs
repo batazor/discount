@@ -339,6 +339,7 @@ mod tests {
             exclusive: false,
             cap: None,
             remaining_budget: None,
+            uses_total: 0,
             rounding: None,
             rules: Vec::new(),
             action,
@@ -641,6 +642,8 @@ mod tests {
             starts_at: None,
             ends_at: Some(2_000_000_000),
             customer_id: Some("c1".into()),
+            max_uses: Some(1),
+            uses: 0,
         });
         i.cart.coupon_codes.push("WELCOME".into());
         // wrong customer

@@ -102,6 +102,8 @@ pub fn error_type(e: &PricingError) -> &'static str {
         PricingError::InvalidExchangeRate { .. } => "InvalidExchangeRate",
         PricingError::DuplicateExchangeRate { .. } => "DuplicateExchangeRate",
         PricingError::InvalidRule { .. } => "InvalidRule",
+        PricingError::InvalidCoupon { .. } => "InvalidCoupon",
+        PricingError::InvalidPromotion { .. } => "InvalidPromotion",
         PricingError::Overflow => "Overflow",
     }
 }
