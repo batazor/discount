@@ -73,3 +73,12 @@ per applied `promotion_id`; cancelled redemptions do not count.
 - **WHEN** customer `c1` has redemptions `o1` (reserved, applied `P1`), `o2` (confirmed,
   applied `P1` and `P2`) and `o3` (cancelled, applied `P1`)
 - **THEN** the uses for `c1` are `P1: 2, P2: 1`
+
+### Requirement: Counting uses per coupon and per promotion
+The repository SHALL answer, for a list of codes, how many reserved or confirmed redemptions
+presented each code and applied its promotion, and for every promotion how many reserved or
+confirmed redemptions applied it. Cancelled redemptions do not count.
+
+#### Scenario: Counts after a cancellation
+- **WHEN** `o1` (reserved) and `o2` (cancelled) both presented `ONCE` and applied `P1`
+- **THEN** `ONCE` has `uses = 1` and `P1` has `uses_total = 1`
