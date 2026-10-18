@@ -69,11 +69,33 @@ if (Astro.request.method === "POST") {
       {OIDC.demoUsers.length > 0 && (
         <section class="card">
           <h2 class="card-title">Demo users</h2>
-          <ul class="space-y-1 text-[13px]">
-            {OIDC.demoUsers.map((u) => <li class="flex items-center justify-between gap-3"><span class="mono">{u.user}</span>{u.password && <span class="mono" style="color: var(--color-ink-3)">password <span class="select-all">{u.password}</span></span>}</li>)}
-          </ul>
+          <p class="hint mb-3">One click signs you in as that user.</p>
+          <div class="grid gap-2">
+            {OIDC.demoUsers.map((u) => (
+              <form method="post" action={`/login?back=${encodeURIComponent(back)}`} class="flex items-center justify-between gap-3" data-demo-user>
+                <input type="hidden" name="username" value={u.user} />
+                <input type="hidden" name="password" value={u.password} />
+                <span class="text-[13px]"><span class="mono font-semibold">{u.user}</span>{u.password && <span class="hint inline"> · password <span class="mono select-all">{u.password}</span></span>}</span>
+                <button type="submit" class="btn btn-secondary" disabled={issuerDown}>Sign in as {u.user}</button>
+              </form>
+            ))}
+          </div>
         </section>
       )}
+      <script>
+        // Show the demo credentials in the form before it goes, so the switch is visible.
+        for (const f of document.querySelectorAll<HTMLFormElement>("form[data-demo-user]")) {
+          f.addEventListener("submit", () => {
+            const u = f.querySelector<HTMLInputElement>("input[name=username]")!.value;
+            const p = f.querySelector<HTMLInputElement>("input[name=password]")!.value;
+            const main = document.querySelector<HTMLFormElement>("form:not([data-demo-user])");
+            if (main) {
+              main.querySelector<HTMLInputElement>("input[name=username]")!.value = u;
+              main.querySelector<HTMLInputElement>("input[name=password]")!.value = p;
+            }
+          });
+        }
+      </script>
     </main>
   </body>
 </html>
