@@ -3,12 +3,23 @@
 ## ADDED Requirements
 
 ### Requirement: Promotion and coupon states
-A non-archived promotion and a coupon SHALL each have `state` in `active | paused`, `active`
-by default, set over `PUT /v1/promotions/{promotion_id}/state` and
-`PUT /v1/coupons/{code}/state` with body `{state}` (`200` with the updated body, `404` for
-an unknown or archived promotion or an unknown coupon), and returned as a read-only `state`
-field in the catalogue bodies (`PUT` of a promotion or coupon ignores it). Archiving a
-promotion is unchanged and terminal.
+A non-archived promotion and a coupon SHALL each have a `CatalogState` in `active | paused`,
+`active` by default, read and set over `GET|PUT /v1/promotions/{promotion_id}/state` and
+`GET|PUT /v1/coupons/{code}/state` with body `{state}`. The promotion and coupon bodies are
+the pricing engine's types and stay unchanged; `PUT` of a body never changes the state.
+Archiving is unchanged and terminal.
+
+#### Scenario: Status codes
+- **WHEN** a state is `PUT` for an unknown or archived promotion, or an unknown coupon
+- **THEN** the response is `404`; otherwise `200` with the stored state
+
+### Requirement: Listings show both states
+`GET /v1/promotions` and `GET /v1/coupons` SHALL list active and paused records and accept
+`?state=active|paused` to narrow the listing.
+
+#### Scenario: Filter by state
+- **WHEN** `P1` is paused and `P2` is active
+- **THEN** `GET /v1/promotions` lists both, `?state=paused` lists `P1` only
 
 #### Scenario: Pause and resume
 - **WHEN** `P1` is set to `paused` and later back to `active`

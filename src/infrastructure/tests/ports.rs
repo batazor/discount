@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use common::*;
 use discount_application::ports::{
-    Counters, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog, PromotionMetadata,
-    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError, Tenancy,
-    Tenant,
+    CatalogState, Counters, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog,
+    PromotionMetadata, RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome,
+    StorageError, Tenancy, Tenant,
 };
 use discount_application::{
     CancelRedemption, ConfirmRedemption, CouponError, CouponStatus, CustomerCouponError, Evaluate,
@@ -1398,4 +1398,183 @@ async fn check_isolation(tenancy: &dyn Tenancy) {
             && ids.contains(&"cars".to_string())
             && ids.contains(&"default".to_string())
     );
+}
+
+/// Spec `catalogue-states`: paused promotions and coupons leave the pricing snapshot, stay
+/// in the listings, come back on resume; generation and grants refuse paused promotions;
+/// the customer listing shows `paused`.
+#[tokio::test]
+async fn paused_records_leave_the_snapshot() {
+    for_each_backend(|p| async move {
+        let clock = FixedClock(NOW);
+        p.catalog.put_group(group_g()).await.unwrap();
+        p.catalog.put_promotion(fixed_300("P1")).await.unwrap();
+        let mut p2 = fixed_300("P2");
+        p2.rules = vec![Rule::RequiresCoupon];
+        p.catalog.put_promotion(p2).await.unwrap();
+        p.catalog.put_coupon(coupon("WELCOME", None)).await.unwrap();
+        assert_eq!(
+            p.catalog.get_promotion_state("P1").await.unwrap(),
+            Some(CatalogState::Active)
+        );
+        assert_eq!(
+            p.catalog.get_coupon_state("WELCOME").await.unwrap(),
+            Some(CatalogState::Active)
+        );
+        assert_eq!(p.catalog.get_promotion_state("nope").await.unwrap(), None);
+        assert!(
+            !p.catalog
+                .set_promotion_state("nope", CatalogState::Paused)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !p.catalog
+                .set_coupon_state("nope", CatalogState::Paused)
+                .await
+                .unwrap()
+        );
+        let evaluate = Evaluate {
+            catalog: &*p.catalog,
+            redemptions: &*p.redemptions,
+            clock: &clock,
+            events: &NoopEventPublisher,
+        };
+        let r = evaluate
+            .run(cart_with("WELCOME"), CustomerContext::default())
+            .await
+            .unwrap();
+        assert_eq!(r.applied.len(), 2);
+        // pause P1: gone from the snapshot and from applied/skipped, still listed
+        assert!(
+            p.catalog
+                .set_promotion_state("P1", CatalogState::Paused)
+                .await
+                .unwrap()
+        );
+        let r = evaluate
+            .run(cart_with("WELCOME"), CustomerContext::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            r.applied
+                .iter()
+                .map(|a| a.promotion_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["P2"]
+        );
+        assert!(r.skipped.iter().all(|s| s.promotion_id != "P1"));
+        assert_eq!(p.catalog.list_promotions().await.unwrap().len(), 2);
+        assert_eq!(p.catalog.snapshot().await.unwrap().promotions.len(), 1);
+        assert!(p.catalog.get_promotion("P1").await.unwrap().is_some());
+        // a PUT of the body does not resume it
+        p.catalog.put_promotion(fixed_300("P1")).await.unwrap();
+        assert_eq!(
+            p.catalog.get_promotion_state("P1").await.unwrap(),
+            Some(CatalogState::Paused)
+        );
+        // pause the coupon: P2 is NotEligible on RequiresCoupon
+        assert!(
+            p.catalog
+                .set_coupon_state("WELCOME", CatalogState::Paused)
+                .await
+                .unwrap()
+        );
+        let r = evaluate
+            .run(cart_with("WELCOME"), CustomerContext::default())
+            .await
+            .unwrap();
+        assert!(r.applied.is_empty());
+        assert_eq!(
+            r.skipped[0].reason,
+            SkipReason::NotEligible { rule_index: 0 }
+        );
+        assert_eq!(p.catalog.list_coupons().await.unwrap().len(), 1);
+        // generation and grants refuse a paused promotion
+        let codes = discount_infrastructure::SequentialCodes::default();
+        let generate = GenerateCouponsUseCase {
+            catalog: &*p.catalog,
+            codes: &codes,
+        };
+        let req = GenerateCoupons {
+            promotion_id: "P1".into(),
+            count: 1,
+            prefix: "X-".into(),
+            starts_at: None,
+            ends_at: None,
+            max_uses: None,
+            customer_id: None,
+        };
+        assert_eq!(generate.run(req).await, Err(CouponError::PromotionPaused));
+        p.catalog
+            .put_grant_rule(GrantRule {
+                rule_id: "r".into(),
+                trigger: GrantTrigger::Cancel,
+                promotion_id: "P1".into(),
+                priority: 1,
+                validity_seconds: 60,
+                max_uses: None,
+            })
+            .await
+            .unwrap();
+        let grant = GrantCoupon {
+            catalog: &*p.catalog,
+            codes: &codes,
+            clock: &clock,
+        };
+        assert_eq!(
+            grant.run(GrantTrigger::Cancel, "c1", "o1").await,
+            Err(CouponError::PromotionPaused)
+        );
+        // the customer listing shows paused
+        p.catalog
+            .put_coupon(Coupon {
+                customer_id: Some("c1".into()),
+                promotion_id: "P1".into(),
+                ..coupon("MINE", None)
+            })
+            .await
+            .unwrap();
+        let list = ListCustomerCoupons {
+            catalog: &*p.catalog,
+            redemptions: &*p.redemptions,
+            clock: &clock,
+        };
+        assert_eq!(
+            list.run("c1").await.unwrap()[0].status,
+            CouponStatus::Paused
+        );
+        // resume both
+        assert!(
+            p.catalog
+                .set_promotion_state("P1", CatalogState::Active)
+                .await
+                .unwrap()
+        );
+        assert!(
+            p.catalog
+                .set_coupon_state("WELCOME", CatalogState::Active)
+                .await
+                .unwrap()
+        );
+        let r = evaluate
+            .run(cart_with("WELCOME"), CustomerContext::default())
+            .await
+            .unwrap();
+        assert_eq!(r.applied.len(), 2);
+        assert_eq!(
+            list.run("c1").await.unwrap()[0].status,
+            CouponStatus::Active
+        );
+        // archived promotions have no state
+        p.catalog.archive_promotion("P1").await.unwrap();
+        assert_eq!(p.catalog.get_promotion_state("P1").await.unwrap(), None);
+        assert!(
+            !p.catalog
+                .set_promotion_state("P1", CatalogState::Paused)
+                .await
+                .unwrap()
+        );
+    })
+    .await;
 }

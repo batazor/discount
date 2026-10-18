@@ -424,8 +424,12 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
 - `CustomerCoupon { coupon, status, order_id?, promotion? }`: read model returned by
   `ListCustomerCoupons`; `promotion` is `{ promotion_id, action, metadata? }` of the coupon's
   promotion.
+- `CatalogState`: `active | paused`, an operator switch on a promotion or a coupon
+  (`PUT /v1/promotions/{id}/state`, `PUT /v1/coupons/{code}/state`); a paused record stays
+  in the catalogue and leaves every pricing snapshot, so it appears neither in `applied` nor
+  in `skipped`. Archiving stays terminal (OpenSpec change `catalogue-states`).
 - `CouponStatus`: `applied` (the customer used the coupon; `order_id` names the earliest such
-  redemption) | `expired` (`ends_at ≤ now`, or `uses ≥ max_uses`, or the promotion is
+  redemption) | `paused` (the coupon or its promotion is paused) | `expired` (`ends_at ≤ now`, or `uses ≥ max_uses`, or the promotion is
   archived or missing) | `scheduled` (`starts_at > now`) | `active`. Cart-free: whether the
   coupon applies to a cart is `Evaluate`'s answer.
 - `ListCustomerCoupons`: use case that merges the customer's bound, used and saved coupons

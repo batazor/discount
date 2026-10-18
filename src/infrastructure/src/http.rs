@@ -13,9 +13,9 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use discount_application::ports::{
-    Clock, EventPublisher, GenerateCoupons, GrantRule, GrantTrigger, Principal, PromotionCatalog,
-    PromotionMetadata, RedemptionError, RedemptionRepository, ReserveOutcome, StorageError,
-    Tenancy, Tenant,
+    CatalogState, Clock, EventPublisher, GenerateCoupons, GrantRule, GrantTrigger, Principal,
+    PromotionCatalog, PromotionMetadata, RedemptionError, RedemptionRepository, ReserveOutcome,
+    StorageError, Tenancy, Tenant,
 };
 use discount_application::{
     CancelRedemption, CodeSource, ConfirmRedemption, CouponError, CustomerCouponError, Evaluate,
@@ -257,6 +257,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/v1/promotions", get(list_promotions))
         .route("/v1/promotion-metadata", get(list_promotion_metadata))
+        .route(
+            "/v1/promotions/{promotion_id}/state",
+            get(get_promotion_state).put(put_promotion_state),
+        )
+        .route(
+            "/v1/coupons/{code}/state",
+            get(get_coupon_state).put(put_coupon_state),
+        )
         .route("/v1/tenants", get(list_tenants))
         .route(
             "/v1/tenants/{tenant_id}",
@@ -691,6 +699,8 @@ async fn delete_group(
 #[serde(deny_unknown_fields)]
 pub struct SourceQuery {
     pub source: Option<String>,
+    /// `?state=active|paused` (spec `catalogue-states`).
+    pub state: Option<CatalogState>,
 }
 
 async fn list_promotions(
@@ -702,6 +712,18 @@ async fn list_promotions(
         Ok(ps) => ps,
         Err(e) => return storage_error(&e),
     };
+    let mut ps = ps;
+    if let Some(want) = q.state {
+        let mut kept = Vec::new();
+        for p in ps {
+            match ctx.catalog.get_promotion_state(&p.promotion_id).await {
+                Ok(Some(st)) if st == want => kept.push(p),
+                Ok(_) => {}
+                Err(e) => return storage_error(&e),
+            }
+        }
+        ps = kept;
+    }
     match q.source {
         None => ok_json(&ps),
         Some(src) => {
@@ -1025,9 +1047,87 @@ async fn put_budget(
     }
 }
 
-async fn list_coupons(State(_state): State<Arc<AppState>>, ctx: Ctx) -> Response {
-    match ctx.catalog.list_coupons().await {
-        Ok(cs) => ok_json(&cs),
+async fn list_coupons(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Query(q): Query<SourceQuery>,
+) -> Response {
+    let cs = match ctx.catalog.list_coupons().await {
+        Ok(cs) => cs,
+        Err(e) => return storage_error(&e),
+    };
+    let Some(want) = q.state else {
+        return ok_json(&cs);
+    };
+    let mut kept = Vec::new();
+    for c in cs {
+        match ctx.catalog.get_coupon_state(&c.code).await {
+            Ok(Some(st)) if st == want => kept.push(c),
+            Ok(_) => {}
+            Err(e) => return storage_error(&e),
+        }
+    }
+    ok_json(&kept)
+}
+
+// ---------------------------------------------------------------- states
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateBody {
+    pub state: CatalogState,
+}
+
+async fn get_promotion_state(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(promotion_id): Path<String>,
+) -> Response {
+    match ctx.catalog.get_promotion_state(&promotion_id).await {
+        Ok(Some(state)) => ok_json(&StateBody { state }),
+        Ok(None) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn put_promotion_state(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(promotion_id): Path<String>,
+    StrictJson(body): StrictJson<StateBody>,
+) -> Response {
+    match ctx
+        .catalog
+        .set_promotion_state(&promotion_id, body.state)
+        .await
+    {
+        Ok(true) => ok_json(&body),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn get_coupon_state(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(code): Path<String>,
+) -> Response {
+    match ctx.catalog.get_coupon_state(&code).await {
+        Ok(Some(state)) => ok_json(&StateBody { state }),
+        Ok(None) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn put_coupon_state(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(code): Path<String>,
+    StrictJson(body): StrictJson<StateBody>,
+) -> Response {
+    match ctx.catalog.set_coupon_state(&code, body.state).await {
+        Ok(true) => ok_json(&body),
+        Ok(false) => not_found(),
         Err(e) => storage_error(&e),
     }
 }
@@ -1119,6 +1219,11 @@ async fn delete_rate(
 fn coupon_error(e: CouponError) -> Response {
     match e {
         CouponError::UnknownPromotion | CouponError::NoRuleForTrigger => not_found(),
+        CouponError::PromotionPaused => (
+            StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({ "error": "PromotionPaused" })),
+        )
+            .into_response(),
         CouponError::InvalidCount => decode_error("count must be between 1 and 10000".into()),
         CouponError::CodeSpaceExhausted => (
             StatusCode::CONFLICT,

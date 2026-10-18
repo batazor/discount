@@ -21,7 +21,7 @@ pub use evaluate::{
     pricing_input,
 };
 pub use ports::{
-    CatalogSnapshot, Clock, Event, EventPublisher, PricingFn, PromotionCatalog, Redemption,
-    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError,
-    transition_allowed,
+    CatalogSnapshot, CatalogState, Clock, Event, EventPublisher, PricingFn, PromotionCatalog,
+    Redemption, RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome,
+    StorageError, transition_allowed,
 };

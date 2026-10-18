@@ -9,9 +9,10 @@ Without it a mistake in a live campaign means archiving it and rebuilding it.
 
 ## What Changes
 
-- `Promotion` and `Coupon` get a catalogue-level `state`: `active | paused`, managed over
-  `PUT /v1/promotions/{promotion_id}/state` and `PUT /v1/coupons/{code}/state` with
-  `{state}` and returned in the catalogue bodies. Archiving stays the terminal operation.
+- `Promotion` and `Coupon` get a catalogue-level `state`: `active | paused`, read and set
+  over `GET|PUT /v1/promotions/{promotion_id}/state` and `GET|PUT /v1/coupons/{code}/state`
+  with `{state}`; the bodies of the pricing types stay untouched, listings accept `?state=`.
+  Archiving stays the terminal operation.
 - Snapshot semantics: paused promotions and paused coupons do not enter the pricing
   snapshot, exactly like archived promotions. The core is untouched.
 - Customer coupon listing: a new status `paused` (coupon paused, or its promotion paused),
@@ -32,8 +33,8 @@ _None._
 
 ## Impact
 
-- `api/openapi.yaml`: `state` on `Promotion` and `Coupon` catalogue bodies (read-only
-  there), schema `StateBody`, two routes.
+- `api/openapi.yaml`: schemas `CatalogState`, `StateBody`, four operations, `?state=` on
+  two listings, `paused` in `CouponStatus`, `409 PromotionPaused` on generate and grant.
 - `src/application`: ports `set_promotion_state`, `set_coupon_state`; `CouponStatus::Paused`.
 - `src/infrastructure`: `state` columns (migration `0008_states.sql`), snapshot queries
   filter on `state = 'active'`, routes, tests on both backends, smoke step.

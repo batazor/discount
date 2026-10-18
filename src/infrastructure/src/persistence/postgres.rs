@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use discount_application::ports::{
-    CatalogSnapshot, Counters, DEFAULT_TENANT, GrantRule, GrantTrigger, PricingFn,
+    CatalogSnapshot, CatalogState, Counters, DEFAULT_TENANT, GrantRule, GrantTrigger, PricingFn,
     PromotionCatalog, PromotionMetadata, Redemption, RedemptionError, RedemptionRepository,
     RedemptionStatus, ReserveOutcome, StorageError, Tenancy, Tenant, Uses, transition_allowed,
 };
@@ -236,10 +236,13 @@ impl PgStore {
 
     /// With `lock`, the budget and promotion rows are taken `FOR UPDATE`, so concurrent
     /// reservations serialize and each one counts the uses the previous one committed.
+    /// `only_active`: the pricing snapshot leaves paused promotions and coupons out; the
+    /// catalogue listings pass `false`.
     async fn snapshot_in(
         tx: &mut Transaction<'_, Postgres>,
         tenant: &str,
         lock: bool,
+        only_active: bool,
     ) -> Result<(CatalogSnapshot, BTreeMap<String, Money>), sqlx::Error> {
         let policy: Json<PricingPolicy> =
             sqlx::query("SELECT body FROM pricing_policy WHERE tenant_id = $1")
@@ -277,10 +280,19 @@ impl PgStore {
                 },
             );
         }
-        let promotion_sql = if lock {
-            "SELECT body FROM promotions WHERE tenant_id = $1 AND NOT archived ORDER BY promotion_id FOR UPDATE"
-        } else {
-            "SELECT body FROM promotions WHERE tenant_id = $1 AND NOT archived ORDER BY promotion_id"
+        let promotion_sql = match (lock, only_active) {
+            (true, true) => {
+                "SELECT body FROM promotions WHERE tenant_id = $1 AND NOT archived AND state = 'active' ORDER BY promotion_id FOR UPDATE"
+            }
+            (true, false) => {
+                "SELECT body FROM promotions WHERE tenant_id = $1 AND NOT archived ORDER BY promotion_id FOR UPDATE"
+            }
+            (false, true) => {
+                "SELECT body FROM promotions WHERE tenant_id = $1 AND NOT archived AND state = 'active' ORDER BY promotion_id"
+            }
+            (false, false) => {
+                "SELECT body FROM promotions WHERE tenant_id = $1 AND NOT archived ORDER BY promotion_id"
+            }
         };
         let promotions = sqlx::query(promotion_sql)
             .bind(tenant)
@@ -295,7 +307,12 @@ impl PgStore {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let coupons = sqlx::query("SELECT body FROM coupons WHERE tenant_id = $1 ORDER BY code")
+        let coupon_sql = if only_active {
+            "SELECT body FROM coupons WHERE tenant_id = $1 AND state = 'active' ORDER BY code"
+        } else {
+            "SELECT body FROM coupons WHERE tenant_id = $1 ORDER BY code"
+        };
+        let coupons = sqlx::query(coupon_sql)
             .bind(tenant)
             .fetch_all(&mut **tx)
             .await?
@@ -424,6 +441,16 @@ impl PgStore {
         })
     }
 
+    /// Every non-archived record including paused ones, for the catalogue listings.
+    async fn listing(&self) -> Result<CatalogSnapshot, StorageError> {
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let (snapshot, _) = PgStore::snapshot_in(&mut tx, &self.tenant, false, false)
+            .await
+            .map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+        Ok(snapshot)
+    }
+
     /// Non-archived promotion exists in this tenant.
     async fn promotion_live(&self, promotion_id: &str) -> Result<bool, StorageError> {
         let live: Option<i64> = sqlx::query_scalar(
@@ -443,7 +470,7 @@ impl PromotionCatalog for PgStore {
     #[tracing::instrument(name = "db.snapshot", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "snapshot"))]
     async fn snapshot(&self) -> Result<CatalogSnapshot, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
-        let (snapshot, _) = PgStore::snapshot_in(&mut tx, &self.tenant, false)
+        let (snapshot, _) = PgStore::snapshot_in(&mut tx, &self.tenant, false, true)
             .await
             .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
@@ -534,7 +561,7 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.list_promotions", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_promotions"))]
     async fn list_promotions(&self) -> Result<Vec<Promotion>, StorageError> {
-        Ok(self.snapshot().await?.promotions)
+        Ok(self.listing().await?.promotions)
     }
 
     #[tracing::instrument(name = "db.get_promotion", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_promotion"))]
@@ -688,7 +715,7 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.list_coupons", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_coupons"))]
     async fn list_coupons(&self) -> Result<Vec<Coupon>, StorageError> {
-        Ok(self.snapshot().await?.coupons)
+        Ok(self.listing().await?.coupons)
     }
 
     #[tracing::instrument(name = "db.get_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_coupon"))]
@@ -1181,6 +1208,67 @@ impl PromotionCatalog for PgStore {
         .await
         .map_err(storage)
     }
+    #[tracing::instrument(name = "db.get_promotion_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_promotion_state"))]
+    async fn get_promotion_state(
+        &self,
+        promotion_id: &str,
+    ) -> Result<Option<CatalogState>, StorageError> {
+        let state: Option<String> = sqlx::query_scalar("SELECT state FROM promotions WHERE tenant_id = $1 AND promotion_id = $2 AND NOT archived")
+            .bind(&self.tenant)
+            .bind(promotion_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(state.and_then(|s| CatalogState::parse(&s)))
+    }
+
+    #[tracing::instrument(name = "db.set_promotion_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "set_promotion_state"))]
+    async fn set_promotion_state(
+        &self,
+        promotion_id: &str,
+        state: CatalogState,
+    ) -> Result<bool, StorageError> {
+        let r = sqlx::query("UPDATE promotions SET state = $3, updated_at = $4 WHERE tenant_id = $1 AND promotion_id = $2 AND NOT archived")
+            .bind(&self.tenant)
+            .bind(promotion_id)
+            .bind(state.as_str())
+            .bind(epoch())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    #[tracing::instrument(name = "db.get_coupon_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_coupon_state"))]
+    async fn get_coupon_state(&self, code: &str) -> Result<Option<CatalogState>, StorageError> {
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT state FROM coupons WHERE tenant_id = $1 AND code = $2")
+                .bind(&self.tenant)
+                .bind(code)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(storage)?;
+        Ok(state.and_then(|s| CatalogState::parse(&s)))
+    }
+
+    #[tracing::instrument(name = "db.set_coupon_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "set_coupon_state"))]
+    async fn set_coupon_state(
+        &self,
+        code: &str,
+        state: CatalogState,
+    ) -> Result<bool, StorageError> {
+        let r = sqlx::query(
+            "UPDATE coupons SET state = $3, updated_at = $4 WHERE tenant_id = $1 AND code = $2",
+        )
+        .bind(&self.tenant)
+        .bind(code)
+        .bind(state.as_str())
+        .bind(epoch())
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
 }
 
 #[async_trait]
@@ -1208,7 +1296,7 @@ impl RedemptionRepository for PgStore {
                 return Ok(ReserveOutcome::Idempotent(r));
             }
         }
-        let (snapshot, budgets) = PgStore::snapshot_in(&mut tx, &self.tenant, true)
+        let (snapshot, budgets) = PgStore::snapshot_in(&mut tx, &self.tenant, true, true)
             .await
             .map_err(redemption_storage)?;
         let uses = match customer_id {

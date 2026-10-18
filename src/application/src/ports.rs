@@ -376,6 +376,47 @@ pub trait PromotionCatalog: Send + Sync {
     ) -> Result<bool, StorageError>;
     /// Non-archived promotions whose allowlist contains the customer, sorted.
     async fn allowlisted_for(&self, customer_id: &str) -> Result<Vec<PromotionId>, StorageError>;
+    /// `None` when the promotion is unknown or archived.
+    async fn get_promotion_state(
+        &self,
+        promotion_id: &str,
+    ) -> Result<Option<CatalogState>, StorageError>;
+    /// `Ok(false)` when the promotion is unknown or archived.
+    async fn set_promotion_state(
+        &self,
+        promotion_id: &str,
+        state: CatalogState,
+    ) -> Result<bool, StorageError>;
+    /// `None` when the coupon is unknown.
+    async fn get_coupon_state(&self, code: &str) -> Result<Option<CatalogState>, StorageError>;
+    /// `Ok(false)` when the coupon is unknown.
+    async fn set_coupon_state(&self, code: &str, state: CatalogState)
+    -> Result<bool, StorageError>;
+}
+
+/// Operator switch on a promotion or a coupon (OpenSpec `catalogue-states`): `paused` keeps
+/// the record but takes it out of every pricing snapshot. Archiving stays terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CatalogState {
+    Active,
+    Paused,
+}
+
+impl CatalogState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CatalogState::Active => "active",
+            CatalogState::Paused => "paused",
+        }
+    }
+    pub fn parse(s: &str) -> Option<CatalogState> {
+        match s {
+            "active" => Some(CatalogState::Active),
+            "paused" => Some(CatalogState::Paused),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

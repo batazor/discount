@@ -11,10 +11,10 @@ use async_trait::async_trait;
 use discount_application::CodeSource;
 use discount_application::coupons::CODE_LENGTH;
 use discount_application::ports::{
-    CatalogSnapshot, Clock, Counters, DEFAULT_TENANT, Event, EventPublisher, GrantRule,
-    GrantTrigger, PricingFn, PromotionCatalog, PromotionMetadata, Redemption, RedemptionError,
-    RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError, Tenancy, Tenant, Uses,
-    transition_allowed,
+    CatalogSnapshot, CatalogState, Clock, Counters, DEFAULT_TENANT, Event, EventPublisher,
+    GrantRule, GrantTrigger, PricingFn, PromotionCatalog, PromotionMetadata, Redemption,
+    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError, Tenancy,
+    Tenant, Uses, transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, OrderCap, PricingPolicy, Promotion, PromotionId, RoundingPolicy,
@@ -62,6 +62,8 @@ struct Store {
     saved: std::collections::BTreeSet<(String, String)>,
     metadata: BTreeMap<String, PromotionMetadata>,
     allowlists: BTreeMap<String, std::collections::BTreeSet<String>>,
+    paused_promotions: std::collections::BTreeSet<String>,
+    paused_coupons: std::collections::BTreeSet<String>,
 }
 
 /// In-memory catalogue and redemption store.
@@ -118,21 +120,30 @@ impl InMemoryStore {
         self
     }
 
-    fn snapshot_locked(s: &Store) -> CatalogSnapshot {
+    /// `only_active` is the pricing snapshot (paused promotions and coupons absent); the
+    /// catalogue listings pass `false`.
+    fn snapshot_locked(s: &Store, only_active: bool) -> CatalogSnapshot {
         let mut snapshot = CatalogSnapshot {
             policy: s.policy.clone().unwrap_or_else(default_policy),
             groups: s.groups.values().cloned().collect(),
             promotions: s
                 .promotions
-                .values()
-                .filter(|p| !p.archived)
-                .map(|p| {
+                .iter()
+                .filter(|(id, p)| {
+                    !p.archived && !(only_active && s.paused_promotions.contains(*id))
+                })
+                .map(|(_, p)| {
                     let mut body = p.body.clone();
                     body.remaining_budget = s.budgets.get(&body.promotion_id).cloned();
                     body
                 })
                 .collect(),
-            coupons: s.coupons.values().cloned().collect(),
+            coupons: s
+                .coupons
+                .iter()
+                .filter(|(code, _)| !(only_active && s.paused_coupons.contains(*code)))
+                .map(|(_, c)| c.clone())
+                .collect(),
             exchange_rates: s.rates.values().cloned().collect(),
         };
         InMemoryStore::counters_locked(s, None).apply_to(&mut snapshot);
@@ -211,7 +222,10 @@ impl InMemoryStore {
 #[async_trait]
 impl PromotionCatalog for InMemoryStore {
     async fn snapshot(&self) -> Result<CatalogSnapshot, StorageError> {
-        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap()))
+        Ok(InMemoryStore::snapshot_locked(
+            &self.inner.lock().unwrap(),
+            true,
+        ))
     }
     async fn get_policy(&self) -> Result<PricingPolicy, StorageError> {
         Ok(self
@@ -251,7 +265,7 @@ impl PromotionCatalog for InMemoryStore {
         Ok(self.inner.lock().unwrap().groups.remove(group_id).is_some())
     }
     async fn list_promotions(&self) -> Result<Vec<Promotion>, StorageError> {
-        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap()).promotions)
+        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap(), false).promotions)
     }
     async fn get_promotion(&self, promotion_id: &str) -> Result<Option<Promotion>, StorageError> {
         let s = self.inner.lock().unwrap();
@@ -318,7 +332,7 @@ impl PromotionCatalog for InMemoryStore {
             .collect())
     }
     async fn list_coupons(&self) -> Result<Vec<Coupon>, StorageError> {
-        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap()).coupons)
+        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap(), false).coupons)
     }
     async fn get_coupon(&self, code: &str) -> Result<Option<Coupon>, StorageError> {
         Ok(InMemoryStore::coupon_with_uses(
@@ -594,6 +608,60 @@ impl PromotionCatalog for InMemoryStore {
             .map(|(pid, _)| pid.clone())
             .collect())
     }
+    async fn get_promotion_state(
+        &self,
+        promotion_id: &str,
+    ) -> Result<Option<CatalogState>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        Ok(match s.promotions.get(promotion_id) {
+            Some(p) if !p.archived => Some(if s.paused_promotions.contains(promotion_id) {
+                CatalogState::Paused
+            } else {
+                CatalogState::Active
+            }),
+            _ => None,
+        })
+    }
+    async fn set_promotion_state(
+        &self,
+        promotion_id: &str,
+        state: CatalogState,
+    ) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        if !s.promotions.get(promotion_id).is_some_and(|p| !p.archived) {
+            return Ok(false);
+        }
+        match state {
+            CatalogState::Paused => s.paused_promotions.insert(promotion_id.to_string()),
+            CatalogState::Active => s.paused_promotions.remove(promotion_id),
+        };
+        Ok(true)
+    }
+    async fn get_coupon_state(&self, code: &str) -> Result<Option<CatalogState>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        Ok(s.coupons.contains_key(code).then(|| {
+            if s.paused_coupons.contains(code) {
+                CatalogState::Paused
+            } else {
+                CatalogState::Active
+            }
+        }))
+    }
+    async fn set_coupon_state(
+        &self,
+        code: &str,
+        state: CatalogState,
+    ) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        if !s.coupons.contains_key(code) {
+            return Ok(false);
+        }
+        match state {
+            CatalogState::Paused => s.paused_coupons.insert(code.to_string()),
+            CatalogState::Active => s.paused_coupons.remove(code),
+        };
+        Ok(true)
+    }
 }
 
 /// Budget bookkeeping shared with the Postgres adapter's logic: what each applied promotion
@@ -626,7 +694,7 @@ impl RedemptionRepository for InMemoryStore {
         {
             return Ok(ReserveOutcome::Idempotent(existing.clone()));
         }
-        let snapshot = InMemoryStore::snapshot_locked(&s);
+        let snapshot = InMemoryStore::snapshot_locked(&s, true);
         let uses = customer_id
             .map(|c| InMemoryStore::uses_locked(&s, c))
             .unwrap_or_default();

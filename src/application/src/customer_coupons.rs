@@ -7,7 +7,8 @@ use discount_domain::{Action, Coupon, Promotion, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::ports::{
-    Clock, PromotionCatalog, PromotionMetadata, RedemptionError, RedemptionRepository, StorageError,
+    CatalogState, Clock, PromotionCatalog, PromotionMetadata, RedemptionError,
+    RedemptionRepository, StorageError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,6 +18,8 @@ pub enum CouponStatus {
     Scheduled,
     Expired,
     Applied,
+    /// The coupon or its promotion is paused by an operator.
+    Paused,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,11 +44,15 @@ pub struct CustomerCoupon {
 pub fn coupon_status(
     c: &Coupon,
     promotion: Option<&Promotion>,
+    paused: bool,
     used: Option<&str>,
     now: Timestamp,
 ) -> CouponStatus {
     if used.is_some() {
         return CouponStatus::Applied;
+    }
+    if paused {
+        return CouponStatus::Paused;
     }
     let exhausted = c.max_uses.is_some_and(|m| c.uses >= m);
     if c.ends_at.is_some_and(|e| e <= now) || exhausted || promotion.is_none() {
@@ -164,7 +171,15 @@ impl ListCustomerCoupons<'_> {
         now: Timestamp,
     ) -> Result<CustomerCoupon, CustomerCouponError> {
         let promotion = self.catalog.get_promotion(&coupon.promotion_id).await?;
-        let status = coupon_status(&coupon, promotion.as_ref(), used, now);
+        let paused = self.catalog.get_coupon_state(&coupon.code).await?
+            == Some(CatalogState::Paused)
+            || (promotion.is_some()
+                && self
+                    .catalog
+                    .get_promotion_state(&coupon.promotion_id)
+                    .await?
+                    == Some(CatalogState::Paused));
+        let status = coupon_status(&coupon, promotion.as_ref(), paused, used, now);
         Ok(CustomerCoupon {
             status,
             order_id: used.map(str::to_string),
@@ -252,45 +267,96 @@ mod tests {
         let p = promo();
         let now = 1000;
         assert_eq!(
-            coupon_status(&coupon(None, None, None, 0), Some(&p), None, now),
+            coupon_status(&coupon(None, None, None, 0), Some(&p), false, None, now),
             CouponStatus::Active
         );
         assert_eq!(
-            coupon_status(&coupon(Some(1010), None, None, 0), Some(&p), None, now),
+            coupon_status(
+                &coupon(Some(1010), None, None, 0),
+                Some(&p),
+                false,
+                None,
+                now
+            ),
             CouponStatus::Scheduled
         );
         assert_eq!(
-            coupon_status(&coupon(Some(1000), None, None, 0), Some(&p), None, now),
+            coupon_status(
+                &coupon(Some(1000), None, None, 0),
+                Some(&p),
+                false,
+                None,
+                now
+            ),
             CouponStatus::Active
         );
         assert_eq!(
-            coupon_status(&coupon(None, Some(1000), None, 0), Some(&p), None, now),
+            coupon_status(
+                &coupon(None, Some(1000), None, 0),
+                Some(&p),
+                false,
+                None,
+                now
+            ),
             CouponStatus::Expired
         );
         assert_eq!(
-            coupon_status(&coupon(None, Some(1001), None, 0), Some(&p), None, now),
+            coupon_status(
+                &coupon(None, Some(1001), None, 0),
+                Some(&p),
+                false,
+                None,
+                now
+            ),
             CouponStatus::Active
         );
         assert_eq!(
-            coupon_status(&coupon(None, None, Some(1), 1), Some(&p), None, now),
+            coupon_status(&coupon(None, None, Some(1), 1), Some(&p), false, None, now),
             CouponStatus::Expired
         );
         assert_eq!(
-            coupon_status(&coupon(None, None, Some(2), 1), Some(&p), None, now),
+            coupon_status(&coupon(None, None, Some(2), 1), Some(&p), false, None, now),
             CouponStatus::Active
         );
         assert_eq!(
-            coupon_status(&coupon(None, None, None, 0), None, None, now),
+            coupon_status(&coupon(None, None, None, 0), None, false, None, now),
             CouponStatus::Expired
+        );
+        // paused loses only to applied
+        assert_eq!(
+            coupon_status(&coupon(None, None, None, 0), Some(&p), true, None, now),
+            CouponStatus::Paused
+        );
+        assert_eq!(
+            coupon_status(
+                &coupon(None, Some(0), None, 0),
+                Some(&p),
+                true,
+                Some("o1"),
+                now
+            ),
+            CouponStatus::Applied
         );
         // applied wins over everything
         assert_eq!(
-            coupon_status(&coupon(None, Some(0), Some(1), 1), None, Some("o1"), now),
+            coupon_status(
+                &coupon(None, Some(0), Some(1), 1),
+                None,
+                false,
+                Some("o1"),
+                now
+            ),
             CouponStatus::Applied
         );
         // a scheduled coupon that is also past its end is expired
         assert_eq!(
-            coupon_status(&coupon(Some(2000), Some(900), None, 0), Some(&p), None, now),
+            coupon_status(
+                &coupon(Some(2000), Some(900), None, 0),
+                Some(&p),
+                false,
+                None,
+                now
+            ),
             CouponStatus::Expired
         );
     }

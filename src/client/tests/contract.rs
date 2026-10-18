@@ -119,7 +119,10 @@ async fn generated_client_drives_the_documented_flows() {
     let budget: types::Budget =
         from_json(json!({"remaining": {"amount": 100000, "currency": "EUR"}}));
     client.put_budget("P1", &budget).await.expect("put budget");
-    let listed = client.list_promotions(None).await.expect("list promotions");
+    let listed = client
+        .list_promotions(None, None)
+        .await
+        .expect("list promotions");
     assert_eq!(listed.len(), 1);
     assert_eq!(
         listed[0].remaining_budget.as_ref().map(|m| m.amount),
@@ -334,7 +337,7 @@ async fn generated_client_drives_the_documented_flows() {
     let hotels: types::ListPromotionsSource = "hotels".parse().unwrap();
     assert_eq!(
         client
-            .list_promotions(Some(&hotels))
+            .list_promotions(Some(&hotels), None)
             .await
             .expect("filtered")
             .len(),
@@ -343,7 +346,7 @@ async fn generated_client_drives_the_documented_flows() {
     let cars: types::ListPromotionsSource = "cars".parse().unwrap();
     assert_eq!(
         client
-            .list_promotions(Some(&cars))
+            .list_promotions(Some(&cars), None)
             .await
             .expect("filtered")
             .len(),
@@ -423,6 +426,38 @@ async fn generated_client_drives_the_documented_flows() {
         other => panic!("expected 404, got {other:?}"),
     }
     client.delete_allowlist("P1").await.expect("clear");
+
+    // states: pause P1, the listing filter and the evaluation follow, resume
+    let paused: types::StateBody = from_json(json!({"state": "paused"}));
+    let st = client
+        .put_promotion_state("P1", &paused)
+        .await
+        .expect("pause")
+        .into_inner();
+    assert!(matches!(st.state, types::CatalogState::Paused));
+    let got = client
+        .get_promotion_state("P1")
+        .await
+        .expect("get state")
+        .into_inner();
+    assert!(matches!(got.state, types::CatalogState::Paused));
+    let only_paused = client
+        .list_promotions(None, Some(types::CatalogState::Paused))
+        .await
+        .expect("filtered by state");
+    assert_eq!(only_paused.len(), 1);
+    let req: types::EvaluateRequest = from_json(json!({"cart": cart(), "customer": customer()}));
+    let r = client
+        .evaluate(&req)
+        .await
+        .expect("evaluate while paused")
+        .into_inner();
+    assert!(r.applied.is_empty() && r.skipped.is_empty());
+    let active: types::StateBody = from_json(json!({"state": "active"}));
+    client
+        .put_promotion_state("P1", &active)
+        .await
+        .expect("resume");
 
     // a bearer token travels with every call when the service authenticates (spec `access-control`)
     let (secured, token) = start_secured_server().await;

@@ -108,6 +108,14 @@ STRANGER=$(echo "$CART" | sed 's/"customer_id":"smoke"/"customer_id":"stranger"/
 curl -s -H 'Content-Type: application/json' -X POST "$SERVICE/v1/evaluate" -d "$STRANGER" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(s["promotion_id"]=="P4" and s["reason"]["type"]=="NotEligible" for s in d["skipped"]), d' || fail "P4 applied to an unlisted customer"
 pass "allowlist on P4: applies to smoke, skipped for stranger"
 
+# States: pausing P1 takes it out of the evaluation and brings it back on resume.
+[ "$(put /v1/promotions/P1/state '{"state":"paused"}')" = "200" ] || fail "pause P1"
+curl -s -H 'Content-Type: application/json' -X POST "$SERVICE/v1/evaluate" -d "$CART" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert all(a["promotion_id"]!="P1" for a in d["applied"]) and all(s["promotion_id"]!="P1" for s in d["skipped"]), d' || fail "paused P1 still appears in the evaluation"
+[ "$(curl -s "$SERVICE/v1/promotions?state=paused" | python3 -c 'import sys,json; print(",".join(p["promotion_id"] for p in json.load(sys.stdin)))')" = "P1" ] || fail "state filter"
+[ "$(put /v1/promotions/P1/state '{"state":"active"}')" = "200" ] || fail "resume P1"
+curl -s -H 'Content-Type: application/json' -X POST "$SERVICE/v1/evaluate" -d "$CART" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(a["promotion_id"]=="P1" for a in d["applied"]), d' || fail "resumed P1 does not apply"
+pass "P1 paused and resumed: absent from the evaluation while paused"
+
 # Give the periodic exporters time to flush (metrics export every 60s by default is too
 # slow for a smoke; the service sets OTEL_METRIC_EXPORT_INTERVAL=5000).
 echo "waiting for export..."
