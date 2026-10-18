@@ -135,7 +135,7 @@ async fn create_database(url: &str) {
     let mut admin = sqlx::PgConnection::connect(&format!("{base}/postgres"))
         .await
         .unwrap_or_else(|e| panic!("connect to {base}/postgres to create {name}: {e}"));
-    sqlx::query(&format!("CREATE DATABASE {name}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
         .execute(&mut admin)
         .await
         .unwrap_or_else(|e| panic!("CREATE DATABASE {name}: {e}"));

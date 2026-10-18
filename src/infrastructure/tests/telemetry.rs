@@ -10,9 +10,9 @@ use common::*;
 use discount_application::ports::{Counters, PricingFn, RedemptionRepository, StorageError, Uses};
 use discount_application::ports::{Redemption, RedemptionError, RedemptionStatus, ReserveOutcome};
 use discount_domain::*;
+use discount_infrastructure::default_policy;
 use discount_infrastructure::http::{AppState, EvaluateRequest, evaluate_with_telemetry, router};
 use discount_infrastructure::telemetry::{self, Instruments};
-use discount_infrastructure::default_policy;
 use opentelemetry::metrics::MeterProvider;
 use opentelemetry::trace::{SpanId, Status, TraceId, TracerProvider};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
@@ -612,9 +612,7 @@ fn pg_state(rt: &tokio::runtime::Runtime, h: &Harness) -> Arc<AppState> {
 fn postgres_calls_produce_db_spans() {
     let h = harness();
     let rt = runtime();
-    let Some(state) = pg_state(&rt, &h) else {
-        return;
-    };
+    let state = pg_state(&rt, &h);
     let app = router(state.clone());
     let (status, spans) = serve_on(&rt, &h, app, request(Method::GET, "/v1/policy", ""));
     assert_eq!(status, StatusCode::OK);

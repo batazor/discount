@@ -15,7 +15,7 @@ use discount_application::{
     GenerateCouponsUseCase, GrantCoupon, ListCustomerCoupons, Redeem, SaveCustomerCoupon,
 };
 use discount_domain::*;
-use discount_infrastructure::{FixedClock, NoopEventPublisher, PgStore, default_policy};
+use discount_infrastructure::{FixedClock, NoopEventPublisher, default_policy};
 
 struct Ports {
     catalog: Arc<dyn PromotionCatalog>,
