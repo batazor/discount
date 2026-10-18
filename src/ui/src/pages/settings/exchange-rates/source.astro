@@ -1,0 +1,54 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../../layouts/Layout.astro";
+import Field from "../../../components/Field.astro";
+import DurationField from "../../../components/DurationField.astro";
+import FormStatus from "../../../components/FormStatus.astro";
+import SourceStatus from "../../../components/SourceStatus.astro";
+import Help from "../../../components/Help.astro";
+import When from "../../../components/When.astro";
+import { api, call, unreachableUrl } from "../../../api/client";
+import { formState } from "../../../actions/run";
+import { sourceToFields } from "../../../model/source";
+import { CONSEQUENCE, TERM } from "../../../model/glossary";
+
+const saved = Astro.getActionResult(actions.putRateSource);
+const refreshed = Astro.getActionResult(actions.refreshRateSource);
+const removed = Astro.getActionResult(actions.deleteRateSource);
+const current = await call(() => api.GET("/v1/exchange-rate-source"));
+const status = current.ok ? current.data : null;
+const state = formState(saved?.data, sourceToFields(status?.source ?? null));
+const refreshState = formState(refreshed?.data, {});
+const removeState = formState(removed?.data, {});
+---
+<Layout title="Exchange-rate source" description="Where rates are fetched from and how often. Fetched rates are ordinary rates; one set by hand is never overwritten, and a failed fetch changes nothing." unreachable={unreachableUrl(current)}>
+  <a slot="actions" href="/settings/exchange-rates" class="btn btn-ghost">Exchange rates</a>
+  <div class="max-w-xl space-y-5">
+    {status?.source && (
+      <section class="card space-y-3">
+        <h2 class="card-title">Status</h2>
+        <SourceStatus status={status} />
+        <FormStatus state={refreshState} okText="Fetched." />
+        <p class="hint">Set <When ts={status.updated_at} />. Pricing keeps using the stored rates while fetches fail; stale only tells you to look.</p>
+      </section>
+    )}
+    <form method="post" action={actions.putRateSource} class="card space-y-4">
+      <h2 class="card-title">Source</h2>
+      <Field state={state} name="url" label="URL" placeholder="https://api.frankfurter.app/latest?from=EUR" required help={TERM.sourceUrl} hint="GET, answers {base, rates}; a key in the URL is visible to every operator" />
+      <DurationField state={state} name="interval" label="Fetch every" help={TERM.sourceInterval} hint="1 minute to 7 days" />
+      <DurationField state={state} name="max_age" label="Stale after" help={TERM.sourceMaxAge} hint="at least the interval, at most 30 days" />
+      <DurationField state={state} name="timeout" label="Timeout" help={TERM.sourceTimeout} hint="1 to 120 seconds" />
+      <FormStatus state={state} okText="Saved; the first fetch starts within 15 seconds." />
+      <div class="form-actions"><button type="submit" class="btn btn-primary">{status?.source ? "Save" : "Turn on"}</button></div>
+    </form>
+    {status?.source && (
+      <section class="card space-y-3">
+        <h2 class="card-title">Turn off <Help text={CONSEQUENCE.turnOffSource} /></h2>
+        <FormStatus state={removeState} okText="Turned off." />
+        <form method="post" action={actions.deleteRateSource} class="inline" onsubmit="return confirm('Turn the exchange-rate source off?')" data-confirm={CONSEQUENCE.turnOffSource} data-confirm-title="Turn the exchange-rate source off?" data-confirm-label="Turn off">
+          <button type="submit" class="btn btn-secondary" style="color: var(--color-danger)">Turn off</button>
+        </form>
+      </section>
+    )}
+  </div>
+</Layout>

@@ -524,6 +524,7 @@ fn storage_failure_sets_error_status() {
         clock: h.state.clock.clone(),
         events: h.state.events.clone(),
         codes: h.state.codes.clone(),
+        fetcher: h.state.fetcher.clone(),
         instruments: h.state.instruments.clone(),
     });
     let app = router(state);
@@ -604,6 +605,7 @@ fn pg_state(rt: &tokio::runtime::Runtime, h: &Harness) -> Arc<AppState> {
         clock: h.state.clock.clone(),
         events: h.state.events.clone(),
         codes: h.state.codes.clone(),
+        fetcher: h.state.fetcher.clone(),
         instruments: h.state.instruments.clone(),
     })
 }
@@ -703,4 +705,47 @@ fn transition_rejections_and_storage_errors_are_told_apart() {
         ]
     );
     assert!(counter_points(&h, telemetry::METRIC_EVALUATIONS).is_empty());
+}
+
+/// Spec `telemetry`, "Exchange-rate source metrics": a failed fetch counts as `error` and
+/// names the failure on the `discount.exchange_rates.fetch` span; the URL loses its query.
+#[test]
+fn failed_rate_fetch_is_counted_and_spanned() {
+    let h = harness();
+    let rt = runtime();
+    let app = router(h.state.clone());
+    let body = serde_json::json!({"url": "https://rates.example/latest?app_id=secret", "interval_seconds": 3600, "max_age_seconds": 86400, "timeout_seconds": 10}).to_string();
+    let (status, _) = serve_on(
+        &rt,
+        &h,
+        app.clone(),
+        request(Method::PUT, "/v1/exchange-rate-source", &body),
+    );
+    assert_eq!(status, StatusCode::OK);
+    let (status, spans) = serve_on(
+        &rt,
+        &h,
+        app,
+        request(Method::POST, "/v1/exchange-rate-source/refresh", ""),
+    );
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let span = spans
+        .iter()
+        .find(|sp| sp.name == telemetry::SPAN_RATE_FETCH)
+        .expect("discount.exchange_rates.fetch span");
+    let a = |k: &str| attr(span.attributes.iter(), k);
+    assert_eq!(
+        a(telemetry::SPAN_ATTR_SOURCE_URL).as_deref(),
+        Some("https://rates.example/latest")
+    );
+    assert_eq!(
+        a(telemetry::SPAN_ATTR_ERROR_TYPE).as_deref(),
+        Some("SourceUnavailable")
+    );
+    let fetches = counter_points(&h, telemetry::METRIC_RATE_FETCHES);
+    assert_eq!(fetches, vec![(vec!["outcome=error".to_string()], 1)]);
+    // Nothing ever succeeded, so no age; the source is set and fresh, so stale = 0.
+    assert!(gauge_points(&h, telemetry::METRIC_RATES_AGE).is_empty());
+    let stale = gauge_points(&h, telemetry::METRIC_RATES_STALE);
+    assert_eq!(stale.last(), Some(&(vec![], 0)), "{stale:?}");
 }

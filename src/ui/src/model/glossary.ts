@@ -81,6 +81,7 @@ export const CONSEQUENCE = {
   cancelRedemption: "The order's discount is released: budgets and use counts are restored. This cannot be confirmed again.",
   clearAllowlist: "Nobody is allowlisted any more; a RequiresAllowlist rule then matches no one.",
   removeMetadata: "Title, description, source and labels are removed; listings fall back to the id.",
+  turnOffSource: "No more fetches. Every rate stays as it is and becomes manual; the source's status and history are dropped.",
 };
 
 export const TERM = {
@@ -104,6 +105,12 @@ export const TERM = {
   grantValidity: "The issued code is valid from the moment of the grant for this many seconds.",
   grantMaxUses: "Uses allowed on the issued code. Empty = unlimited.",
   rateFormula: "amount × numerator ÷ denominator, rounded by the policy.",
+  sourceUrl: "Fetched with GET; must answer {\"base\": \"EUR\", \"rates\": {\"USD\": 1.0873, ...}} (frankfurter.app, exchangerate.host, openexchangerates.org, fixer.io). A key in the URL is visible to every operator of this console.",
+  sourceInterval: "How often the service fetches the URL. A change applies within 15 seconds, no restart.",
+  sourceMaxAge: "When no fetch succeeded for this long, the rates are reported stale and the alert fires. Pricing keeps using the stored rates regardless. At least the interval.",
+  sourceTimeout: "How long one fetch may take before it counts as failed.",
+  rateOrigin: "source = written by the exchange-rate source and refreshed on every fetch; manual = set by an operator, which the source never overwrites until the rate is deleted.",
+  sourceStale: "No successful fetch within the maximum age. The stored rates are still used for pricing.",
   completedOrders: "Orders the customer completed before this one. 0 = first order.",
   customerUses: "Extra use counts to add on top of the customer's stored redemptions.",
   customerAttributes: "Facts about the customer. Read by CustomerAttributeIn and CustomerAttributeRange.",

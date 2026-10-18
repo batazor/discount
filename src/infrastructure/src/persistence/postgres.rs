@@ -6,9 +6,10 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use discount_application::ports::{
-    CatalogSnapshot, Counters, GrantRule, GrantTrigger, PricingFn, PromotionCatalog,
-    PromotionMetadata, Redemption, RedemptionError, RedemptionRepository, RedemptionStatus,
-    ReserveOutcome, StorageError, Uses, transition_allowed,
+    CatalogSnapshot, Counters, ExchangeRateSource, ExchangeRateSourceRecord, FetchOutcome,
+    GrantRule, GrantTrigger, PricingFn, PromotionCatalog, PromotionMetadata, Redemption,
+    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, SourcePair,
+    StorageError, Uses, transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, PricingInput, PricingPolicy, PricingResult, Promotion,
@@ -80,7 +81,7 @@ impl PgStore {
     /// Empty every table and reset the policy; for integration tests only. Tests wipe the
     /// database they point at, so give them a dedicated one.
     pub async fn reset_for_tests(&self, policy: &PricingPolicy) -> Result<(), StorageError> {
-        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants, saved_coupons, promotion_metadata, promotion_allowlist")
+        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants, saved_coupons, promotion_metadata, promotion_allowlist, exchange_rate_source")
             .execute(&self.pool)
             .await
             .map_err(storage)?;
@@ -530,8 +531,8 @@ impl PromotionCatalog for PgStore {
     #[tracing::instrument(name = "db.put_rate", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_rate"))]
     async fn put_rate(&self, rate: ExchangeRate) -> Result<(), StorageError> {
         sqlx::query(
-            "INSERT INTO exchange_rates (from_currency, to_currency, numerator, denominator, updated_at) VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (from_currency, to_currency) DO UPDATE SET numerator = $3, denominator = $4, updated_at = $5",
+            "INSERT INTO exchange_rates (from_currency, to_currency, numerator, denominator, updated_at, origin, fetched_at) VALUES ($1, $2, $3, $4, $5, 'manual', NULL) \
+             ON CONFLICT (from_currency, to_currency) DO UPDATE SET numerator = $3, denominator = $4, updated_at = $5, origin = 'manual', fetched_at = NULL",
         )
         .bind(&rate.from)
         .bind(&rate.to)
@@ -554,6 +555,118 @@ impl PromotionCatalog for PgStore {
                 .await
                 .map_err(storage)?;
         Ok(r.rows_affected() > 0)
+    }
+
+    #[tracing::instrument(name = "db.get_rate_source", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_rate_source"))]
+    async fn get_rate_source(&self) -> Result<Option<ExchangeRateSourceRecord>, StorageError> {
+        let row = sqlx::query("SELECT body, updated_at, last_attempt_at, last_success_at, last_error, last_count FROM exchange_rate_source WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?;
+        row.map(|r| {
+            let body: Json<ExchangeRateSource> = r.try_get("body").map_err(storage)?;
+            Ok(ExchangeRateSourceRecord {
+                source: body.0,
+                updated_at: r.try_get("updated_at").map_err(storage)?,
+                last_attempt_at: r.try_get("last_attempt_at").map_err(storage)?,
+                last_success_at: r.try_get("last_success_at").map_err(storage)?,
+                last_error: r.try_get("last_error").map_err(storage)?,
+                last_count: r.try_get("last_count").map_err(storage)?,
+            })
+        })
+        .transpose()
+    }
+
+    #[tracing::instrument(name = "db.put_rate_source", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_rate_source"))]
+    async fn put_rate_source(
+        &self,
+        source: ExchangeRateSource,
+        now: Timestamp,
+    ) -> Result<(), StorageError> {
+        sqlx::query("INSERT INTO exchange_rate_source (id, body, updated_at) VALUES (1, $1, $2) ON CONFLICT (id) DO UPDATE SET body = $1, updated_at = $2")
+            .bind(Json(source))
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "db.delete_rate_source", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_rate_source"))]
+    async fn delete_rate_source(&self) -> Result<bool, StorageError> {
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        sqlx::query("UPDATE exchange_rates SET origin = 'manual', fetched_at = NULL WHERE origin = 'source'")
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+        let r = sqlx::query("DELETE FROM exchange_rate_source WHERE id = 1")
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    #[tracing::instrument(name = "db.record_rate_fetch", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "record_rate_fetch"))]
+    async fn record_rate_fetch(
+        &self,
+        now: Timestamp,
+        outcome: FetchOutcome,
+    ) -> Result<(), StorageError> {
+        let q = match outcome {
+            Ok(count) => sqlx::query("UPDATE exchange_rate_source SET last_attempt_at = $1, last_success_at = $1, last_count = $2, last_error = NULL WHERE id = 1")
+                .bind(now)
+                .bind(count),
+            Err(message) => sqlx::query("UPDATE exchange_rate_source SET last_attempt_at = $1, last_error = $2 WHERE id = 1")
+                .bind(now)
+                .bind(message),
+        };
+        q.execute(&self.pool).await.map_err(storage)?;
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "db.put_fetched_rates", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_fetched_rates"))]
+    async fn put_fetched_rates(
+        &self,
+        rates: Vec<ExchangeRate>,
+        now: Timestamp,
+    ) -> Result<i64, StorageError> {
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let mut stored = 0;
+        for rate in rates {
+            let r = sqlx::query(
+                "INSERT INTO exchange_rates (from_currency, to_currency, numerator, denominator, updated_at, origin, fetched_at) VALUES ($1, $2, $3, $4, $5, 'source', $5) \
+                 ON CONFLICT (from_currency, to_currency) DO UPDATE SET numerator = $3, denominator = $4, updated_at = $5, fetched_at = $5 WHERE exchange_rates.origin = 'source'",
+            )
+            .bind(&rate.from)
+            .bind(&rate.to)
+            .bind(rate.numerator)
+            .bind(rate.denominator)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            stored += r.rows_affected() as i64;
+        }
+        tx.commit().await.map_err(storage)?;
+        Ok(stored)
+    }
+
+    #[tracing::instrument(name = "db.list_source_pairs", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_source_pairs"))]
+    async fn list_source_pairs(&self) -> Result<Vec<SourcePair>, StorageError> {
+        sqlx::query("SELECT from_currency, to_currency, fetched_at FROM exchange_rates WHERE origin = 'source' ORDER BY from_currency, to_currency")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage)?
+            .iter()
+            .map(|r| {
+                Ok(SourcePair {
+                    from: r.try_get("from_currency").map_err(storage)?,
+                    to: r.try_get("to_currency").map_err(storage)?,
+                    fetched_at: r.try_get::<Option<i64>, _>("fetched_at").map_err(storage)?.unwrap_or(0),
+                })
+            })
+            .collect()
     }
 
     #[tracing::instrument(name = "db.list_grant_rules", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_grant_rules"))]

@@ -3,19 +3,34 @@ import { actions } from "astro:actions";
 import Layout from "../../../layouts/Layout.astro";
 import FormStatus from "../../../components/FormStatus.astro";
 import Field from "../../../components/Field.astro";
+import SourceStatus from "../../../components/SourceStatus.astro";
+import Help from "../../../components/Help.astro";
+import When from "../../../components/When.astro";
 import { api, call, unreachableUrl, dataOr } from "../../../api/client";
 import { formState } from "../../../actions/run";
 import { CONSEQUENCE, TERM } from "../../../model/glossary";
 
 const put = Astro.getActionResult(actions.putExchangeRate);
 const deleted = Astro.getActionResult(actions.deleteExchangeRate);
-const rates = await call(() => api.GET("/v1/exchange-rates"));
+const refreshed = Astro.getActionResult(actions.refreshRateSource);
+const [rates, source] = await Promise.all([call(() => api.GET("/v1/exchange-rates")), call(() => api.GET("/v1/exchange-rate-source"))]);
 const putState = formState(put?.data, { denominator: "100" });
 const delState = formState(deleted?.data, {});
+const refreshState = formState(refreshed?.data, {});
 const rows = dataOr(rates, []);
+const status = source.ok ? source.data : null;
+const fetched = new Map((status?.pairs ?? []).map((p) => [`${p.from}/${p.to}`, p.fetched_at]));
 ---
-<Layout title="Exchange rates" description="A rate converts one currency into another as amount × numerator ÷ denominator, rounded by the policy. Integers only." unreachable={unreachableUrl(rates)}>
+<Layout title="Exchange rates" description="A rate converts one currency into another as amount × numerator ÷ denominator, rounded by the policy. Integers only." unreachable={unreachableUrl(rates, source)}>
   <Fragment slot="badge">{rates.ok && <span class="badge badge-muted">{rows.length}</span>}</Fragment>
+  <a slot="actions" href="/settings/exchange-rates/source" class="btn btn-secondary">{status?.source ? "Source settings" : "Fetch from a provider"}</a>
+  {status?.source && (
+    <section class="card mb-5 space-y-2">
+      <h2 class="card-title">Source <Help text={TERM.rateOrigin} /></h2>
+      <SourceStatus status={status} />
+      <FormStatus state={refreshState} okText="Fetched." />
+    </section>
+  )}
   <form method="post" action={actions.putExchangeRate} class="card mb-5 grid max-w-4xl grid-cols-2 gap-3 md:grid-cols-5">
     <Field state={putState} name="from" label="From" placeholder="USD" required />
     <Field state={putState} name="to" label="To" placeholder="EUR" required />
@@ -27,13 +42,18 @@ const rows = dataOr(rates, []);
   <FormStatus state={delState} okText="Deleted." />
   <div class="table-card max-w-3xl">
     <table class="table">
-      <thead><tr><th>From</th><th>To</th><th class="num">Rate</th><th></th></tr></thead>
+      <thead><tr><th>From</th><th>To</th><th class="num">Rate</th>{status?.source && <th>Origin <Help text={TERM.rateOrigin} /></th>}<th></th></tr></thead>
       <tbody>
         {rows.map((r) => (
           <tr>
             <td class="mono">{r.from}</td>
             <td class="mono">{r.to}</td>
             <td class="num mono">{r.numerator} / {r.denominator}</td>
+            {status?.source && (
+              <td class="text-[12px]">
+                {fetched.has(`${r.from}/${r.to}`) ? <><span class="badge badge-info">source</span> <When ts={fetched.get(`${r.from}/${r.to}`)} /></> : <span class="badge badge-muted">manual</span>}
+              </td>
+            )}
             <td class="actions">
               <form method="post" action={actions.deleteExchangeRate} onsubmit={`return confirm('Delete ${r.from}→${r.to}?')`} data-confirm={CONSEQUENCE.deleteRate} data-confirm-title={`Delete the ${r.from} → ${r.to} rate?`} data-confirm-label="Delete">
                 <input type="hidden" name="from" value={r.from} /><input type="hidden" name="to" value={r.to} />
@@ -42,7 +62,7 @@ const rows = dataOr(rates, []);
             </td>
           </tr>
         ))}
-        {rates.ok && rows.length === 0 && <tr><td colspan="4" class="empty">No rates: carts and promotions must share a currency.</td></tr>}
+        {rates.ok && rows.length === 0 && <tr><td colspan={status?.source ? 5 : 4} class="empty">No rates: carts and promotions must share a currency.</td></tr>}
       </tbody>
     </table>
   </div>

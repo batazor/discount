@@ -52,7 +52,7 @@ verification/drt/    proptest generators + core vs reference comparison
 docs/                ubiquitous-language.md, invariants.md, adr/
 openspec/            behaviour specs with scenarios (OpenSpec), archived changes
 src/ui/              Astro: the operator console, a generated-client consumer of api/openapi.yaml
-deploy/              compose stack, Grafana dashboards, fixtures, smoke script
+deploy/              compose stack, Grafana dashboards, demo catalogue and seed, smoke script
 ```
 
 Product code lives under `src/`; everything that checks it (the Lean model, its proofs and
@@ -124,8 +124,10 @@ npx --yes @redocly/cli@latest lint api/openapi.yaml
 ```
 
 `discount-server` runs the engine behind that API. Without `DATABASE_URL` it uses an
-in-memory catalogue seeded from `deploy/promotions.json`; with it, catalogue and redemptions
-live in Postgres (migrations run at start-up).
+in-memory catalogue seeded from a fixture (`DISCOUNT_PROMOTIONS`, by default the demo
+catalogue `deploy/demo/catalogue.json`; `deploy/promotions.json` is the three-promotion
+fixture the tests replay); with it, catalogue and redemptions live in Postgres (migrations
+run at start-up).
 
 
 ## Operator console
@@ -141,7 +143,15 @@ the order of things and the overview, never what is reachable.
 - **Find** takes a customer id, an order id, a coupon code or a campaign id.
 - **Explain** prices a cart and shows every campaign that applied or did not; an order id
   loads the stored redemption's cart and customer to start from.
-- **Settings**: pricing policy, stacking groups, exchange rates, grant rules.
+- **Settings**: pricing policy, stacking groups, exchange rates, grant rules. Exchange
+  rates can also come from a provider: Settings → Exchange rates → Source takes the URL of
+  a `{"base": "EUR", "rates": {...}}` endpoint (frankfurter.app, exchangerate.host,
+  openexchangerates.org, fixer.io), how often to fetch it, how old the rates may get before
+  they are reported stale, and the fetch timeout. Fetched rates are ordinary catalogue
+  rates; a rate set by hand is never overwritten by the source until it is deleted, and a
+  failed fetch changes nothing: pricing keeps the last stored rates. The status (last
+  fetch, next due, last error, stale) is on both screens with a "Try again" button, and the
+  gauge `discount_exchange_rates_stale` has an alert rule.
 
 Amounts are entered and shown as decimals in the currency's units (ISO 4217 exponents,
 so `1.500 KWD` and `500 JPY`), percentages instead of basis points, times in the
@@ -183,6 +193,22 @@ overview, promotions, validation errors) and check that signals arrive end to en
 ```bash
 deploy/smoke.sh
 ```
+
+To evaluate the product rather than the pipeline, fill the stack with a business in
+flight: 21 campaigns across hotels, cars, transfers and loyalty in every status (live,
+scheduled, exhausted, ended), public and personal codes, an allowlist, grant rules, and a
+week of orders by seven customers (confirmed, pending, cancelled with an apology code
+issued, a flash campaign that ran out). Every date window is shifted to today, and the
+script can be run again without creating anything twice:
+
+```bash
+deploy/demo/seed.py
+```
+
+It prints what to look up in the console (customers `ann` .. `grace`, orders `DEMO-1001`
+.. `DEMO-1015`, code `WELCOME15`). The same catalogue is what `discount-server` loads
+without a database, so `cargo run --bin discount-server` shows the campaigns too, without
+the order history.
 
 Put the stack under load (k6 from the `grafana/k6` image on the compose network; nothing
 installed on the host; thresholds mirror the alert rules and fail the run):

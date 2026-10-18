@@ -11,12 +11,13 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use discount_application::ports::{
-    Clock, EventPublisher, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog,
-    PromotionMetadata, RedemptionError, RedemptionRepository, ReserveOutcome, StorageError,
+    Clock, EventPublisher, ExchangeRateSource, GenerateCoupons, GrantRule, GrantTrigger,
+    PromotionCatalog, PromotionMetadata, RateFetcher, RedemptionError, RedemptionRepository,
+    ReserveOutcome, StorageError,
 };
 use discount_application::{
     CancelRedemption, CodeSource, ConfirmRedemption, CouponError, CustomerCouponError, Evaluate,
-    EvaluateError, GenerateCouponsUseCase, GrantCoupon, ListCustomerCoupons, Redeem,
+    EvaluateError, GenerateCouponsUseCase, GrantCoupon, ListCustomerCoupons, Redeem, RefreshError,
     SaveCustomerCoupon,
 };
 use discount_domain::{
@@ -40,6 +41,7 @@ pub struct AppState {
     pub clock: Arc<dyn Clock>,
     pub events: Arc<dyn EventPublisher>,
     pub codes: Arc<dyn CodeSource>,
+    pub fetcher: Arc<dyn RateFetcher>,
     pub instruments: Instruments,
 }
 
@@ -130,6 +132,16 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_coupon).put(put_coupon).delete(delete_coupon),
         )
         .route("/v1/exchange-rates", get(list_rates))
+        .route(
+            "/v1/exchange-rate-source",
+            get(get_rate_source)
+                .put(put_rate_source)
+                .delete(delete_rate_source),
+        )
+        .route(
+            "/v1/exchange-rate-source/refresh",
+            post(refresh_rate_source),
+        )
         .route(
             "/v1/exchange-rates/{from}/{to}",
             axum::routing::put(put_rate).delete(delete_rate),
@@ -829,6 +841,67 @@ async fn delete_rate(
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),
+    }
+}
+
+// ---------------------------------------------------------------- exchange-rate source
+
+fn refresh_error(e: RefreshError) -> Response {
+    match e {
+        RefreshError::NoSource => not_found(),
+        RefreshError::SourceUnavailable(message) => (
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({ "error": "SourceUnavailable", "message": message })),
+        )
+            .into_response(),
+        RefreshError::Storage(e) => storage_error(&e),
+    }
+}
+
+async fn status_json(state: &AppState) -> Response {
+    match crate::rates::status(state).await {
+        Ok(s) => ok_json(&s),
+        Err(e) => refresh_error(e),
+    }
+}
+
+async fn get_rate_source(State(state): State<Arc<AppState>>) -> Response {
+    status_json(&state).await
+}
+
+async fn put_rate_source(
+    State(state): State<Arc<AppState>>,
+    StrictJson(source): StrictJson<ExchangeRateSource>,
+) -> Response {
+    if let Err(m) = source.check() {
+        return decode_error(m);
+    }
+    if let Err(e) = state
+        .catalog
+        .put_rate_source(source, state.clock.now())
+        .await
+    {
+        return storage_error(&e);
+    }
+    crate::rates::publish_freshness(&state).await;
+    status_json(&state).await
+}
+
+async fn delete_rate_source(State(state): State<Arc<AppState>>) -> Response {
+    match state.catalog.delete_rate_source().await {
+        Ok(true) => {
+            crate::rates::publish_freshness(&state).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn refresh_rate_source(State(state): State<Arc<AppState>>) -> Response {
+    match crate::rates::refresh(&state).await {
+        Ok(_) => status_json(&state).await,
+        Err(e) => refresh_error(e),
     }
 }
 

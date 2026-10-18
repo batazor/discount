@@ -9,6 +9,7 @@
 pub mod config;
 pub mod http;
 pub mod persistence;
+pub mod rates;
 pub mod telemetry;
 
 pub use config::Config;
@@ -17,3 +18,4 @@ pub use persistence::memory::{
     SystemClock, default_policy,
 };
 pub use persistence::postgres::PgStore;
+pub use rates::{CannedFetcher, ReqwestFetcher};

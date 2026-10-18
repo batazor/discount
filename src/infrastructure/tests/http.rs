@@ -1240,3 +1240,211 @@ async fn allowlist_routes() {
         StatusCode::NOT_FOUND
     );
 }
+
+// ---------------------------------------------------------------- exchange-rate source
+
+fn source_json(interval: i64, max_age: i64) -> String {
+    json!({"url": "https://rates.example/latest?from=EUR", "interval_seconds": interval, "max_age_seconds": max_age, "timeout_seconds": 10}).to_string()
+}
+
+/// A state whose fetcher answers every fetch with `body`.
+fn state_with_fetcher(fetcher: discount_infrastructure::CannedFetcher) -> Arc<AppState> {
+    let base = state();
+    Arc::new(AppState {
+        catalog: base.catalog.clone(),
+        redemptions: base.redemptions.clone(),
+        clock: base.clock.clone(),
+        events: base.events.clone(),
+        codes: base.codes.clone(),
+        fetcher: Arc::new(fetcher),
+        instruments: base.instruments.clone(),
+    })
+}
+
+#[tokio::test]
+async fn exchange_rate_source_setting_round_trip_and_limits() {
+    let app = router(state());
+    let (status, v) = call(&app, Method::GET, "/v1/exchange-rate-source", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["source"], Value::Null);
+    assert_eq!(v["stale"], false);
+
+    // Spec "Bad interval": 30 s, and a maximum age below the interval.
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/exchange-rate-source",
+        Some(source_json(30, 86_400)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/exchange-rate-source",
+        Some(source_json(3600, 3599)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, v) = call(&app, Method::GET, "/v1/exchange-rate-source", None).await;
+    assert_eq!((status, v["source"].clone()), (StatusCode::OK, Value::Null));
+
+    // Spec "Set and read".
+    let (status, v) = call(
+        &app,
+        Method::PUT,
+        "/v1/exchange-rate-source",
+        Some(source_json(3600, 86_400)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["source"]["interval_seconds"], 3600);
+    assert_eq!(v["last_attempt_at"], Value::Null);
+    assert_eq!(v["last_success_at"], Value::Null);
+    assert_eq!(v["stale"], false);
+    assert_eq!(v["next_due_at"], NOW);
+    assert_eq!(v["pairs"], json!([]));
+
+    // Refresh without a reachable provider: 502, the attempt is recorded, nothing stored.
+    let (status, v) = call(&app, Method::POST, "/v1/exchange-rate-source/refresh", None).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{v}");
+    assert_eq!(v["error"], "SourceUnavailable");
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap()
+            .contains("no source configured"),
+        "{v}"
+    );
+    let (_, v) = call(&app, Method::GET, "/v1/exchange-rate-source", None).await;
+    assert_eq!(v["last_attempt_at"], NOW);
+    assert_eq!(v["last_success_at"], Value::Null);
+    assert!(
+        v["last_error"]
+            .as_str()
+            .unwrap()
+            .contains("no source configured")
+    );
+    assert_eq!(v["next_due_at"], NOW + 3600);
+
+    // Spec "Turn off".
+    let (status, _) = call(&app, Method::DELETE, "/v1/exchange-rate-source", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = call(&app, Method::DELETE, "/v1/exchange-rate-source", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(&app, Method::POST, "/v1/exchange-rate-source/refresh", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn exchange_rate_refresh_stores_pairs_and_manual_wins() {
+    let fetcher = discount_infrastructure::CannedFetcher::answering(Ok(
+        r#"{"amount":1.0,"base":"EUR","date":"2026-10-18","rates":{"USD":1.0873,"CHF":0.9412}}"#
+            .into(),
+    ));
+    let app = router(state_with_fetcher(fetcher.clone()));
+    // An operator rate first: spec "Manual pair survives a fetch".
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/exchange-rates/USD/EUR",
+        Some(json!({"numerator": 92, "denominator": 100}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/exchange-rate-source",
+        Some(source_json(3600, 86_400)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Spec "Refresh now" and "Pairs from one entry".
+    let (status, v) = call(&app, Method::POST, "/v1/exchange-rate-source/refresh", None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["last_success_at"], NOW);
+    assert_eq!(v["last_error"], Value::Null);
+    assert_eq!(v["last_count"], 3, "four produced, USD→EUR is manual: {v}");
+    let pairs: Vec<String> = v["pairs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            format!(
+                "{}/{}",
+                p["from"].as_str().unwrap(),
+                p["to"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(pairs, ["CHF/EUR", "EUR/CHF", "EUR/USD"]);
+    assert!(
+        v["pairs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["fetched_at"] == NOW)
+    );
+    let (_, rates) = call(&app, Method::GET, "/v1/exchange-rates", None).await;
+    let by_pair = |from: &str, to: &str| -> (i64, i64) {
+        let r = rates
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["from"] == from && r["to"] == to)
+            .unwrap_or_else(|| panic!("{from}/{to} in {rates}"));
+        (
+            r["numerator"].as_i64().unwrap(),
+            r["denominator"].as_i64().unwrap(),
+        )
+    };
+    assert_eq!(by_pair("EUR", "USD"), (10873, 10000));
+    assert_eq!(by_pair("USD", "EUR"), (92, 100), "manual rate untouched");
+    assert_eq!(by_pair("CHF", "EUR"), (2500, 2353));
+
+    // Spec "Malformed answer" and "Provider down": nothing changes, the error is recorded.
+    fetcher.set(Err("provider answered HTTP 503".into()));
+    let (status, v) = call(&app, Method::POST, "/v1/exchange-rate-source/refresh", None).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(v["message"], "provider answered HTTP 503");
+    let (_, v) = call(&app, Method::GET, "/v1/exchange-rate-source", None).await;
+    assert_eq!(v["last_success_at"], NOW);
+    assert_eq!(v["last_error"], "provider answered HTTP 503");
+    let (_, rates_after) = call(&app, Method::GET, "/v1/exchange-rates", None).await;
+    assert_eq!(rates_after, rates, "a failed fetch changes no rate");
+    fetcher.set(Ok(r#"{"rates": "n/a"}"#.into()));
+    let (status, v) = call(&app, Method::POST, "/v1/exchange-rate-source/refresh", None).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap()
+            .contains("not a {base, rates} object"),
+        "{v}"
+    );
+
+    // Spec "Manual overrides the source" (multi-currency): a PUT takes the pair out of the source.
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/exchange-rates/EUR/USD",
+        Some(json!({"numerator": 11, "denominator": 10}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, v) = call(&app, Method::GET, "/v1/exchange-rate-source", None).await;
+    assert_eq!(v["pairs"].as_array().unwrap().len(), 2);
+
+    // Spec "Turn off": rates stay, pairs are gone.
+    let (status, _) = call(&app, Method::DELETE, "/v1/exchange-rate-source", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, rates_kept) = call(&app, Method::GET, "/v1/exchange-rates", None).await;
+    assert_eq!(rates_kept.as_array().unwrap().len(), 4);
+    let (_, v) = call(&app, Method::GET, "/v1/exchange-rate-source", None).await;
+    assert_eq!(
+        (v["source"].clone(), v["pairs"].clone()),
+        (Value::Null, json!([]))
+    );
+}

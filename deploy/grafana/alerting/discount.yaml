@@ -105,6 +105,36 @@ groups:
               conditions:
                 - evaluator: { type: gt, params: [0.2] }
 
+      - uid: discount-exchange-rates-stale
+        title: Exchange rates stale
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        dashboardUid: discount-overview
+        labels: { service: discount, severity: warning }
+        annotations:
+          summary: "Exchange rates are older than the source's maximum age"
+          description: discount.exchange_rates.stale is 1; no fetch from the configured exchange-rate source succeeded within max_age_seconds. Pricing keeps using the stored rates. Check GET /v1/exchange-rate-source (last_error) or the console, Settings → Exchange rates → Source.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              expr: max(discount_exchange_rates_stale)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
       - uid: discount-budget-exhausted
         title: Promotion budget exhausted
         condition: B

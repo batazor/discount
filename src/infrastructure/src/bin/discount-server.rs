@@ -8,7 +8,8 @@ use discount_application::ports::{PromotionCatalog, RedemptionRepository};
 use discount_infrastructure::http::{AppState, router};
 use discount_infrastructure::telemetry;
 use discount_infrastructure::{
-    CatalogFixture, Config, InMemoryStore, NoopEventPublisher, PgStore, SystemClock,
+    CatalogFixture, Config, InMemoryStore, NoopEventPublisher, PgStore, ReqwestFetcher,
+    SystemClock, rates,
 };
 
 #[tokio::main]
@@ -57,8 +58,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         clock: Arc::new(SystemClock),
         events: Arc::new(NoopEventPublisher),
         codes: Arc::new(discount_infrastructure::RandomCodes::default()),
+        fetcher: Arc::new(ReqwestFetcher::default()),
         instruments,
     });
+    // Exchange-rate source (spec `exchange-rate-source`): every 15 seconds, fetch when the
+    // interval has passed since the last attempt, and keep the freshness gauges current.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(15));
+            loop {
+                tick.tick().await;
+                match state.catalog.get_rate_source().await {
+                    Ok(Some(record)) => {
+                        if discount_application::fetch_due(&record, state.clock.now()) {
+                            let _ = rates::refresh(&state).await;
+                        } else {
+                            rates::publish_freshness(&state).await;
+                        }
+                    }
+                    Ok(None) => rates::publish_freshness(&state).await,
+                    Err(e) => tracing::warn!(error = %e, "exchange-rate source check failed"),
+                }
+            }
+        });
+    }
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
     axum::serve(listener, router(state))
         .with_graceful_shutdown(async {

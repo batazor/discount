@@ -327,6 +327,46 @@ paths:
       responses:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/exchange-rate-source:
+    get:
+      operationId: getExchangeRateSource
+      tags: [catalogue]
+      summary: The exchange-rate source and its fetch status
+      description: >-
+        `source` is `null` while none is set. `stale` is true when no fetch succeeded within
+        `max_age_seconds`; pricing keeps using the stored rates regardless. `pairs` are the
+        rates the source wrote (origin `source`); every other stored rate is `manual`.
+      responses:
+        '200': { description: Status, content: { application/json: { schema: { $ref: '#/components/schemas/ExchangeRateSourceStatus' } } } }
+        '503': { $ref: '#/components/responses/StorageError' }
+    put:
+      operationId: putExchangeRateSource
+      tags: [catalogue]
+      summary: Set where rates are fetched from and how often
+      description: The first fetch happens within 15 seconds; a manual rate (`PUT /v1/exchange-rates/{from}/{to}`) is never overwritten by the source until it is deleted.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ExchangeRateSource' } } } }
+      responses:
+        '200': { description: Stored; the status, content: { application/json: { schema: { $ref: '#/components/schemas/ExchangeRateSourceStatus' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+        '503': { $ref: '#/components/responses/StorageError' }
+    delete:
+      operationId: deleteExchangeRateSource
+      tags: [catalogue]
+      summary: Turn the source off; stored rates are kept and become manual
+      responses:
+        '204': { description: Turned off }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/StorageError' }
+  /v1/exchange-rate-source/refresh:
+    post:
+      operationId: refreshExchangeRates
+      tags: [catalogue]
+      summary: Fetch the source now
+      responses:
+        '200': { description: Fetched; the status, content: { application/json: { schema: { $ref: '#/components/schemas/ExchangeRateSourceStatus' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { $ref: '#/components/responses/SourceUnavailable' }
+        '503': { $ref: '#/components/responses/StorageError' }
   /v1/coupons/generate:
     post:
       operationId: generateCoupons
@@ -453,20 +493,25 @@ components:
     StorageError:
       description: The catalogue or redemption store is unavailable; `storage_error` is set
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
+    SourceUnavailable:
+      description: The exchange-rate provider could not be fetched or did not answer with a rate table; `error` is `"SourceUnavailable"` and `message` says why. No stored rate changed; the attempt is recorded on the status.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
   schemas:
     ErrorBody:
       description: |
         Every non-2xx response carries this shape. Exactly one of `error`, `decode_error` and
-        `storage_error` is present: `error` is the string code `NotFound` or `InvalidTransition`
-        (then `from` and `to` are set) or a `PricingError` object for `422`.
+        `storage_error` is present: `error` is the string code `NotFound`, `InvalidTransition`
+        (then `from` and `to` are set), `SourceUnavailable` (then `message` is set) or a
+        `PricingError` object for `422`.
       type: object
       properties:
         error:
           oneOf:
-            - { type: string, enum: [NotFound, InvalidTransition] }
+            - { type: string, enum: [NotFound, InvalidTransition, SourceUnavailable] }
             - { $ref: '#/components/schemas/PricingError' }
         from: { $ref: '#/components/schemas/RedemptionStatus' }
         to: { $ref: '#/components/schemas/RedemptionStatus' }
+        message: { type: string, description: 'Why the exchange-rate provider could not be used, verbatim' }
         decode_error: { type: string }
         storage_error: { type: string }
     Currency: { type: string, pattern: '^[A-Z]{3}$', description: ISO 4217 alphabetic code }
@@ -617,6 +662,42 @@ components:
       properties:
         numerator: { type: integer, format: int64, minimum: 1 }
         denominator: { type: integer, format: int64, minimum: 1 }
+    ExchangeRateSource:
+      type: object
+      required: [url, interval_seconds, max_age_seconds, timeout_seconds]
+      additionalProperties: false
+      description: >-
+        Where rates come from. `url` is fetched with `GET` and must answer `{"base": "EUR",
+        "rates": {"USD": 1.0873, ...}}` (frankfurter.app, exchangerate.host,
+        openexchangerates.org, fixer.io); each entry becomes the pairs `base → X` and
+        `X → base` as integer fractions at six decimal places.
+      properties:
+        url: { type: string, format: uri, description: 'Absolute http or https URL; a key in its query is visible to every operator' }
+        interval_seconds: { type: integer, format: int64, minimum: 60, maximum: 604800, description: How often to fetch }
+        max_age_seconds: { type: integer, format: int64, minimum: 60, maximum: 2592000, description: 'Rates older than this are reported stale; at least interval_seconds' }
+        timeout_seconds: { type: integer, format: int64, minimum: 1, maximum: 120 }
+    SourcePair:
+      type: object
+      required: [from, to, fetched_at]
+      additionalProperties: false
+      properties:
+        from: { $ref: '#/components/schemas/Currency' }
+        to: { $ref: '#/components/schemas/Currency' }
+        fetched_at: { $ref: '#/components/schemas/Timestamp' }
+    ExchangeRateSourceStatus:
+      type: object
+      required: [source, updated_at, last_attempt_at, last_success_at, last_error, last_count, next_due_at, stale, pairs]
+      additionalProperties: false
+      properties:
+        source: { type: object, allOf: [ { $ref: '#/components/schemas/ExchangeRateSource' } ], nullable: true }
+        updated_at: { type: integer, format: int64, nullable: true, description: When the setting was last stored }
+        last_attempt_at: { type: integer, format: int64, nullable: true }
+        last_success_at: { type: integer, format: int64, nullable: true }
+        last_error: { type: string, nullable: true, description: 'Why the last attempt failed, verbatim; null after a success' }
+        last_count: { type: integer, format: int64, description: Pairs written by the last successful fetch }
+        next_due_at: { type: integer, format: int64, nullable: true, description: Last attempt plus the interval; now when never attempted; null without a source }
+        stale: { type: boolean, description: No success within max_age_seconds (from updated_at while nothing ever succeeded) }
+        pairs: { type: array, items: { $ref: '#/components/schemas/SourcePair' }, description: 'Rates with origin `source`, ordered by pair' }
     GenerateCouponsRequest:
       type: object
       required: [promotion_id, count, prefix, starts_at, ends_at, max_uses, customer_id]

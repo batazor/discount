@@ -5,8 +5,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use discount_application::EvaluateError;
 use discount_application::ports::{Redemption, RedemptionError, ReserveOutcome};
+use discount_application::{EvaluateError, FetchReport, RefreshError};
 use discount_domain::{ClampReason, Money, PricingError, PricingResult, PromotionId, SkipReason};
 use opentelemetry::metrics::{Counter, Histogram, Meter, MeterProvider};
 use opentelemetry::trace::TracerProvider;
@@ -36,6 +36,9 @@ pub const METRIC_AMOUNT: &str = "discount.amount";
 pub const METRIC_SHARE_BPS: &str = "discount.share.bps";
 pub const METRIC_REDEMPTIONS: &str = "discount.redemptions";
 pub const METRIC_BUDGET_REMAINING: &str = "discount.budget.remaining";
+pub const METRIC_RATE_FETCHES: &str = "discount.exchange_rates.fetches";
+pub const METRIC_RATES_AGE: &str = "discount.exchange_rates.age";
+pub const METRIC_RATES_STALE: &str = "discount.exchange_rates.stale";
 
 /// Attribute keys.
 pub const ATTR_OUTCOME: &str = "outcome";
@@ -56,6 +59,9 @@ pub const SPAN_ATTR_SKIPPED: &str = "discount.skipped";
 pub const SPAN_ATTR_ORIGINAL_SUBTOTAL: &str = "discount.original_subtotal";
 pub const SPAN_ATTR_TOTAL_DISCOUNT: &str = "discount.total_discount";
 pub const SPAN_ATTR_ERROR_TYPE: &str = "discount.error_type";
+pub const SPAN_RATE_FETCH: &str = "discount.exchange_rates.fetch";
+pub const SPAN_ATTR_SOURCE_URL: &str = "discount.source.url";
+pub const SPAN_ATTR_PAIRS: &str = "discount.pairs";
 
 /// HTTP server span attributes (OpenTelemetry HTTP semantic conventions).
 pub const SPAN_ATTR_HTTP_ROUTE: &str = "http.route";
@@ -160,10 +166,19 @@ pub fn skip_reason(r: &SkipReason) -> &'static str {
 #[derive(Clone, Default)]
 pub struct BudgetCache(Arc<Mutex<Vec<(PromotionId, Money)>>>);
 
+/// `(seconds since the last successful fetch, stale)`; the age is absent until a fetch succeeded.
+pub type Freshness = (Option<i64>, bool);
+
+/// Freshness of the exchange-rate source for the gauges: `None` while no source is set.
+#[derive(Clone, Default)]
+pub struct RateFreshness(Arc<Mutex<Option<Freshness>>>);
+
 /// The metric instruments of the service.
 #[derive(Clone)]
 pub struct Instruments {
     budgets: BudgetCache,
+    freshness: RateFreshness,
+    rate_fetches: Counter<u64>,
     redemptions: Counter<u64>,
     evaluations: Counter<u64>,
     duration: Histogram<f64>,
@@ -194,8 +209,37 @@ impl Instruments {
                 }
             })
             .build();
+        let freshness = RateFreshness::default();
+        let age_cache = freshness.clone();
+        let _age = meter
+            .i64_observable_gauge(METRIC_RATES_AGE)
+            .with_description("Seconds since the last successful exchange-rate fetch")
+            .with_unit("s")
+            .with_callback(move |observer| {
+                if let Some((Some(age), _)) = *age_cache.0.lock().unwrap() {
+                    observer.observe(age, &[]);
+                }
+            })
+            .build();
+        let stale_cache = freshness.clone();
+        let _stale = meter
+            .i64_observable_gauge(METRIC_RATES_STALE)
+            .with_description("1 while the exchange rates are older than the source's maximum age")
+            .with_unit("1")
+            .with_callback(move |observer| {
+                if let Some((_, stale)) = *stale_cache.0.lock().unwrap() {
+                    observer.observe(i64::from(stale), &[]);
+                }
+            })
+            .build();
         Instruments {
             budgets,
+            freshness,
+            rate_fetches: meter
+                .u64_counter(METRIC_RATE_FETCHES)
+                .with_description("Exchange-rate fetches by outcome")
+                .with_unit("{fetch}")
+                .build(),
             redemptions: meter
                 .u64_counter(METRIC_REDEMPTIONS)
                 .with_description("Redemption actions by outcome")
@@ -243,6 +287,18 @@ impl Instruments {
     /// Publish the latest remaining budgets for the gauge.
     pub fn set_budgets(&self, budgets: Vec<(PromotionId, Money)>) {
         *self.budgets.0.lock().unwrap() = budgets;
+    }
+
+    /// Publish the exchange-rate freshness for the gauges; `None` removes them.
+    pub fn set_rate_freshness(&self, freshness: Option<Freshness>) {
+        *self.freshness.0.lock().unwrap() = freshness;
+    }
+
+    /// `discount.exchange_rates.fetches{outcome}` for one fetch.
+    pub fn record_rate_fetch(&self, outcome: &Result<FetchReport, RefreshError>) {
+        let label = if outcome.is_ok() { "ok" } else { "error" };
+        self.rate_fetches
+            .add(1, &[KeyValue::new(ATTR_OUTCOME, label)]);
     }
 
     /// `discount.redemptions{action="reserve", outcome}` plus the evaluation telemetry of
@@ -400,6 +456,50 @@ impl Instruments {
 
 /// Open the `discount.evaluate` span with its attributes declared (filled in by
 /// `record_evaluation`).
+/// The `discount.exchange_rates.fetch` span; the URL is recorded without its query string,
+/// which may carry a provider key.
+pub fn rate_fetch_span(url: &str) -> tracing::Span {
+    let shown = url.split('?').next().unwrap_or(url).to_string();
+    tracing::info_span!(
+        SPAN_RATE_FETCH,
+        { SPAN_ATTR_SOURCE_URL } = %shown,
+        { SPAN_ATTR_PAIRS } = tracing::field::Empty,
+        { SPAN_ATTR_ERROR_TYPE } = tracing::field::Empty,
+    )
+}
+
+/// Fill the fetch span and log the outcome; must run inside `rate_fetch_span`.
+pub fn record_rate_fetch_outcome(outcome: &Result<FetchReport, RefreshError>) {
+    let span = tracing::Span::current();
+    match outcome {
+        Ok(r) => {
+            span.record(SPAN_ATTR_PAIRS, r.produced as i64);
+            tracing::info!(
+                produced = r.produced,
+                stored = r.stored,
+                "exchange rates fetched"
+            );
+        }
+        Err(e) => {
+            let kind = match e {
+                RefreshError::NoSource => "NoSource",
+                RefreshError::SourceUnavailable(_) => "SourceUnavailable",
+                RefreshError::Storage(_) => "Storage",
+            };
+            span.record(SPAN_ATTR_ERROR_TYPE, kind);
+            tracing::warn!(error_type = kind, error = %fetch_error_text(e), "exchange-rate fetch failed");
+        }
+    }
+}
+
+fn fetch_error_text(e: &RefreshError) -> String {
+    match e {
+        RefreshError::NoSource => "no source".into(),
+        RefreshError::SourceUnavailable(m) => m.clone(),
+        RefreshError::Storage(s) => s.to_string(),
+    }
+}
+
 pub fn evaluate_span(currency: &str, lines: usize) -> tracing::Span {
     tracing::info_span!(
         SPAN_EVALUATE,

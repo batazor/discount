@@ -56,6 +56,7 @@ pub fn state_with(store: InMemoryStore, instruments: Instruments) -> Arc<AppStat
         clock: Arc::new(FixedClock(NOW)),
         events: Arc::new(NoopEventPublisher),
         codes: Arc::new(discount_infrastructure::SequentialCodes::default()),
+        fetcher: Arc::new(discount_infrastructure::CannedFetcher::default()),
         instruments,
     })
 }

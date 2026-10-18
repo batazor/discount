@@ -59,3 +59,32 @@ export function formatPercentInput(bps: number): string {
 export function formatBps(bps: number): string {
   return `${formatPercentInput(bps)} %`;
 }
+
+// ---- durations: the contract carries seconds; people enter "1 hour", "3 days".
+
+export const DURATION_UNITS = ["seconds", "minutes", "hours", "days"] as const;
+export type DurationUnit = (typeof DURATION_UNITS)[number];
+const UNIT_SECONDS: Record<DurationUnit, number> = { seconds: 1, minutes: 60, hours: 3600, days: 86400 };
+
+/** `"2"` + `hours` → `7200`; non-integer, zero or unknown unit → undefined. */
+export function parseDuration(amount: string, unit: string): number | undefined {
+  if (!/^\d+$/.test(amount.trim())) return undefined;
+  const n = Number(amount.trim());
+  const u = UNIT_SECONDS[unit as DurationUnit];
+  if (!u || n <= 0 || !Number.isSafeInteger(n * u)) return undefined;
+  return n * u;
+}
+
+/** `7200` → `{ amount: "2", unit: "hours" }`: the largest unit that divides evenly. */
+export function formatDurationInput(seconds: number): { amount: string; unit: DurationUnit } {
+  for (const unit of [...DURATION_UNITS].reverse()) {
+    if (seconds % UNIT_SECONDS[unit] === 0) return { amount: String(seconds / UNIT_SECONDS[unit]), unit };
+  }
+  return { amount: String(seconds), unit: "seconds" };
+}
+
+/** `7200` → `"2 hours"`, `60` → `"1 minute"`, for display. */
+export function formatDuration(seconds: number): string {
+  const { amount, unit } = formatDurationInput(seconds);
+  return `${amount} ${Number(amount) === 1 ? unit.slice(0, -1) : unit}`;
+}

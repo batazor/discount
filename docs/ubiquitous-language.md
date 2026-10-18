@@ -455,6 +455,12 @@ the contract the Grafana dashboards depend on (OpenSpec change `otel-grafana-obs
   `0, 100, 250, 500, 1000, 1500, 2000, 3000, 5000, 7500, 10000`.
   `discount.redemptions` {`action` = `reserve` | `confirm` | `cancel`, `outcome` = `ok` | `idempotent` | `rejected` | `error`,
   for `rejected` `reason` = `NotFound` | `InvalidTransition` | `Pricing`; `error` is a storage failure only},
-  `discount.budget.remaining` gauge, minor units {`promotion_id`, `currency`}.
+  `discount.budget.remaining` gauge, minor units {`promotion_id`, `currency`},
+  `discount.exchange_rates.fetches` {`outcome` = `ok` | `error`},
+  `discount.exchange_rates.age` gauge, seconds since the last successful fetch (absent until one),
+  `discount.exchange_rates.stale` gauge, `0 | 1` (absent while no source is set).
+- Span `discount.exchange_rates.fetch` (one per fetch of the exchange-rate source) with
+  `discount.source.url` (the URL without its query string), `discount.pairs` (pairs the
+  provider produced) and, on error, `discount.error_type` (`SourceUnavailable`, `Storage`).
 - One log record per evaluation, `INFO` on success and `WARN` on a pricing error, carrying
   `outcome`, `total_discount` and the trace and span ids of `discount.evaluate`.

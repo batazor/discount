@@ -19,6 +19,7 @@ async fn start_server() -> String {
         clock: Arc::new(FixedClock(1_760_227_200)),
         events: Arc::new(NoopEventPublisher),
         codes: Arc::new(discount_infrastructure::RandomCodes::default()),
+        fetcher: Arc::new(discount_infrastructure::CannedFetcher::default()),
         instruments: Instruments::noop(),
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

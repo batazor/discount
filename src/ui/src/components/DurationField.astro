@@ -1,0 +1,15 @@
+---
+// A duration entered as a whole number of seconds, minutes, hours or days; sent as seconds
+// (model/units.ts). The seconds the contract will carry are shown in the hint.
+import type { FormState } from "../actions/run";
+import { DURATION_UNITS, parseDuration } from "../model/units";
+import Field from "./Field.astro";
+interface Props { state: FormState; name: string; label: string; help?: string; hint?: string }
+const { state, name, label, help, hint } = Astro.props;
+const seconds = parseDuration(state.fields[`${name}.amount`] ?? "", state.fields[`${name}.unit`] ?? "");
+const sends = seconds === undefined ? "" : `${hint ? "; " : ""}sends ${seconds} seconds`;
+---
+<fieldset class="grid grid-cols-[1fr_7rem] gap-2">
+  <Field state={state} name={`${name}.amount`} label={label} type="number" help={help} hint={`${hint ?? ""}${sends}`} />
+  <Field state={state} name={`${name}.unit`} label="Unit" options={DURATION_UNITS} />
+</fieldset>

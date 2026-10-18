@@ -11,9 +11,10 @@ use async_trait::async_trait;
 use discount_application::CodeSource;
 use discount_application::coupons::CODE_LENGTH;
 use discount_application::ports::{
-    CatalogSnapshot, Clock, Counters, Event, EventPublisher, GrantRule, GrantTrigger, PricingFn,
-    PromotionCatalog, PromotionMetadata, Redemption, RedemptionError, RedemptionRepository,
-    RedemptionStatus, ReserveOutcome, StorageError, Uses, transition_allowed,
+    CatalogSnapshot, Clock, Counters, Event, EventPublisher, ExchangeRateSource,
+    ExchangeRateSourceRecord, FetchOutcome, GrantRule, GrantTrigger, PricingFn, PromotionCatalog,
+    PromotionMetadata, Redemption, RedemptionError, RedemptionRepository, RedemptionStatus,
+    ReserveOutcome, SourcePair, StorageError, Uses, transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, OrderCap, PricingPolicy, Promotion, PromotionId, RoundingPolicy,
@@ -21,16 +22,43 @@ use discount_domain::{
 };
 use serde::{Deserialize, Serialize};
 
-/// `{"groups": [...], "promotions": [...]}` in the ubiquitous-language encoding.
+/// `{"groups": [...], "promotions": [...]}` in the ubiquitous-language encoding, plus the
+/// application state next to the promotions: `coupons`, `exchange_rates`, `metadata`,
+/// `allowlists`, `grant_rules`. `as_of` is the day the fixture's timestamps were written
+/// for; the loader ignores it, `deploy/demo/seed.py` shifts every window by `now - as_of`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogFixture {
+    #[serde(default)]
+    pub as_of: Option<Timestamp>,
     pub groups: Vec<StackingGroup>,
     pub promotions: Vec<Promotion>,
     #[serde(default)]
     pub coupons: Vec<Coupon>,
     #[serde(default)]
     pub exchange_rates: Vec<ExchangeRate>,
+    #[serde(default)]
+    pub metadata: Vec<FixtureMetadata>,
+    #[serde(default)]
+    pub allowlists: Vec<FixtureAllowlist>,
+    #[serde(default)]
+    pub grant_rules: Vec<GrantRule>,
+}
+
+/// One promotion's metadata in a fixture (`PUT /v1/promotions/{id}/metadata`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureMetadata {
+    pub promotion_id: PromotionId,
+    pub metadata: PromotionMetadata,
+}
+
+/// One promotion's allowlist in a fixture (`PUT /v1/promotions/{id}/allowlist`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureAllowlist {
+    pub promotion_id: PromotionId,
+    pub customer_ids: Vec<String>,
 }
 
 impl CatalogFixture {
@@ -61,6 +89,9 @@ struct Store {
     saved: std::collections::BTreeSet<(String, String)>,
     metadata: BTreeMap<String, PromotionMetadata>,
     allowlists: BTreeMap<String, std::collections::BTreeSet<String>>,
+    rate_source: Option<ExchangeRateSourceRecord>,
+    /// Pairs written by the source, with the fetch time; every other pair is `manual`.
+    rate_origins: BTreeMap<(String, String), Timestamp>,
 }
 
 /// In-memory catalogue and redemption store.
@@ -88,7 +119,7 @@ impl InMemoryStore {
     }
 
     /// Seed groups, promotions and their budgets (`remaining_budget` in the fixture becomes
-    /// the budget row) from a fixture.
+    /// the budget row), coupons, rates, metadata, allowlists and grant rules from a fixture.
     pub fn with_fixture(self, fixture: CatalogFixture) -> InMemoryStore {
         {
             let mut s = self.inner.lock().unwrap();
@@ -112,6 +143,16 @@ impl InMemoryStore {
             }
             for r in fixture.exchange_rates {
                 s.rates.insert((r.from.clone(), r.to.clone()), r);
+            }
+            for m in fixture.metadata {
+                s.metadata.insert(m.promotion_id, m.metadata);
+            }
+            for a in fixture.allowlists {
+                s.allowlists
+                    .insert(a.promotion_id, a.customer_ids.into_iter().collect());
+            }
+            for g in fixture.grant_rules {
+                s.grant_rules.insert(g.rule_id.clone(), g);
             }
         }
         self
@@ -340,21 +381,100 @@ impl PromotionCatalog for InMemoryStore {
         Ok(self.inner.lock().unwrap().rates.values().cloned().collect())
     }
     async fn put_rate(&self, rate: ExchangeRate) -> Result<(), StorageError> {
-        self.inner
-            .lock()
-            .unwrap()
-            .rates
-            .insert((rate.from.clone(), rate.to.clone()), rate);
+        let mut s = self.inner.lock().unwrap();
+        let key = (rate.from.clone(), rate.to.clone());
+        s.rate_origins.remove(&key);
+        s.rates.insert(key, rate);
         Ok(())
     }
     async fn delete_rate(&self, from: &str, to: &str) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        let key = (from.to_string(), to.to_string());
+        s.rate_origins.remove(&key);
+        Ok(s.rates.remove(&key).is_some())
+    }
+    async fn get_rate_source(&self) -> Result<Option<ExchangeRateSourceRecord>, StorageError> {
+        Ok(self.inner.lock().unwrap().rate_source.clone())
+    }
+    async fn put_rate_source(
+        &self,
+        source: ExchangeRateSource,
+        now: Timestamp,
+    ) -> Result<(), StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        s.rate_source = Some(match s.rate_source.take() {
+            Some(r) => ExchangeRateSourceRecord {
+                source,
+                updated_at: now,
+                ..r
+            },
+            None => ExchangeRateSourceRecord {
+                source,
+                updated_at: now,
+                last_attempt_at: None,
+                last_success_at: None,
+                last_error: None,
+                last_count: 0,
+            },
+        });
+        Ok(())
+    }
+    async fn delete_rate_source(&self) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        s.rate_origins.clear();
+        Ok(s.rate_source.take().is_some())
+    }
+    async fn record_rate_fetch(
+        &self,
+        now: Timestamp,
+        outcome: FetchOutcome,
+    ) -> Result<(), StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        if let Some(r) = s.rate_source.as_mut() {
+            r.last_attempt_at = Some(now);
+            match outcome {
+                Ok(count) => {
+                    r.last_success_at = Some(now);
+                    r.last_count = count;
+                    r.last_error = None;
+                }
+                Err(message) => r.last_error = Some(message),
+            }
+        }
+        Ok(())
+    }
+    async fn put_fetched_rates(
+        &self,
+        rates: Vec<ExchangeRate>,
+        now: Timestamp,
+    ) -> Result<i64, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        let mut stored = 0;
+        for rate in rates {
+            let key = (rate.from.clone(), rate.to.clone());
+            let manual = s.rates.contains_key(&key) && !s.rate_origins.contains_key(&key);
+            if manual {
+                continue;
+            }
+            s.rate_origins.insert(key.clone(), now);
+            s.rates.insert(key, rate);
+            stored += 1;
+        }
+        Ok(stored)
+    }
+    async fn list_source_pairs(&self) -> Result<Vec<SourcePair>, StorageError> {
         Ok(self
             .inner
             .lock()
             .unwrap()
-            .rates
-            .remove(&(from.to_string(), to.to_string()))
-            .is_some())
+            .rate_origins
+            .iter()
+            .map(|((from, to), fetched_at)| SourcePair {
+                from: from.clone(),
+                to: to.clone(),
+                fetched_at: *fetched_at,
+            })
+            .collect())
     }
     async fn list_grant_rules(&self) -> Result<Vec<GrantRule>, StorageError> {
         Ok(self
@@ -863,5 +983,109 @@ mod tests {
             .unwrap();
         assert_eq!(r.total_discount.amount, 749);
         assert_eq!(r.final_total.amount, 3750);
+    }
+
+    /// The demo catalogue (`deploy/demo/catalogue.json`) loads and every satellite names a
+    /// promotion that exists; the sample cart prices without a validation error.
+    #[tokio::test]
+    async fn demo_catalogue_loads_and_is_consistent() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../deploy/demo/catalogue.json"
+        );
+        let fixture = CatalogFixture::from_json_file(path).expect("demo catalogue loads");
+        assert!(
+            fixture.as_of.is_some(),
+            "the demo catalogue states its as_of day"
+        );
+        let groups: Vec<&str> = fixture.groups.iter().map(|g| g.group_id.as_str()).collect();
+        let ids: Vec<&str> = fixture
+            .promotions
+            .iter()
+            .map(|p| p.promotion_id.as_str())
+            .collect();
+        for p in &fixture.promotions {
+            assert!(
+                groups.contains(&p.group_id.as_str()),
+                "{} names a group",
+                p.promotion_id
+            );
+        }
+        for c in &fixture.coupons {
+            assert!(ids.contains(&c.promotion_id.as_str()), "coupon {}", c.code);
+        }
+        for m in &fixture.metadata {
+            assert!(
+                ids.contains(&m.promotion_id.as_str()),
+                "metadata {}",
+                m.promotion_id
+            );
+            assert!(
+                m.metadata
+                    .source
+                    .as_deref()
+                    .is_none_or(PromotionMetadata::valid_source)
+            );
+        }
+        for a in &fixture.allowlists {
+            assert!(
+                ids.contains(&a.promotion_id.as_str()),
+                "allowlist {}",
+                a.promotion_id
+            );
+        }
+        for g in &fixture.grant_rules {
+            assert!(
+                ids.contains(&g.promotion_id.as_str()),
+                "grant rule {}",
+                g.rule_id
+            );
+        }
+        assert_eq!(
+            fixture.metadata.len(),
+            fixture.promotions.len(),
+            "every campaign has a title"
+        );
+        let store = InMemoryStore::new(default_policy()).with_fixture(fixture.clone());
+        assert_eq!(
+            store.list_grant_rules().await.unwrap().len(),
+            fixture.grant_rules.len()
+        );
+        assert_eq!(
+            store.list_metadata().await.unwrap().len(),
+            fixture.metadata.len()
+        );
+        assert_eq!(
+            store.get_allowlist("VIP-CIRCLE").await.unwrap(),
+            Some(vec!["ann".to_string(), "grace".to_string()])
+        );
+        let use_case = Evaluate {
+            catalog: &store,
+            redemptions: &store,
+            clock: &FixedClock(fixture.as_of.unwrap()),
+            events: &NoopEventPublisher,
+        };
+        let cart = CartSnapshot {
+            currency: "EUR".into(),
+            lines: vec![CartLine {
+                line_id: "room".into(),
+                unit_price: eur(12900),
+                quantity: 3,
+            }],
+            tags: vec!["#ios".into()],
+            attributes: vec![Attribute {
+                key: "product".into(),
+                value: "hotel".into(),
+            }],
+            coupon_codes: vec!["WELCOME15".into()],
+        };
+        let r = use_case
+            .run(cart, CustomerContext::default())
+            .await
+            .expect("the demo catalogue prices a hotel cart");
+        let applied: Vec<&str> = r.applied.iter().map(|a| a.promotion_id.as_str()).collect();
+        assert!(applied.contains(&"HOTELS-AUTUMN10"), "{applied:?}");
+        assert!(applied.contains(&"WELCOME"), "{applied:?}");
+        assert!(applied.contains(&"APP-5"), "{applied:?}");
     }
 }

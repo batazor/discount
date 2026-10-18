@@ -196,9 +196,106 @@ pub struct GenerateCoupons {
     pub customer_id: Option<String>,
 }
 
+/// Where exchange rates are fetched from and how often (spec `exchange-rate-source`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExchangeRateSource {
+    pub url: String,
+    pub interval_seconds: i64,
+    /// Rates older than this count as stale; never below `interval_seconds`.
+    pub max_age_seconds: i64,
+    pub timeout_seconds: i64,
+}
+
+impl ExchangeRateSource {
+    pub const MIN_INTERVAL: i64 = 60;
+    pub const MAX_INTERVAL: i64 = 604_800;
+    pub const MAX_AGE: i64 = 2_592_000;
+    pub const MIN_TIMEOUT: i64 = 1;
+    pub const MAX_TIMEOUT: i64 = 120;
+
+    /// The limits of the spec; `Err` names the offending field.
+    pub fn check(&self) -> Result<(), String> {
+        let lower = self.url.to_ascii_lowercase();
+        let scheme_ok = lower.starts_with("http://") || lower.starts_with("https://");
+        if !scheme_ok || self.url.len() <= 8 || self.url.chars().any(char::is_whitespace) {
+            return Err("url must be an absolute http or https URL".into());
+        }
+        if !(Self::MIN_INTERVAL..=Self::MAX_INTERVAL).contains(&self.interval_seconds) {
+            return Err("interval_seconds must be between 60 and 604800".into());
+        }
+        if self.max_age_seconds < self.interval_seconds || self.max_age_seconds > Self::MAX_AGE {
+            return Err("max_age_seconds must be between interval_seconds and 2592000".into());
+        }
+        if !(Self::MIN_TIMEOUT..=Self::MAX_TIMEOUT).contains(&self.timeout_seconds) {
+            return Err("timeout_seconds must be between 1 and 120".into());
+        }
+        Ok(())
+    }
+}
+
+/// The stored source with its fetch bookkeeping.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExchangeRateSourceRecord {
+    pub source: ExchangeRateSource,
+    pub updated_at: Timestamp,
+    pub last_attempt_at: Option<Timestamp>,
+    pub last_success_at: Option<Timestamp>,
+    pub last_error: Option<String>,
+    /// Pairs stored by the last successful fetch.
+    pub last_count: i64,
+}
+
+/// A stored pair written by the source, with the time of the fetch that wrote it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcePair {
+    pub from: String,
+    pub to: String,
+    pub fetched_at: Timestamp,
+}
+
+/// Outcome of one fetch, as recorded on the source: the number of pairs stored, or why it
+/// failed (shown verbatim to operators).
+pub type FetchOutcome = Result<i64, String>;
+
+/// Fetches a provider's rate table (spec `exchange-rate-source`, "Provider format"). The
+/// infrastructure implements it over HTTP; tests return canned bodies.
+#[async_trait]
+pub trait RateFetcher: Send + Sync {
+    /// The response body of `GET url`, or why it could not be fetched (status, timeout, ...).
+    async fn fetch(&self, url: &str, timeout_seconds: i64) -> Result<String, String>;
+}
+
 /// The promotion catalogue (spec `promotion-catalog`).
 #[async_trait]
 pub trait PromotionCatalog: Send + Sync {
+    // ---- exchange-rate source (spec `exchange-rate-source`) ----
+    async fn get_rate_source(&self) -> Result<Option<ExchangeRateSourceRecord>, StorageError>;
+    /// Upsert the setting; keeps the fetch bookkeeping of an existing record.
+    async fn put_rate_source(
+        &self,
+        source: ExchangeRateSource,
+        now: Timestamp,
+    ) -> Result<(), StorageError>;
+    /// Remove the setting and make every `source` pair `manual`. `Ok(false)` when none was set.
+    async fn delete_rate_source(&self) -> Result<bool, StorageError>;
+    /// Record an attempt: a success moves `last_success_at` and `last_count`, a failure
+    /// stores its message. No-op without a source.
+    async fn record_rate_fetch(
+        &self,
+        now: Timestamp,
+        outcome: FetchOutcome,
+    ) -> Result<(), StorageError>;
+    /// Upsert the pairs whose stored origin is not `manual`, stamped `source` at `now`;
+    /// returns how many were written.
+    async fn put_fetched_rates(
+        &self,
+        rates: Vec<ExchangeRate>,
+        now: Timestamp,
+    ) -> Result<i64, StorageError>;
+    /// Pairs with origin `source`, ordered by `(from, to)`.
+    async fn list_source_pairs(&self) -> Result<Vec<SourcePair>, StorageError>;
+
     async fn snapshot(&self) -> Result<CatalogSnapshot, StorageError>;
     async fn get_policy(&self) -> Result<PricingPolicy, StorageError>;
     async fn put_policy(&self, policy: PricingPolicy) -> Result<(), StorageError>;

@@ -1270,3 +1270,153 @@ async fn allowlists_gate_promotions() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn exchange_rate_source_round_trip_and_manual_wins() {
+    use discount_application::ports::ExchangeRateSource;
+    for_each_backend(|p| async move {
+        let rate = |from: &str, to: &str, n: i64, d: i64| ExchangeRate {
+            from: from.into(),
+            to: to.into(),
+            numerator: n,
+            denominator: d,
+        };
+        assert_eq!(p.catalog.get_rate_source().await.unwrap(), None);
+        assert!(!p.catalog.delete_rate_source().await.unwrap());
+        p.catalog
+            .put_rate(rate("USD", "EUR", 92, 100))
+            .await
+            .unwrap();
+
+        let source = ExchangeRateSource {
+            url: "https://rates.example/latest?from=EUR".into(),
+            interval_seconds: 3600,
+            max_age_seconds: 86_400,
+            timeout_seconds: 10,
+        };
+        p.catalog
+            .put_rate_source(source.clone(), NOW)
+            .await
+            .unwrap();
+        let r = p.catalog.get_rate_source().await.unwrap().unwrap();
+        assert_eq!(
+            (
+                r.source.clone(),
+                r.updated_at,
+                r.last_attempt_at,
+                r.last_count
+            ),
+            (source.clone(), NOW, None, 0)
+        );
+
+        // A failure records the attempt and the message; a success clears it.
+        p.catalog
+            .record_rate_fetch(NOW + 10, Err("HTTP 503".into()))
+            .await
+            .unwrap();
+        let r = p.catalog.get_rate_source().await.unwrap().unwrap();
+        assert_eq!(
+            (
+                r.last_attempt_at,
+                r.last_success_at,
+                r.last_error.as_deref()
+            ),
+            (Some(NOW + 10), None, Some("HTTP 503"))
+        );
+        let stored = p
+            .catalog
+            .put_fetched_rates(
+                vec![
+                    rate("EUR", "USD", 10873, 10000),
+                    rate("USD", "EUR", 10000, 10873),
+                ],
+                NOW + 20,
+            )
+            .await
+            .unwrap();
+        assert_eq!(stored, 1, "USD→EUR is manual and stays");
+        p.catalog
+            .record_rate_fetch(NOW + 20, Ok(stored))
+            .await
+            .unwrap();
+        let r = p.catalog.get_rate_source().await.unwrap().unwrap();
+        assert_eq!(
+            (
+                r.last_attempt_at,
+                r.last_success_at,
+                r.last_error,
+                r.last_count
+            ),
+            (Some(NOW + 20), Some(NOW + 20), None, 1)
+        );
+        let rates = p.catalog.list_rates().await.unwrap();
+        assert!(rates.contains(&rate("USD", "EUR", 92, 100)), "{rates:?}");
+        assert!(
+            rates.contains(&rate("EUR", "USD", 10873, 10000)),
+            "{rates:?}"
+        );
+        let pairs = p.catalog.list_source_pairs().await.unwrap();
+        assert_eq!(
+            (
+                pairs.len(),
+                pairs[0].from.as_str(),
+                pairs[0].to.as_str(),
+                pairs[0].fetched_at
+            ),
+            (1, "EUR", "USD", NOW + 20)
+        );
+
+        // The setting changes without losing the bookkeeping; a manual PUT releases a source pair.
+        p.catalog
+            .put_rate_source(
+                ExchangeRateSource {
+                    interval_seconds: 600,
+                    ..source
+                },
+                NOW + 30,
+            )
+            .await
+            .unwrap();
+        let r = p.catalog.get_rate_source().await.unwrap().unwrap();
+        assert_eq!(
+            (r.source.interval_seconds, r.updated_at, r.last_success_at),
+            (600, NOW + 30, Some(NOW + 20))
+        );
+        p.catalog
+            .put_rate(rate("EUR", "USD", 11, 10))
+            .await
+            .unwrap();
+        assert!(p.catalog.list_source_pairs().await.unwrap().is_empty());
+        let stored = p
+            .catalog
+            .put_fetched_rates(
+                vec![rate("EUR", "USD", 1, 1), rate("EUR", "GBP", 5, 6)],
+                NOW + 40,
+            )
+            .await
+            .unwrap();
+        assert_eq!(stored, 1);
+        assert!(p.catalog.delete_rate("EUR", "GBP").await.unwrap());
+        assert!(p.catalog.list_source_pairs().await.unwrap().is_empty());
+
+        // Turning off keeps the rates and makes them manual.
+        p.catalog
+            .put_fetched_rates(vec![rate("EUR", "CHF", 9412, 10000)], NOW + 50)
+            .await
+            .unwrap();
+        assert!(p.catalog.delete_rate_source().await.unwrap());
+        assert_eq!(p.catalog.get_rate_source().await.unwrap(), None);
+        assert!(p.catalog.list_source_pairs().await.unwrap().is_empty());
+        assert!(
+            p.catalog
+                .list_rates()
+                .await
+                .unwrap()
+                .contains(&rate("EUR", "CHF", 9412, 10000))
+        );
+        // Bookkeeping without a source is a no-op.
+        p.catalog.record_rate_fetch(NOW + 60, Ok(0)).await.unwrap();
+        assert_eq!(p.catalog.get_rate_source().await.unwrap(), None);
+    })
+    .await;
+}

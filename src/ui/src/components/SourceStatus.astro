@@ -1,0 +1,23 @@
+---
+// The exchange-rate source's status in one line, as the service reports it, with Try again.
+// Used on the rates screen and the source screen (spec admin-ui).
+import { actions } from "astro:actions";
+import type { ExchangeRateSourceStatus } from "../api/types";
+import { TERM } from "../model/glossary";
+import { formatDuration } from "../model/units";
+import Help from "./Help.astro";
+import When from "./When.astro";
+interface Props { status: ExchangeRateSourceStatus }
+const { status } = Astro.props;
+const src = status.source;
+---
+{src && (
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]" data-source-status>
+    {status.stale ? <span class="badge badge-warn" data-tip={TERM.sourceStale}>stale</span> : status.last_success_at !== null ? <span class="badge badge-ok">fresh</span> : <span class="badge badge-muted">never fetched</span>}
+    <span>every {formatDuration(src.interval_seconds)} <Help text={TERM.sourceInterval} /></span>
+    {status.last_success_at !== null && <span>last fetch <When ts={status.last_success_at} />, {status.last_count} pairs</span>}
+    {status.next_due_at !== null && <span>next <When ts={status.next_due_at} /></span>}
+    {status.last_error && <span class="field-error" role="alert">last attempt (<When ts={status.last_attempt_at} />): {status.last_error}</span>}
+    <form method="post" action={actions.refreshRateSource} class="inline"><button type="submit" class="btn-xs">Try again</button></form>
+  </div>
+)}

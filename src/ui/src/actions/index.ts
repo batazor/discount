@@ -15,6 +15,7 @@ import { evaluateRequestFromForm, parseJson } from "../model/evaluate";
 import { Form, type Fields, type Parsed } from "../model/fields";
 import { allowlistFromForm } from "../model/allowlist";
 import { metadataFromForm } from "../model/metadata";
+import { sourceFromForm } from "../model/source";
 import { promotionFromForm } from "../model/promotion";
 import { fold, run, runPlain, type ActionOutcome } from "./run";
 import { campaignDraftFromForm } from "../model/campaign";
@@ -135,6 +136,18 @@ export const server = {
           body: { numerator: r.numerator, denominator: r.denominator },
         }),
       ),
+  }),
+  putRateSource: defineAction({
+    ...form,
+    handler: (fd: FormData) => run(fd, sourceFromForm, (body) => api.PUT("/v1/exchange-rate-source", { body })),
+  }),
+  refreshRateSource: defineAction({
+    ...form,
+    handler: (fd: FormData) => runPlain(fd, () => api.POST("/v1/exchange-rate-source/refresh")),
+  }),
+  deleteRateSource: defineAction({
+    ...form,
+    handler: (fd: FormData) => runPlain(fd, () => api.DELETE("/v1/exchange-rate-source")),
   }),
   deleteExchangeRate: defineAction({
     ...form,

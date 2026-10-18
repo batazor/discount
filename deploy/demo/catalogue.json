@@ -1,0 +1,978 @@
+{
+  "as_of": 1792281600,
+  "groups": [
+    {
+      "group_id": "campaigns",
+      "priority": 0,
+      "mode": {
+        "type": "Stackable"
+      }
+    },
+    {
+      "group_id": "codes",
+      "priority": 5,
+      "mode": {
+        "type": "Stackable"
+      }
+    },
+    {
+      "group_id": "loyalty",
+      "priority": 10,
+      "mode": {
+        "type": "FirstMatch"
+      }
+    },
+    {
+      "group_id": "partners",
+      "priority": -10,
+      "mode": {
+        "type": "FirstMatch"
+      }
+    }
+  ],
+  "promotions": [
+    {
+      "promotion_id": "HOTELS-AUTUMN10",
+      "group_id": "campaigns",
+      "priority": 10,
+      "exclusive": false,
+      "cap": {
+        "amount": 5000,
+        "currency": "EUR"
+      },
+      "remaining_budget": {
+        "amount": 500000,
+        "currency": "EUR"
+      },
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "DateWindow",
+          "starts_at": 1790812800,
+          "ends_at": 1798675200
+        },
+        {
+          "type": "AttributeIn",
+          "key": "product",
+          "values": [
+            "hotel"
+          ]
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 1000
+      }
+    },
+    {
+      "promotion_id": "APP-5",
+      "group_id": "campaigns",
+      "priority": 8,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": {
+        "amount": 200000,
+        "currency": "EUR"
+      },
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "TagsMatch",
+          "all": [],
+          "any": [
+            "#ios",
+            "#android"
+          ],
+          "none": [
+            "#partner"
+          ]
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 500,
+          "currency": "EUR"
+        }
+      }
+    },
+    {
+      "promotion_id": "BIG-SPENDER",
+      "group_id": "campaigns",
+      "priority": 6,
+      "exclusive": false,
+      "cap": {
+        "amount": 10000,
+        "currency": "EUR"
+      },
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "OrderTotalRange",
+          "min": {
+            "amount": 50000,
+            "currency": "EUR"
+          },
+          "max": null
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 1500
+      }
+    },
+    {
+      "promotion_id": "RESORT-WINTER",
+      "group_id": "campaigns",
+      "priority": 7,
+      "exclusive": false,
+      "cap": {
+        "amount": 15000,
+        "currency": "EUR"
+      },
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "AttributeIn",
+          "key": "hotel_kind",
+          "values": [
+            "resort",
+            "villa"
+          ]
+        },
+        {
+          "type": "AttributeDateWindow",
+          "key": "checkin",
+          "starts_at": 1794700800,
+          "ends_at": 1801440000
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 1200
+      }
+    },
+    {
+      "promotion_id": "FIRST-ORDER",
+      "group_id": "campaigns",
+      "priority": 9,
+      "exclusive": false,
+      "cap": {
+        "amount": 3000,
+        "currency": "EUR"
+      },
+      "remaining_budget": {
+        "amount": 300000,
+        "currency": "EUR"
+      },
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "MaxCompletedOrders",
+          "max": 0
+        },
+        {
+          "type": "MaxUsesPerCustomer",
+          "max": 1
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 2000
+      }
+    },
+    {
+      "promotion_id": "GOLD-TIER",
+      "group_id": "loyalty",
+      "priority": 20,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": {
+        "type": "HalfUp"
+      },
+      "rules": [
+        {
+          "type": "CustomerAttributeIn",
+          "key": "tier",
+          "values": [
+            "gold",
+            "platinum"
+          ]
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 800
+      }
+    },
+    {
+      "promotion_id": "SILVER-TIER",
+      "group_id": "loyalty",
+      "priority": 10,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "CustomerAttributeIn",
+          "key": "tier",
+          "values": [
+            "silver"
+          ]
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 400
+      }
+    },
+    {
+      "promotion_id": "APP-FIRST-BOOKING",
+      "group_id": "campaigns",
+      "priority": 4,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "CustomerAttributeRange",
+          "key": "completed_app_orders",
+          "min": null,
+          "max": 0
+        },
+        {
+          "type": "TagsMatch",
+          "all": [],
+          "any": [
+            "#ios",
+            "#android"
+          ],
+          "none": []
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 700,
+          "currency": "EUR"
+        }
+      }
+    },
+    {
+      "promotion_id": "WELCOME",
+      "group_id": "codes",
+      "priority": 10,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": {
+        "amount": 500000,
+        "currency": "EUR"
+      },
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "RequiresCoupon"
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 1500,
+          "currency": "EUR"
+        }
+      }
+    },
+    {
+      "promotion_id": "VIP-CIRCLE",
+      "group_id": "campaigns",
+      "priority": 12,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "RequiresAllowlist"
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 2500,
+          "currency": "EUR"
+        }
+      }
+    },
+    {
+      "promotion_id": "CARS-WEEKEND",
+      "group_id": "campaigns",
+      "priority": 5,
+      "exclusive": false,
+      "cap": {
+        "amount": 4000,
+        "currency": "EUR"
+      },
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "AttributeIn",
+          "key": "product",
+          "values": [
+            "car"
+          ]
+        },
+        {
+          "type": "TagsMatch",
+          "all": [],
+          "any": [],
+          "none": [
+            "#partner"
+          ]
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 1000
+      }
+    },
+    {
+      "promotion_id": "TRANSFER-3",
+      "group_id": "campaigns",
+      "priority": 3,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "AttributeIn",
+          "key": "product",
+          "values": [
+            "transfer"
+          ]
+        },
+        {
+          "type": "MaxUsesTotal",
+          "max": 1000
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 300,
+          "currency": "EUR"
+        }
+      }
+    },
+    {
+      "promotion_id": "PARTNER-USD10",
+      "group_id": "partners",
+      "priority": 0,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "TagsMatch",
+          "all": [
+            "#partner"
+          ],
+          "any": [],
+          "none": []
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 1000,
+          "currency": "USD"
+        }
+      }
+    },
+    {
+      "promotion_id": "FLASH-48H",
+      "group_id": "campaigns",
+      "priority": 11,
+      "exclusive": false,
+      "cap": {
+        "amount": 2000,
+        "currency": "EUR"
+      },
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "TagsMatch",
+          "all": [
+            "#flash"
+          ],
+          "any": [],
+          "none": []
+        },
+        {
+          "type": "MaxUsesTotal",
+          "max": 3
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 2500
+      }
+    },
+    {
+      "promotion_id": "CARS-SPENT",
+      "group_id": "campaigns",
+      "priority": 2,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": {
+        "amount": 0,
+        "currency": "EUR"
+      },
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "AttributeIn",
+          "key": "product",
+          "values": [
+            "car"
+          ]
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 1000,
+          "currency": "EUR"
+        }
+      }
+    },
+    {
+      "promotion_id": "SPRING-SALE",
+      "group_id": "campaigns",
+      "priority": 1,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "DateWindow",
+          "starts_at": 1772323200,
+          "ends_at": 1780185600
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 1500
+      }
+    },
+    {
+      "promotion_id": "WINTER-SALE",
+      "group_id": "campaigns",
+      "priority": 1,
+      "exclusive": false,
+      "cap": {
+        "amount": 8000,
+        "currency": "EUR"
+      },
+      "remaining_budget": {
+        "amount": 1000000,
+        "currency": "EUR"
+      },
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "DateWindow",
+          "starts_at": 1796083200,
+          "ends_at": 1803772800
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 1500
+      }
+    },
+    {
+      "promotion_id": "BLACK-FRIDAY",
+      "group_id": "campaigns",
+      "priority": 30,
+      "exclusive": true,
+      "cap": {
+        "amount": 20000,
+        "currency": "EUR"
+      },
+      "remaining_budget": {
+        "amount": 2000000,
+        "currency": "EUR"
+      },
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "DateWindow",
+          "starts_at": 1795132800,
+          "ends_at": 1796083200
+        }
+      ],
+      "action": {
+        "type": "OrderPercentage",
+        "bps": 3000
+      }
+    },
+    {
+      "promotion_id": "LAST-CHANCE",
+      "group_id": "campaigns",
+      "priority": 2,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "DateWindow",
+          "starts_at": 1790812800,
+          "ends_at": 1792540800
+        },
+        {
+          "type": "OrderTotalRange",
+          "min": {
+            "amount": 10000,
+            "currency": "EUR"
+          },
+          "max": null
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 1000,
+          "currency": "EUR"
+        }
+      }
+    },
+    {
+      "promotion_id": "SORRY-10",
+      "group_id": "codes",
+      "priority": 8,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "RequiresCoupon"
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 1000,
+          "currency": "EUR"
+        }
+      }
+    },
+    {
+      "promotion_id": "THANKS-5",
+      "group_id": "codes",
+      "priority": 7,
+      "exclusive": false,
+      "cap": null,
+      "remaining_budget": null,
+      "uses_total": 0,
+      "rounding": null,
+      "rules": [
+        {
+          "type": "RequiresCoupon"
+        }
+      ],
+      "action": {
+        "type": "OrderFixedAmount",
+        "amount": {
+          "amount": 500,
+          "currency": "EUR"
+        }
+      }
+    }
+  ],
+  "coupons": [
+    {
+      "code": "WELCOME15",
+      "promotion_id": "WELCOME",
+      "starts_at": null,
+      "ends_at": null,
+      "customer_id": null,
+      "max_uses": null,
+      "uses": 0
+    },
+    {
+      "code": "WELCOME-GRACE",
+      "promotion_id": "WELCOME",
+      "starts_at": null,
+      "ends_at": null,
+      "customer_id": "grace",
+      "max_uses": 1,
+      "uses": 0
+    },
+    {
+      "code": "EARLYBIRD",
+      "promotion_id": "WELCOME",
+      "starts_at": 1772323200,
+      "ends_at": 1780185600,
+      "customer_id": "bob",
+      "max_uses": 1,
+      "uses": 0
+    },
+    {
+      "code": "XMAS-GRACE",
+      "promotion_id": "SORRY-10",
+      "starts_at": 1796083200,
+      "ends_at": 1799539200,
+      "customer_id": "grace",
+      "max_uses": 1,
+      "uses": 0
+    }
+  ],
+  "exchange_rates": [
+    {
+      "from": "USD",
+      "to": "EUR",
+      "numerator": 92,
+      "denominator": 100
+    },
+    {
+      "from": "GBP",
+      "to": "EUR",
+      "numerator": 115,
+      "denominator": 100
+    },
+    {
+      "from": "EUR",
+      "to": "USD",
+      "numerator": 109,
+      "denominator": 100
+    }
+  ],
+  "metadata": [
+    {
+      "promotion_id": "HOTELS-AUTUMN10",
+      "metadata": {
+        "title": "Autumn hotels 10 %",
+        "description": "10 % off every hotel booking until the end of the year, at most 50.00 EUR per order.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "acquisition",
+          "channel": "all",
+          "business_line": "hotels"
+        }
+      }
+    },
+    {
+      "promotion_id": "APP-5",
+      "metadata": {
+        "title": "App bonus 5 EUR",
+        "description": "5.00 EUR off any order placed in the iOS or Android app. Not for partner traffic.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "growth",
+          "aim": "app_adoption",
+          "channel": "app"
+        }
+      }
+    },
+    {
+      "promotion_id": "BIG-SPENDER",
+      "metadata": {
+        "title": "Big spender 15 %",
+        "description": "15 % off orders of 500.00 EUR and more, capped at 100.00 EUR.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "basket_size"
+        }
+      }
+    },
+    {
+      "promotion_id": "RESORT-WINTER",
+      "metadata": {
+        "title": "Resort winter escape",
+        "description": "12 % off resort and villa stays with check-in between mid-November and the end of January.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "seasonal",
+          "business_line": "hotels"
+        }
+      }
+    },
+    {
+      "promotion_id": "FIRST-ORDER",
+      "metadata": {
+        "title": "First booking 20 %",
+        "description": "20 % off the first order of a new customer, once, capped at 30.00 EUR.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "growth",
+          "aim": "acquisition"
+        }
+      }
+    },
+    {
+      "promotion_id": "GOLD-TIER",
+      "metadata": {
+        "title": "Gold members 8 %",
+        "description": "Loyalty perk for gold and platinum members; only one loyalty perk applies per order.",
+        "source": "loyalty",
+        "labels": {
+          "issuer": "crm",
+          "aim": "retention",
+          "tier": "gold"
+        }
+      }
+    },
+    {
+      "promotion_id": "SILVER-TIER",
+      "metadata": {
+        "title": "Silver members 4 %",
+        "description": "Loyalty perk for silver members.",
+        "source": "loyalty",
+        "labels": {
+          "issuer": "crm",
+          "aim": "retention",
+          "tier": "silver"
+        }
+      }
+    },
+    {
+      "promotion_id": "APP-FIRST-BOOKING",
+      "metadata": {
+        "title": "First app booking",
+        "description": "7.00 EUR off the first order a customer places in the app.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "growth",
+          "aim": "app_adoption",
+          "channel": "app"
+        }
+      }
+    },
+    {
+      "promotion_id": "WELCOME",
+      "metadata": {
+        "title": "Welcome code",
+        "description": "15.00 EUR off with the public WELCOME15 code or a single-use NEWS- code from the newsletter.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "crm",
+          "aim": "acquisition",
+          "channel": "newsletter"
+        }
+      }
+    },
+    {
+      "promotion_id": "VIP-CIRCLE",
+      "metadata": {
+        "title": "VIP circle",
+        "description": "25.00 EUR off every order for the hand-picked VIP customers on the allowlist.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "crm",
+          "aim": "retention",
+          "segment": "vip"
+        }
+      }
+    },
+    {
+      "promotion_id": "CARS-WEEKEND",
+      "metadata": {
+        "title": "Car rental weekend",
+        "description": "10 % off car rentals, capped at 40.00 EUR.",
+        "source": "cars",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "cross_sell",
+          "business_line": "cars"
+        }
+      }
+    },
+    {
+      "promotion_id": "TRANSFER-3",
+      "metadata": {
+        "title": "Airport transfer 3 EUR",
+        "description": "3.00 EUR off airport transfers for the first thousand orders.",
+        "source": "transfers",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "cross_sell",
+          "business_line": "transfers"
+        }
+      }
+    },
+    {
+      "promotion_id": "PARTNER-USD10",
+      "metadata": {
+        "title": "Partner traffic 10 USD",
+        "description": "10 USD off orders from partner sites; converted to the cart currency at the stored rate.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "partnerships",
+          "aim": "partner",
+          "channel": "partner"
+        }
+      }
+    },
+    {
+      "promotion_id": "FLASH-48H",
+      "metadata": {
+        "title": "Flash 48 h",
+        "description": "25 % off the first three flash orders, capped at 20.00 EUR.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "urgency"
+        }
+      }
+    },
+    {
+      "promotion_id": "CARS-SPENT",
+      "metadata": {
+        "title": "Cars 10 EUR (budget spent)",
+        "description": "10.00 EUR off car rentals; the budget is used up and nothing more applies until it is raised.",
+        "source": "cars",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "cross_sell",
+          "business_line": "cars"
+        }
+      }
+    },
+    {
+      "promotion_id": "SPRING-SALE",
+      "metadata": {
+        "title": "Spring sale 15 %",
+        "description": "Ran from March to May.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "seasonal"
+        }
+      }
+    },
+    {
+      "promotion_id": "WINTER-SALE",
+      "metadata": {
+        "title": "Winter sale 15 %",
+        "description": "December to February, capped at 80.00 EUR per order.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "seasonal"
+        }
+      }
+    },
+    {
+      "promotion_id": "BLACK-FRIDAY",
+      "metadata": {
+        "title": "Black Friday 30 %",
+        "description": "30 % off, exclusive: nothing else applies while it does. Capped at 200.00 EUR per order.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "peak",
+          "channel": "all"
+        }
+      }
+    },
+    {
+      "promotion_id": "LAST-CHANCE",
+      "metadata": {
+        "title": "Last chance 10 EUR",
+        "description": "10.00 EUR off orders of 100.00 EUR and more; ends in a few days.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "marketing",
+          "aim": "urgency"
+        }
+      }
+    },
+    {
+      "promotion_id": "SORRY-10",
+      "metadata": {
+        "title": "Apology code",
+        "description": "10.00 EUR issued by support to a customer whose order was cancelled; single use, 30 days.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "support",
+          "aim": "recovery",
+          "channel": "support"
+        }
+      }
+    },
+    {
+      "promotion_id": "THANKS-5",
+      "metadata": {
+        "title": "Review thank-you",
+        "description": "5.00 EUR issued when a customer leaves a review; single use, 90 days.",
+        "source": "hotels",
+        "labels": {
+          "issuer": "crm",
+          "aim": "reviews"
+        }
+      }
+    }
+  ],
+  "allowlists": [
+    {
+      "promotion_id": "VIP-CIRCLE",
+      "customer_ids": [
+        "ann",
+        "grace"
+      ]
+    }
+  ],
+  "grant_rules": [
+    {
+      "rule_id": "cancel-sorry",
+      "trigger": "cancel",
+      "promotion_id": "SORRY-10",
+      "priority": 10,
+      "validity_seconds": 2592000,
+      "max_uses": 1
+    },
+    {
+      "rule_id": "review-thanks",
+      "trigger": "review",
+      "promotion_id": "THANKS-5",
+      "priority": 10,
+      "validity_seconds": 7776000,
+      "max_uses": 1
+    }
+  ]
+}

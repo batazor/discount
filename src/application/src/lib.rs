@@ -7,6 +7,7 @@
 pub mod coupons;
 pub mod customer_coupons;
 pub mod evaluate;
+pub mod exchange_rates;
 pub mod ports;
 
 pub use coupons::{
@@ -20,8 +21,13 @@ pub use evaluate::{
     CancelRedemption, ConfirmRedemption, Evaluate, EvaluateError, Redeem, merge_allowlisted,
     pricing_input,
 };
+pub use exchange_rates::{
+    ExchangeRateSourceStatus, FetchReport, RefreshError, RefreshExchangeRates, fetch_due, is_stale,
+    parse_rate_table, rates_age, source_status,
+};
 pub use ports::{
-    CatalogSnapshot, Clock, Event, EventPublisher, PricingFn, PromotionCatalog, Redemption,
-    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError,
+    CatalogSnapshot, Clock, Event, EventPublisher, ExchangeRateSource, ExchangeRateSourceRecord,
+    FetchOutcome, PricingFn, PromotionCatalog, RateFetcher, Redemption, RedemptionError,
+    RedemptionRepository, RedemptionStatus, ReserveOutcome, SourcePair, StorageError,
     transition_allowed,
 };
