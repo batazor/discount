@@ -133,6 +133,10 @@ each promotion at most once): how many times this customer already used each pro
 promotions whose allowlist names this customer, read by `RequiresAllowlist`. The application
 layer fills `uses` from reserved and confirmed redemptions and adds to `allowlisted` the
 promotions whose stored allowlist contains `customer_id`.
+Every caller of this service identifies the customer (decision of 2026-10-18: there are no
+anonymous customers); `customer_id` stays an `Option` in the model only so that historical
+inputs and dry runs without a customer keep decoding. Device ids and e-mail binding of codes
+are therefore not planned.
 JSON: `{"customer_id": "c1", "completed_orders": 0, "uses": [{"promotion_id": "P1", "count": 1}], "attributes": [{"key": "tier", "value": "gold"}], "allowlisted": ["P1"]}`.
 
 ## Stacking groups
