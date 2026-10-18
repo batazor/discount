@@ -1,0 +1,13 @@
+[package]
+name = "xtask"
+description = "cargo xtask: developer commands that need Docker or a running service (ADR 13)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+libc = "0.2"
+serde_json.workspace = true
+ureq = { version = "3", features = ["json"] }

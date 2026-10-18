@@ -412,7 +412,7 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
   `labels` is a small string map of reporting dimensions.
 - `Tenant`: one consumer system (a storefront, a business line) with its own policy,
   catalogue and redemptions; every stored record belongs to exactly one tenant and every
-  store handle is bound to one (OpenSpec `access-control`, ADR 12). `default` is the tenant
+  store handle is bound to one (OpenSpec `access-control`, ADR 13). `default` is the tenant
   of unauthenticated local runs and of data that predates tenancy.
 - `Principal { tenant_id, scopes, subject }`: who is calling, resolved from a bearer JWT
   issued by a configured OIDC issuer; `Scope` is one of `discount:pricing`,
@@ -439,7 +439,10 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
 
 Names the service emits over OpenTelemetry. They reuse the domain vocabulary above and are
 the contract the Grafana dashboards depend on (OpenSpec change `otel-grafana-observability`).
-`src/infrastructure/src/telemetry.rs` keeps the same list as constants; a test checks the two agree.
+The machine-readable form is the Weaver registry `api/telemetry/` (ADR 13): types, units,
+enum members and requirement levels live there, `cargo xtask weaver check` validates it and
+`cargo xtask live-check` compares a running service with it. `src/infrastructure/src/telemetry.rs`
+keeps the same list as constants; tests check that the three agree.
 
 - Resource: `service.name` = `discount`, `service.version`, `deployment.environment`.
 - HTTP server span, named `<METHOD> <route template>` (`POST /v1/evaluate`,
@@ -449,7 +452,7 @@ the contract the Grafana dashboards depend on (OpenSpec change `otel-grafana-obs
   (including `422` pricing rejections) leaves it unset. `GET /healthz` is not traced. An
   incoming W3C `traceparent` makes the server span a child of the caller's span.
 - Spans `db.<method>` (kind `client`, one per Postgres repository call such as
-  `db.reserve`, `db.get_policy`) with `db.system` = `postgresql` and `db.operation.name` =
+  `db.reserve`, `db.get_policy`) with `db.system.name` = `postgresql` and `db.operation.name` =
   `<method>`; a storage failure sets the status to `Error`. The in-memory store emits none.
 - Span `discount.evaluate` (child of the HTTP server span) with attributes
   `discount.currency`, `discount.lines`, `discount.promotions`, `discount.applied`,
@@ -473,5 +476,8 @@ the contract the Grafana dashboards depend on (OpenSpec change `otel-grafana-obs
 - Span `discount.exchange_rates.fetch` (one per fetch of the exchange-rate source) with
   `discount.source.url` (the URL without its query string), `discount.pairs` (pairs the
   provider produced) and, on error, `discount.error_type` (`SourceUnavailable`, `Storage`).
-- One log record per evaluation, `INFO` on success and `WARN` on a pricing error, carrying
-  `outcome`, `total_discount` and the trace and span ids of `discount.evaluate`.
+- One log record per evaluation, the event `discount.evaluation`, `INFO` on success and
+  `WARN` on a pricing error (`ERROR` on a storage failure), carrying `outcome`,
+  `total_discount`, `original_subtotal`, `applied`, `skipped` (or `error_type`) and the trace
+  and span ids of `discount.evaluate`. Log records without an event name are operational
+  (start-up, budget refresh) and not part of the contract.

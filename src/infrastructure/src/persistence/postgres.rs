@@ -127,7 +127,7 @@ impl Tenancy for PgTenants {
         Arc::new(self.store(tenant_id))
     }
 
-    #[tracing::instrument(name = "db.list_tenants", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_tenants"))]
+    #[tracing::instrument(name = "db.list_tenants", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "list_tenants"))]
     async fn list_tenants(&self) -> Result<Vec<Tenant>, StorageError> {
         sqlx::query("SELECT tenant_id, name, created_at FROM tenants ORDER BY tenant_id")
             .fetch_all(&self.pool)
@@ -138,7 +138,7 @@ impl Tenancy for PgTenants {
             .collect()
     }
 
-    #[tracing::instrument(name = "db.get_tenant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_tenant"))]
+    #[tracing::instrument(name = "db.get_tenant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_tenant"))]
     async fn get_tenant(&self, tenant_id: &str) -> Result<Option<Tenant>, StorageError> {
         sqlx::query("SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = $1")
             .bind(tenant_id)
@@ -149,7 +149,7 @@ impl Tenancy for PgTenants {
             .transpose()
     }
 
-    #[tracing::instrument(name = "db.put_tenant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_tenant"))]
+    #[tracing::instrument(name = "db.put_tenant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_tenant"))]
     async fn put_tenant(&self, tenant: Tenant) -> Result<(), StorageError> {
         sqlx::query("INSERT INTO tenants (tenant_id, name, created_at) VALUES ($1, $2, $3) ON CONFLICT (tenant_id) DO UPDATE SET name = $2")
             .bind(&tenant.tenant_id)
@@ -161,7 +161,7 @@ impl Tenancy for PgTenants {
         self.seed_policy(&tenant.tenant_id).await
     }
 
-    #[tracing::instrument(name = "db.delete_tenant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_tenant"))]
+    #[tracing::instrument(name = "db.delete_tenant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "delete_tenant"))]
     async fn delete_tenant(&self, tenant_id: &str) -> Result<bool, StorageError> {
         let redemptions: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM redemptions WHERE tenant_id = $1")
@@ -468,7 +468,7 @@ impl PgStore {
 
 #[async_trait]
 impl PromotionCatalog for PgStore {
-    #[tracing::instrument(name = "db.snapshot", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "snapshot"))]
+    #[tracing::instrument(name = "db.snapshot", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "snapshot"))]
     async fn snapshot(&self) -> Result<CatalogSnapshot, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
         let (snapshot, _) = PgStore::snapshot_in(&mut tx, &self.tenant, false, true)
@@ -478,7 +478,7 @@ impl PromotionCatalog for PgStore {
         Ok(snapshot)
     }
 
-    #[tracing::instrument(name = "db.get_policy", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_policy"))]
+    #[tracing::instrument(name = "db.get_policy", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_policy"))]
     async fn get_policy(&self) -> Result<PricingPolicy, StorageError> {
         let j: Json<PricingPolicy> =
             sqlx::query("SELECT body FROM pricing_policy WHERE tenant_id = $1")
@@ -491,7 +491,7 @@ impl PromotionCatalog for PgStore {
         Ok(j.0)
     }
 
-    #[tracing::instrument(name = "db.put_policy", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_policy"))]
+    #[tracing::instrument(name = "db.put_policy", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_policy"))]
     async fn put_policy(&self, policy: PricingPolicy) -> Result<(), StorageError> {
         sqlx::query("INSERT INTO pricing_policy (tenant_id, body, updated_at) VALUES ($1, $2, $3) ON CONFLICT (tenant_id) DO UPDATE SET body = $2, updated_at = $3")
             .bind(&self.tenant)
@@ -503,7 +503,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.list_groups", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_groups"))]
+    #[tracing::instrument(name = "db.list_groups", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "list_groups"))]
     async fn list_groups(&self) -> Result<Vec<StackingGroup>, StorageError> {
         sqlx::query("SELECT body FROM stacking_groups WHERE tenant_id = $1 ORDER BY group_id")
             .bind(&self.tenant)
@@ -519,7 +519,7 @@ impl PromotionCatalog for PgStore {
             .collect()
     }
 
-    #[tracing::instrument(name = "db.get_group", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_group"))]
+    #[tracing::instrument(name = "db.get_group", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_group"))]
     async fn get_group(&self, group_id: &str) -> Result<Option<StackingGroup>, StorageError> {
         let row =
             sqlx::query("SELECT body FROM stacking_groups WHERE tenant_id = $1 AND group_id = $2")
@@ -536,7 +536,7 @@ impl PromotionCatalog for PgStore {
         .transpose()
     }
 
-    #[tracing::instrument(name = "db.put_group", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_group"))]
+    #[tracing::instrument(name = "db.put_group", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_group"))]
     async fn put_group(&self, group: StackingGroup) -> Result<(), StorageError> {
         sqlx::query("INSERT INTO stacking_groups (tenant_id, group_id, body, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, group_id) DO UPDATE SET body = $3, updated_at = $4")
             .bind(&self.tenant)
@@ -549,7 +549,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.delete_group", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_group"))]
+    #[tracing::instrument(name = "db.delete_group", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "delete_group"))]
     async fn delete_group(&self, group_id: &str) -> Result<bool, StorageError> {
         let r = sqlx::query("DELETE FROM stacking_groups WHERE tenant_id = $1 AND group_id = $2")
             .bind(&self.tenant)
@@ -560,12 +560,12 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.list_promotions", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_promotions"))]
+    #[tracing::instrument(name = "db.list_promotions", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "list_promotions"))]
     async fn list_promotions(&self) -> Result<Vec<Promotion>, StorageError> {
         Ok(self.listing().await?.promotions)
     }
 
-    #[tracing::instrument(name = "db.get_promotion", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_promotion"))]
+    #[tracing::instrument(name = "db.get_promotion", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_promotion"))]
     async fn get_promotion(&self, promotion_id: &str) -> Result<Option<Promotion>, StorageError> {
         let row = sqlx::query(
             "SELECT p.body, b.remaining, b.currency FROM promotions p LEFT JOIN promotion_budgets b USING (tenant_id, promotion_id) \
@@ -594,7 +594,7 @@ impl PromotionCatalog for PgStore {
         }
     }
 
-    #[tracing::instrument(name = "db.put_promotion", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_promotion"))]
+    #[tracing::instrument(name = "db.put_promotion", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_promotion"))]
     async fn put_promotion(&self, mut promotion: Promotion) -> Result<(), StorageError> {
         promotion.remaining_budget = None;
         let now = epoch();
@@ -612,7 +612,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.archive_promotion", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "archive_promotion"))]
+    #[tracing::instrument(name = "db.archive_promotion", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "archive_promotion"))]
     async fn archive_promotion(&self, promotion_id: &str) -> Result<bool, StorageError> {
         let r = sqlx::query("UPDATE promotions SET archived = TRUE, updated_at = $3 WHERE tenant_id = $1 AND promotion_id = $2 AND NOT archived")
             .bind(&self.tenant)
@@ -624,7 +624,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.get_budget", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_budget"))]
+    #[tracing::instrument(name = "db.get_budget", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_budget"))]
     async fn get_budget(&self, promotion_id: &str) -> Result<Option<Option<Money>>, StorageError> {
         let row = sqlx::query(
             "SELECT b.remaining, b.currency FROM promotions p LEFT JOIN promotion_budgets b USING (tenant_id, promotion_id) \
@@ -651,7 +651,7 @@ impl PromotionCatalog for PgStore {
         }
     }
 
-    #[tracing::instrument(name = "db.put_budget", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_budget"))]
+    #[tracing::instrument(name = "db.put_budget", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_budget"))]
     async fn put_budget(
         &self,
         promotion_id: &str,
@@ -694,7 +694,7 @@ impl PromotionCatalog for PgStore {
         Ok(true)
     }
 
-    #[tracing::instrument(name = "db.list_budgets", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_budgets"))]
+    #[tracing::instrument(name = "db.list_budgets", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "list_budgets"))]
     async fn list_budgets(&self) -> Result<Vec<(PromotionId, Money)>, StorageError> {
         sqlx::query("SELECT promotion_id, remaining, currency FROM promotion_budgets WHERE tenant_id = $1 ORDER BY promotion_id")
             .bind(&self.tenant)
@@ -714,12 +714,12 @@ impl PromotionCatalog for PgStore {
             .collect()
     }
 
-    #[tracing::instrument(name = "db.list_coupons", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_coupons"))]
+    #[tracing::instrument(name = "db.list_coupons", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "list_coupons"))]
     async fn list_coupons(&self) -> Result<Vec<Coupon>, StorageError> {
         Ok(self.listing().await?.coupons)
     }
 
-    #[tracing::instrument(name = "db.get_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_coupon"))]
+    #[tracing::instrument(name = "db.get_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_coupon"))]
     async fn get_coupon(&self, code: &str) -> Result<Option<Coupon>, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
         let c = PgStore::coupon_in(&mut tx, &self.tenant, code)
@@ -729,7 +729,7 @@ impl PromotionCatalog for PgStore {
         Ok(c)
     }
 
-    #[tracing::instrument(name = "db.put_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_coupon"))]
+    #[tracing::instrument(name = "db.put_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_coupon"))]
     async fn put_coupon(&self, coupon: Coupon) -> Result<(), StorageError> {
         sqlx::query("INSERT INTO coupons (tenant_id, code, body, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, code) DO UPDATE SET body = $3, updated_at = $4")
             .bind(&self.tenant)
@@ -742,7 +742,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.delete_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_coupon"))]
+    #[tracing::instrument(name = "db.delete_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "delete_coupon"))]
     async fn delete_coupon(&self, code: &str) -> Result<bool, StorageError> {
         let r = sqlx::query("DELETE FROM coupons WHERE tenant_id = $1 AND code = $2")
             .bind(&self.tenant)
@@ -753,12 +753,12 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.list_rates", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_rates"))]
+    #[tracing::instrument(name = "db.list_rates", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "list_rates"))]
     async fn list_rates(&self) -> Result<Vec<ExchangeRate>, StorageError> {
         Ok(self.snapshot().await?.exchange_rates)
     }
 
-    #[tracing::instrument(name = "db.put_rate", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_rate"))]
+    #[tracing::instrument(name = "db.put_rate", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_rate"))]
     async fn put_rate(&self, rate: ExchangeRate) -> Result<(), StorageError> {
         sqlx::query(
             "INSERT INTO exchange_rates (tenant_id, from_currency, to_currency, numerator, denominator, updated_at, origin, fetched_at) VALUES ($1, $2, $3, $4, $5, $6, 'manual', NULL) \
@@ -776,7 +776,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.delete_rate", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_rate"))]
+    #[tracing::instrument(name = "db.delete_rate", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "delete_rate"))]
     async fn delete_rate(&self, from: &str, to: &str) -> Result<bool, StorageError> {
         let r = sqlx::query("DELETE FROM exchange_rates WHERE tenant_id = $1 AND from_currency = $2 AND to_currency = $3")
             .bind(&self.tenant)
@@ -788,7 +788,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.get_rate_source", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_rate_source"))]
+    #[tracing::instrument(name = "db.get_rate_source", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_rate_source"))]
     async fn get_rate_source(&self) -> Result<Option<ExchangeRateSourceRecord>, StorageError> {
         let row = sqlx::query("SELECT body, updated_at, last_attempt_at, last_success_at, last_error, last_count FROM exchange_rate_source WHERE tenant_id = $1")
             .bind(&self.tenant)
@@ -809,7 +809,7 @@ impl PromotionCatalog for PgStore {
         .transpose()
     }
 
-    #[tracing::instrument(name = "db.put_rate_source", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_rate_source"))]
+    #[tracing::instrument(name = "db.put_rate_source", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_rate_source"))]
     async fn put_rate_source(
         &self,
         source: ExchangeRateSource,
@@ -825,7 +825,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.delete_rate_source", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_rate_source"))]
+    #[tracing::instrument(name = "db.delete_rate_source", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "delete_rate_source"))]
     async fn delete_rate_source(&self) -> Result<bool, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
         sqlx::query("UPDATE exchange_rates SET origin = 'manual', fetched_at = NULL WHERE tenant_id = $1 AND origin = 'source'")
@@ -842,7 +842,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.record_rate_fetch", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "record_rate_fetch"))]
+    #[tracing::instrument(name = "db.record_rate_fetch", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "record_rate_fetch"))]
     async fn record_rate_fetch(
         &self,
         now: Timestamp,
@@ -862,7 +862,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.put_fetched_rates", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_fetched_rates"))]
+    #[tracing::instrument(name = "db.put_fetched_rates", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_fetched_rates"))]
     async fn put_fetched_rates(
         &self,
         rates: Vec<ExchangeRate>,
@@ -890,7 +890,7 @@ impl PromotionCatalog for PgStore {
         Ok(stored)
     }
 
-    #[tracing::instrument(name = "db.list_source_pairs", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_source_pairs"))]
+    #[tracing::instrument(name = "db.list_source_pairs", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "list_source_pairs"))]
     async fn list_source_pairs(&self) -> Result<Vec<SourcePair>, StorageError> {
         sqlx::query("SELECT from_currency, to_currency, fetched_at FROM exchange_rates WHERE tenant_id = $1 AND origin = 'source' ORDER BY from_currency, to_currency")
             .bind(&self.tenant)
@@ -908,7 +908,7 @@ impl PromotionCatalog for PgStore {
             .collect()
     }
 
-    #[tracing::instrument(name = "db.list_grant_rules", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_grant_rules"))]
+    #[tracing::instrument(name = "db.list_grant_rules", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "list_grant_rules"))]
     async fn list_grant_rules(&self) -> Result<Vec<GrantRule>, StorageError> {
         sqlx::query("SELECT body FROM grant_rules WHERE tenant_id = $1 ORDER BY rule_id")
             .bind(&self.tenant)
@@ -920,7 +920,7 @@ impl PromotionCatalog for PgStore {
             .collect()
     }
 
-    #[tracing::instrument(name = "db.get_grant_rule", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_grant_rule"))]
+    #[tracing::instrument(name = "db.get_grant_rule", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_grant_rule"))]
     async fn get_grant_rule(&self, rule_id: &str) -> Result<Option<GrantRule>, StorageError> {
         sqlx::query("SELECT body FROM grant_rules WHERE tenant_id = $1 AND rule_id = $2")
             .bind(&self.tenant)
@@ -932,7 +932,7 @@ impl PromotionCatalog for PgStore {
             .transpose()
     }
 
-    #[tracing::instrument(name = "db.put_grant_rule", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_grant_rule"))]
+    #[tracing::instrument(name = "db.put_grant_rule", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_grant_rule"))]
     async fn put_grant_rule(&self, rule: GrantRule) -> Result<(), StorageError> {
         sqlx::query("INSERT INTO grant_rules (tenant_id, rule_id, body, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, rule_id) DO UPDATE SET body = $3, updated_at = $4")
             .bind(&self.tenant)
@@ -945,7 +945,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.delete_grant_rule", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_grant_rule"))]
+    #[tracing::instrument(name = "db.delete_grant_rule", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "delete_grant_rule"))]
     async fn delete_grant_rule(&self, rule_id: &str) -> Result<bool, StorageError> {
         let r = sqlx::query("DELETE FROM grant_rules WHERE tenant_id = $1 AND rule_id = $2")
             .bind(&self.tenant)
@@ -956,7 +956,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.put_coupons", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_coupons"))]
+    #[tracing::instrument(name = "db.put_coupons", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_coupons"))]
     async fn put_coupons(&self, coupons: Vec<Coupon>) -> Result<(), StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
         let now = epoch();
@@ -977,7 +977,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.get_grant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_grant"))]
+    #[tracing::instrument(name = "db.get_grant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_grant"))]
     async fn get_grant(
         &self,
         trigger: GrantTrigger,
@@ -1006,7 +1006,7 @@ impl PromotionCatalog for PgStore {
         Ok(c)
     }
 
-    #[tracing::instrument(name = "db.record_grant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "record_grant"))]
+    #[tracing::instrument(name = "db.record_grant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "record_grant"))]
     async fn record_grant(
         &self,
         trigger: GrantTrigger,
@@ -1058,7 +1058,7 @@ impl PromotionCatalog for PgStore {
         Ok(coupon)
     }
 
-    #[tracing::instrument(name = "db.coupons_bound_to", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "coupons_bound_to"))]
+    #[tracing::instrument(name = "db.coupons_bound_to", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "coupons_bound_to"))]
     async fn coupons_bound_to(&self, customer_id: &str) -> Result<Vec<Coupon>, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
         let mut coupons = sqlx::query("SELECT body FROM coupons WHERE tenant_id = $1 AND body ->> 'customer_id' = $2 ORDER BY code")
@@ -1082,7 +1082,7 @@ impl PromotionCatalog for PgStore {
         Ok(coupons)
     }
 
-    #[tracing::instrument(name = "db.saved_codes", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "saved_codes"))]
+    #[tracing::instrument(name = "db.saved_codes", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "saved_codes"))]
     async fn saved_codes(&self, customer_id: &str) -> Result<Vec<String>, StorageError> {
         sqlx::query("SELECT code FROM saved_coupons WHERE tenant_id = $1 AND customer_id = $2 ORDER BY code")
             .bind(&self.tenant)
@@ -1095,7 +1095,7 @@ impl PromotionCatalog for PgStore {
             .collect()
     }
 
-    #[tracing::instrument(name = "db.save_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "save_coupon"))]
+    #[tracing::instrument(name = "db.save_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "save_coupon"))]
     async fn save_coupon(&self, customer_id: &str, code: &str) -> Result<(), StorageError> {
         sqlx::query("INSERT INTO saved_coupons (tenant_id, customer_id, code, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING")
             .bind(&self.tenant)
@@ -1108,7 +1108,7 @@ impl PromotionCatalog for PgStore {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.forget_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "forget_coupon"))]
+    #[tracing::instrument(name = "db.forget_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "forget_coupon"))]
     async fn forget_coupon(&self, customer_id: &str, code: &str) -> Result<bool, StorageError> {
         let r = sqlx::query(
             "DELETE FROM saved_coupons WHERE tenant_id = $1 AND customer_id = $2 AND code = $3",
@@ -1122,7 +1122,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.get_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_metadata"))]
+    #[tracing::instrument(name = "db.get_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_metadata"))]
     async fn get_metadata(
         &self,
         promotion_id: &str,
@@ -1140,7 +1140,7 @@ impl PromotionCatalog for PgStore {
         .transpose()
     }
 
-    #[tracing::instrument(name = "db.put_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_metadata"))]
+    #[tracing::instrument(name = "db.put_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_metadata"))]
     async fn put_metadata(
         &self,
         promotion_id: &str,
@@ -1161,7 +1161,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.delete_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_metadata"))]
+    #[tracing::instrument(name = "db.delete_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "delete_metadata"))]
     async fn delete_metadata(&self, promotion_id: &str) -> Result<bool, StorageError> {
         let r = sqlx::query(
             "DELETE FROM promotion_metadata WHERE tenant_id = $1 AND promotion_id = $2",
@@ -1174,7 +1174,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.list_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_metadata"))]
+    #[tracing::instrument(name = "db.list_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "list_metadata"))]
     async fn list_metadata(&self) -> Result<Vec<(PromotionId, PromotionMetadata)>, StorageError> {
         sqlx::query(
             "SELECT m.promotion_id, m.body FROM promotion_metadata m JOIN promotions p USING (tenant_id, promotion_id) \
@@ -1194,7 +1194,7 @@ impl PromotionCatalog for PgStore {
         .collect()
     }
 
-    #[tracing::instrument(name = "db.get_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_allowlist"))]
+    #[tracing::instrument(name = "db.get_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_allowlist"))]
     async fn get_allowlist(&self, promotion_id: &str) -> Result<Option<Vec<String>>, StorageError> {
         if !self.promotion_live(promotion_id).await? {
             return Ok(None);
@@ -1208,7 +1208,7 @@ impl PromotionCatalog for PgStore {
         Ok(Some(ids))
     }
 
-    #[tracing::instrument(name = "db.put_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_allowlist"))]
+    #[tracing::instrument(name = "db.put_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "put_allowlist"))]
     async fn put_allowlist(
         &self,
         promotion_id: &str,
@@ -1247,7 +1247,7 @@ impl PromotionCatalog for PgStore {
         Ok(true)
     }
 
-    #[tracing::instrument(name = "db.delete_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_allowlist"))]
+    #[tracing::instrument(name = "db.delete_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "delete_allowlist"))]
     async fn delete_allowlist(&self, promotion_id: &str) -> Result<bool, StorageError> {
         if !self.promotion_live(promotion_id).await? {
             return Ok(false);
@@ -1261,7 +1261,7 @@ impl PromotionCatalog for PgStore {
         Ok(true)
     }
 
-    #[tracing::instrument(name = "db.add_to_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "add_to_allowlist"))]
+    #[tracing::instrument(name = "db.add_to_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "add_to_allowlist"))]
     async fn add_to_allowlist(
         &self,
         promotion_id: &str,
@@ -1282,7 +1282,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.remove_from_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "remove_from_allowlist"))]
+    #[tracing::instrument(name = "db.remove_from_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "remove_from_allowlist"))]
     async fn remove_from_allowlist(
         &self,
         promotion_id: &str,
@@ -1298,7 +1298,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.is_allowlisted", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "is_allowlisted"))]
+    #[tracing::instrument(name = "db.is_allowlisted", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "is_allowlisted"))]
     async fn is_allowlisted(
         &self,
         promotion_id: &str,
@@ -1317,7 +1317,7 @@ impl PromotionCatalog for PgStore {
         Ok(hit.is_some())
     }
 
-    #[tracing::instrument(name = "db.allowlisted_for", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "allowlisted_for"))]
+    #[tracing::instrument(name = "db.allowlisted_for", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "allowlisted_for"))]
     async fn allowlisted_for(&self, customer_id: &str) -> Result<Vec<PromotionId>, StorageError> {
         sqlx::query_scalar(
             "SELECT a.promotion_id FROM promotion_allowlist a JOIN promotions p USING (tenant_id, promotion_id) \
@@ -1329,7 +1329,7 @@ impl PromotionCatalog for PgStore {
         .await
         .map_err(storage)
     }
-    #[tracing::instrument(name = "db.get_promotion_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_promotion_state"))]
+    #[tracing::instrument(name = "db.get_promotion_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_promotion_state"))]
     async fn get_promotion_state(
         &self,
         promotion_id: &str,
@@ -1343,7 +1343,7 @@ impl PromotionCatalog for PgStore {
         Ok(state.and_then(|s| CatalogState::parse(&s)))
     }
 
-    #[tracing::instrument(name = "db.set_promotion_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "set_promotion_state"))]
+    #[tracing::instrument(name = "db.set_promotion_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "set_promotion_state"))]
     async fn set_promotion_state(
         &self,
         promotion_id: &str,
@@ -1360,7 +1360,7 @@ impl PromotionCatalog for PgStore {
         Ok(r.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "db.get_coupon_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_coupon_state"))]
+    #[tracing::instrument(name = "db.get_coupon_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get_coupon_state"))]
     async fn get_coupon_state(&self, code: &str) -> Result<Option<CatalogState>, StorageError> {
         let state: Option<String> =
             sqlx::query_scalar("SELECT state FROM coupons WHERE tenant_id = $1 AND code = $2")
@@ -1372,7 +1372,7 @@ impl PromotionCatalog for PgStore {
         Ok(state.and_then(|s| CatalogState::parse(&s)))
     }
 
-    #[tracing::instrument(name = "db.set_coupon_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "set_coupon_state"))]
+    #[tracing::instrument(name = "db.set_coupon_state", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "set_coupon_state"))]
     async fn set_coupon_state(
         &self,
         code: &str,
@@ -1394,7 +1394,7 @@ impl PromotionCatalog for PgStore {
 
 #[async_trait]
 impl RedemptionRepository for PgStore {
-    #[tracing::instrument(name = "db.reserve", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "reserve"))]
+    #[tracing::instrument(name = "db.reserve", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "reserve"))]
     async fn reserve(
         &self,
         order_id: &str,
@@ -1462,7 +1462,7 @@ impl RedemptionRepository for PgStore {
         }))
     }
 
-    #[tracing::instrument(name = "db.transition", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "transition"))]
+    #[tracing::instrument(name = "db.transition", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "transition"))]
     async fn transition(
         &self,
         order_id: &str,
@@ -1511,7 +1511,7 @@ impl RedemptionRepository for PgStore {
         Ok(current)
     }
 
-    #[tracing::instrument(name = "db.uses_for_customer", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "uses_for_customer"))]
+    #[tracing::instrument(name = "db.uses_for_customer", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "uses_for_customer"))]
     async fn uses_for_customer(&self, customer_id: &str) -> Result<Uses, RedemptionError> {
         let mut tx = self.pool.begin().await.map_err(redemption_storage)?;
         let uses = PgStore::uses_in(&mut tx, &self.tenant, customer_id)
@@ -1521,7 +1521,7 @@ impl RedemptionRepository for PgStore {
         Ok(uses)
     }
 
-    #[tracing::instrument(name = "db.counters", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "counters"))]
+    #[tracing::instrument(name = "db.counters", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "counters"))]
     async fn counters(&self, codes: &[String]) -> Result<Counters, RedemptionError> {
         let mut tx = self.pool.begin().await.map_err(redemption_storage)?;
         let c = PgStore::counters_in(&mut tx, &self.tenant, Some(codes))
@@ -1531,7 +1531,7 @@ impl RedemptionRepository for PgStore {
         Ok(c)
     }
 
-    #[tracing::instrument(name = "db.coupon_uses_of_customer", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "coupon_uses_of_customer"))]
+    #[tracing::instrument(name = "db.coupon_uses_of_customer", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "coupon_uses_of_customer"))]
     async fn coupon_uses_of_customer(
         &self,
         customer_id: &str,
@@ -1555,7 +1555,7 @@ impl RedemptionRepository for PgStore {
         .map_err(redemption_storage)
     }
 
-    #[tracing::instrument(name = "db.get", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get"))]
+    #[tracing::instrument(name = "db.get", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system.name = "postgresql", db.operation.name = "get"))]
     async fn get(&self, order_id: &str) -> Result<Option<Redemption>, RedemptionError> {
         let row = sqlx::query("SELECT order_id, customer_id, status, input, result, created_at, updated_at FROM redemptions WHERE tenant_id = $1 AND order_id = $2")
         .bind(&self.tenant)

@@ -64,13 +64,16 @@ pub const SPAN_RATE_FETCH: &str = "discount.exchange_rates.fetch";
 pub const SPAN_ATTR_SOURCE_URL: &str = "discount.source.url";
 pub const SPAN_ATTR_PAIRS: &str = "discount.pairs";
 
+/// Name of the one log record (OpenTelemetry event) per evaluation.
+pub const EVENT_EVALUATION: &str = "discount.evaluation";
+
 /// HTTP server span attributes (OpenTelemetry HTTP semantic conventions).
 pub const SPAN_ATTR_HTTP_ROUTE: &str = "http.route";
 pub const SPAN_ATTR_HTTP_STATUS: &str = "http.response.status_code";
 
 /// Database spans: `db.<repository method>` on the Postgres store (`persistence/postgres.rs`).
 pub const SPAN_DB_PREFIX: &str = "db.";
-pub const SPAN_ATTR_DB_SYSTEM: &str = "db.system";
+pub const SPAN_ATTR_DB_SYSTEM: &str = "db.system.name";
 pub const SPAN_ATTR_DB_OPERATION: &str = "db.operation.name";
 
 /// Bucket boundaries of `discount.share.bps` (basis points of the subtotal).
@@ -78,8 +81,9 @@ pub const SHARE_BPS_BOUNDARIES: [f64; 11] = [
     0.0, 100.0, 250.0, 500.0, 1000.0, 1500.0, 2000.0, 3000.0, 5000.0, 7500.0, 10000.0,
 ];
 
-/// Every name a dashboard may rely on; `docs/ubiquitous-language.md` lists the same set.
-pub const VOCABULARY: [&str; 24] = [
+/// Every name a dashboard may rely on; `docs/ubiquitous-language.md` and the Weaver
+/// registry `api/telemetry/discount.yaml` list the same set (ADR 13).
+pub const VOCABULARY: [&str; 25] = [
     SPAN_DB_PREFIX,
     SPAN_ATTR_DB_SYSTEM,
     SPAN_ATTR_DB_OPERATION,
@@ -103,6 +107,7 @@ pub const VOCABULARY: [&str; 24] = [
     ATTR_CURRENCY,
     SPAN_EVALUATE,
     SPAN_ATTR_ERROR_TYPE,
+    EVENT_EVALUATION,
     SERVICE_NAME,
 ];
 
@@ -430,11 +435,12 @@ impl Instruments {
                 span.record(SPAN_ATTR_ORIGINAL_SUBTOTAL, r.original_subtotal.amount);
                 span.record(SPAN_ATTR_TOTAL_DISCOUNT, r.total_discount.amount);
                 tracing::info!(
+                    name: EVENT_EVALUATION,
                     outcome = "ok",
                     total_discount = r.total_discount.amount,
                     original_subtotal = r.original_subtotal.amount,
-                    applied = r.applied.len(),
-                    skipped = r.skipped.len(),
+                    applied = r.applied.len() as i64,
+                    skipped = r.skipped.len() as i64,
                     "evaluation"
                 );
             }
@@ -450,7 +456,7 @@ impl Instruments {
                     &[KeyValue::new(ATTR_OUTCOME, "error")],
                 );
                 span.record(SPAN_ATTR_ERROR_TYPE, et);
-                tracing::warn!(outcome = "error", error_type = et, "evaluation rejected");
+                tracing::warn!(name: EVENT_EVALUATION, outcome = "error", error_type = et, "evaluation rejected");
             }
             Err(EvaluateError::Storage(e)) => {
                 let err = [
@@ -463,7 +469,7 @@ impl Instruments {
                     &[KeyValue::new(ATTR_OUTCOME, "error")],
                 );
                 span.record(SPAN_ATTR_ERROR_TYPE, "Repository");
-                tracing::error!(outcome = "error", error_type = "Repository", error = ?e, "evaluation failed");
+                tracing::error!(name: EVENT_EVALUATION, outcome = "error", error_type = "Repository", error = ?e, "evaluation failed");
             }
         }
     }
@@ -643,6 +649,23 @@ mod vocabulary_tests {
             assert!(
                 section.contains(name),
                 "ubiquitous-language.md lacks telemetry name `{name}`"
+            );
+        }
+    }
+
+    /// The Weaver registry (ADR 13) declares every name; `cargo xtask weaver check` validates it
+    /// and `cargo xtask live-check` compares a running service with it.
+    #[test]
+    fn registry_declares_every_name() {
+        let registry = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../api/telemetry/discount.yaml"
+        ))
+        .unwrap();
+        for name in VOCABULARY {
+            assert!(
+                registry.contains(name),
+                "api/telemetry/discount.yaml lacks telemetry name `{name}`"
             );
         }
     }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["src/domain", "src/application", "src/infrastructure", "src/client", "verification/drt"]
+members = ["src/domain", "src/application", "src/infrastructure", "src/client", "verification/drt", "xtask"]
 
 [workspace.package]
 edition = "2024"

@@ -1,0 +1,86 @@
+# OpenTelemetry Weaver project config (ADR 13). `cargo xtask weaver` runs weaver from the
+# otel/weaver image with the repository mounted at /work, so paths here are repo-relative.
+
+[registry]
+path = "api/telemetry"
+# The registry is written in the v2 definition format; matchers below need the v2 schema.
+v2 = true
+
+# ----- live-check: what a running service emits, compared with the registry -----
+[live-check]
+format = "ansi"
+fail_on = "violation"
+# Attributes the matched signal does not declare are still looked up in the registry and
+# its dependencies (the `code.*` fields the tracing bridge adds to log records, for one).
+search_all_attributes = true
+
+[live-check.otlp]
+grpc_address = "0.0.0.0"
+grpc_port = 4317
+admin_port = 4320
+inactivity_timeout = 120
+
+# A span name is free-form, so matchers say which span definition a sample is compared
+# with. Metrics and the `discount.evaluation` event resolve by name on their own. The
+# `discount.tracing_bridge` group permits what the tracing bridges add to every span and
+# log record.
+[[live-check.matchers]]
+id = "match.http.server"
+sample_type = "span"
+when = 'kind == "server" && "http.request.method" in attributes'
+signal = "discount.http.server.request"
+attribute_groups = ["discount.tracing_bridge"]
+
+[[live-check.matchers]]
+id = "match.evaluate"
+sample_type = "span"
+when = 'name == "discount.evaluate"'
+signal = "discount.evaluate"
+attribute_groups = ["discount.tracing_bridge"]
+
+[[live-check.matchers]]
+id = "match.db"
+sample_type = "span"
+when = 'kind == "client" && name.startsWith("db.")'
+signal = "discount.db.operation"
+attribute_groups = ["discount.tracing_bridge"]
+
+[[live-check.matchers]]
+id = "match.evaluation.event"
+sample_type = "log"
+when = 'event_name == "discount.evaluation"'
+attribute_groups = ["discount.tracing_bridge"]
+
+[[live-check.matchers]]
+id = "match.resource"
+sample_type = "resource"
+when = '"service.name" in attributes && attributes["service.name"] == "discount"'
+strict_attribute_groups = ["discount.resource"]
+
+# Log records without an event name (start-up, budget refresh) are operational, not
+# contract: findings on them and on their fields are dropped. A new field on one of them
+# shows up here as a `missing_attribute` violation until it is listed (or the record
+# becomes a named event in the registry).
+[[live-check.finding_filters]]
+signal_type = "log"
+exclude_samples = ["event *"]
+
+[[live-check.finding_filters]]
+signal_type = "log"
+exclude = ["missing_attribute", "missing_namespace"]
+sample_names = ["promotions", "groups", "path", "listen", "otlp"]
+
+# Added by the tracing bridges, not by the service: tracing-opentelemetry puts `code.*`,
+# `thread.*`, `target`, `busy_ns` and `idle_ns` on every span, opentelemetry-appender-tracing
+# puts `code.*` (old, deprecated names) and `level` on every log record.
+[[live-check.finding_filters]]
+exclude_samples = ["code.*", "thread.*", "target", "busy_ns", "idle_ns", "level"]
+
+# `deployment.environment` was renamed upstream to `deployment.environment.name`. The
+# service keeps the old key until the Grafana dashboards and alert rules (37 uses of the
+# `deployment_environment` label) move with it; until then it is a known improvement, not
+# a violation.
+[[live-check.finding_level_overrides]]
+ids = ["deprecated"]
+sample_names = ["deployment.environment"]
+level = "improvement"
