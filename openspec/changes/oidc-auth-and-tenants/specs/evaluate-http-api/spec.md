@@ -7,7 +7,7 @@ The service SHALL read its listen address, the OTLP endpoint, the database URL, 
 promotion fixture path, the `PricingPolicy` defaults and the authentication settings from
 environment variables with documented names and defaults (`DISCOUNT_LISTEN=0.0.0.0:8080`,
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317`, `DATABASE_URL` unset,
-`DISCOUNT_PROMOTIONS=deploy/promotions.json`, `DISCOUNT_ROUNDING=Down`,
+`DISCOUNT_PROMOTIONS=ops/promotions.json`, `DISCOUNT_ROUNDING=Down`,
 `DISCOUNT_STACKING=Sequential`, `DISCOUNT_AUTH=oidc|off` default `oidc`,
 `DISCOUNT_AUTH_ISSUERS` comma-separated issuer URLs, `DISCOUNT_AUTH_AUDIENCE` optional,
 `DISCOUNT_AUTH_TENANT_CLAIM=tenant_id`, `DISCOUNT_AUTH_SCOPES_CLAIM=scope`,

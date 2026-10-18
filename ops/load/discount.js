@@ -1,8 +1,8 @@
 // k6 load profile of the discount service (spec `load-profile`). Four open-model scenarios
 // share RATE requests per second: evaluate 70 %, redeem lifecycle 20 %, idempotent repeat
-// 5 %, invalid cart 5 %. Thresholds mirror deploy/grafana/alerting/discount.yaml.
+// 5 %, invalid cart 5 %. Thresholds mirror ops/grafana/alerting/discount.yaml.
 //
-// Run through deploy/load/run.sh (seeds the catalogue, runs this from the grafana/k6 image).
+// Run through ops/load/run.sh (seeds the catalogue, runs this from the grafana/k6 image).
 import http from "k6/http";
 import { check } from "k6";
 import { textSummary } from "https://jslib.k6.io/k6-summary/0.1.0/index.js";

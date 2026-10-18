@@ -46,7 +46,7 @@ tenants: the catalogue assembles a tenant's snapshot before pricing.
   that resolves `Principal { tenant_id, scopes, subject }`, `tenant_id` columns and
   composite keys in every table (migration `0007_tenants.sql`), repository methods take the
   tenant; `src/application` ports take a `TenantId`.
-- `deploy/compose.yaml`: optional Keycloak profile with a realm export for the smoke run.
+- `ops/compose.yaml`: optional Keycloak profile with a realm export for the smoke run.
 - `src/client`: the generated client gains a bearer token hook; contract test runs with a
   locally signed token against a test JWKS.
 - `docs/ubiquitous-language.md`: application-layer names `Tenant`, `Principal`, `Scope`.

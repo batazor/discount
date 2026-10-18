@@ -1,5 +1,5 @@
 # Grafana-managed alert rules for the discount service (spec `grafana-dashboards`,
-# "Provisioned alert rules"). Mounted by deploy/compose.yaml into Grafana's provisioning
+# "Provisioned alert rules"). Mounted by ops/compose.yaml into Grafana's provisioning
 # directory; edit here, never in the UI (provisioned rules are read-only there).
 #
 # Each rule is one instant PromQL query (A) and one threshold expression (B, the condition).

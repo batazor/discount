@@ -52,7 +52,7 @@ verification/drt/    proptest generators + core vs reference comparison
 docs/                ubiquitous-language.md, invariants.md, adr/
 openspec/            behaviour specs with scenarios (OpenSpec), archived changes
 src/ui/              Astro: the operator console, a generated-client consumer of api/openapi.yaml
-deploy/              compose stack, Grafana dashboards, fixtures, smoke script
+ops/              compose stack, Grafana dashboards, fixtures, smoke script
 ```
 
 Product code lives under `src/`; everything that checks it (the Lean model, its proofs and
@@ -87,7 +87,7 @@ cd verification/spec && lake exe discount-spec < ../drt/fixtures/samples-1.jsonl
 
 Run the Rust tests, the fixture replay and the differential run (the Lean build above
 must exist; `DRT_CASES` sets the number of random cases, default 256). The Postgres
-scenarios need the local database (`docker compose -f deploy/compose.yaml up -d postgres`;
+scenarios need the local database (`docker compose -f ops/compose.yaml up -d postgres`;
 they create and wipe `discount_test`) or `DATABASE_URL`; they never skip (ADR 11):
 
 ```bash
@@ -124,7 +124,7 @@ npx --yes @redocly/cli@latest lint api/openapi.yaml
 ```
 
 `discount-server` runs the engine behind that API. Without `DATABASE_URL` it uses an
-in-memory catalogue seeded from `deploy/promotions.json`; with it, catalogue and redemptions
+in-memory catalogue seeded from `ops/promotions.json`; with it, catalogue and redemptions
 live in Postgres (migrations run at start-up).
 
 
@@ -174,21 +174,21 @@ The service exports traces, metrics and logs over OpenTelemetry (OTLP) and ships
 dashboards as code. Run the whole chain locally:
 
 ```bash
-docker compose -f deploy/compose.yaml up -d --build
+docker compose -f ops/compose.yaml up -d --build
 ```
 
 Then open [http://localhost:3000](http://localhost:3000) (folder **Discount**: engine
 overview, promotions, validation errors) and check that signals arrive end to end:
 
 ```bash
-deploy/smoke.sh
+ops/smoke.sh
 ```
 
 Put the stack under load (k6 from the `grafana/k6` image on the compose network; nothing
 installed on the host; thresholds mirror the alert rules and fail the run):
 
 ```bash
-deploy/load/run.sh
+ops/load/run.sh
 ```
 
 `RATE` and `DURATION` change the profile (defaults 50 req/s, 2 min). The measured

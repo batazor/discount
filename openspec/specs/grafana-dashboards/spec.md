@@ -7,23 +7,23 @@ whole chain can be checked on a laptop.
 ## Requirements
 
 ### Requirement: Local observability stack
-The repository SHALL provide `deploy/compose.yaml` starting `grafana/otel-lgtm` (collector,
+The repository SHALL provide `ops/compose.yaml` starting `grafana/otel-lgtm` (collector,
 Prometheus, Tempo, Loki, Grafana), the discount service, the admin console and
-`alert-sink` (`deploy/alert-sink/sink.py`: receives Grafana's alert webhooks, prints one
+`alert-sink` (`ops/alert-sink/sink.py`: receives Grafana's alert webhooks, prints one
 JSON line per notification, serves the last 100 on `GET /`), with
 Grafana on `:3000` (anonymous admin), OTLP on `:4317`/`:4318`, the service on `:8080` and
 the console on `:4321`, the sink on `:9095`, the service exporting to the collector and the console pointed at
 the service.
 
 #### Scenario: Stack comes up healthy
-- **WHEN** `docker compose -f deploy/compose.yaml up -d` finishes
+- **WHEN** `docker compose -f ops/compose.yaml up -d` finishes
 - **THEN** `GET http://localhost:3000/api/health` returns `200`,
   `GET http://localhost:8080/healthz` returns `200` and
   `GET http://localhost:4321/healthz` returns `200` and `GET http://localhost:9095/`
   returns `200` with a JSON list
 
 ### Requirement: Provisioned dashboards
-Grafana SHALL load the dashboards from `deploy/grafana/dashboards/*.json` into a
+Grafana SHALL load the dashboards from `ops/grafana/dashboards/*.json` into a
 `Discount` folder on start. Three dashboards SHALL exist:
 - **Discount engine overview**: evaluations per second by outcome, p50/p95/p99 of
   `discount.evaluate.duration`, error rate, total discount granted per minute, distribution
@@ -44,14 +44,14 @@ Grafana SHALL load the dashboards from `deploy/grafana/dashboards/*.json` into a
 - **THEN** the overview panels return non-empty series for `discount_evaluations_total`
 
 ### Requirement: Smoke script
-`deploy/smoke.sh` SHALL post the fixture carts to the running service and then assert,
+`ops/smoke.sh` SHALL post the fixture carts to the running service and then assert,
 through Grafana's data source proxies, that `discount_evaluations_total` is present in
 Prometheus, that a trace with `service.name=discount` is found in Tempo, and that a log
 line is found in Loki; it SHALL also assert that the console answers `GET /healthz` and
 that its promotions page lists `P1`; it SHALL exit non-zero otherwise.
 
 #### Scenario: Smoke passes on a fresh stack
-- **WHEN** the stack is up and `deploy/smoke.sh` runs
+- **WHEN** the stack is up and `ops/smoke.sh` runs
 - **THEN** it prints the checks as passed, including the console check, and exits `0`
 
 ### Requirement: HTTP RED metrics come from span metrics
@@ -67,7 +67,7 @@ service for this.
 
 ### Requirement: Provisioned alert rules
 The local stack SHALL provision Grafana-managed alert rules from
-`deploy/grafana/alerting/*.yaml` into folder `Discount`, group `discount` evaluated every
+`ops/grafana/alerting/*.yaml` into folder `Discount`, group `discount` evaluated every
 minute. Each rule SHALL carry labels `service=discount` and `severity` and link to the
 dashboard panel it is derived from. No contact point SHALL be provisioned.
 

@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # Load profile of the local stack (spec `load-profile`): seed the catalogue, run
-# deploy/load/discount.js from the grafana/k6 image on the compose network, leave the
-# summary in deploy/load/out/. Thresholds fail the run (non-zero exit).
+# ops/load/discount.js from the grafana/k6 image on the compose network, leave the
+# summary in ops/load/out/. Thresholds fail the run (non-zero exit).
 #
-#   deploy/load/run.sh                 # RATE=50 req/s for DURATION=2m
-#   RATE=200 DURATION=5m deploy/load/run.sh
+#   ops/load/run.sh                 # RATE=50 req/s for DURATION=2m
+#   RATE=200 DURATION=5m ops/load/run.sh
 set -euo pipefail
 
 SERVICE=${SERVICE:-http://localhost:8080}       # as reached from this shell (seeding)
 BASE_URL=${BASE_URL:-http://discount:8080}      # as reached from the k6 container
-NETWORK=${NETWORK:-deploy_default}
+NETWORK=${NETWORK:-discount_default}
 RATE=${RATE:-50}
 DURATION=${DURATION:-2m}
 DIR=$(cd "$(dirname "$0")" && pwd)
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-curl -sf "$SERVICE/healthz" >/dev/null || fail "service not healthy at $SERVICE (docker compose -f deploy/compose.yaml up -d)"
+curl -sf "$SERVICE/healthz" >/dev/null || fail "service not healthy at $SERVICE (docker compose -f ops/compose.yaml up -d)"
 
 # Same catalogue as the smoke, with a budget on P1 large enough not to clamp during a run.
 put() { curl -s -o /dev/null -w "%{http_code}" -H 'Content-Type: application/json' -X PUT "$SERVICE$1" -d "$2"; }
@@ -31,4 +31,4 @@ docker run --rm -i --network "$NETWORK" \
   -e BASE_URL="$BASE_URL" -e RATE="$RATE" -e DURATION="$DURATION" \
   -v "$DIR:/scripts:ro" -v "$DIR/out:/out" \
   grafana/k6:latest run --quiet /scripts/discount.js
-echo "ok:   summary in deploy/load/out/summary.json"
+echo "ok:   summary in ops/load/out/summary.json"

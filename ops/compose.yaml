@@ -1,15 +1,17 @@
 # Local observability stack for the discount service (OpenTelemetry + Grafana).
 #
-#   docker compose -f deploy/compose.yaml up -d --build
+#   docker compose -f ops/compose.yaml up -d --build
 #   open http://localhost:3000        (Grafana, anonymous admin)
 #   curl localhost:8080/healthz       (discount-server)
 #   open http://localhost:4321        (discount-ui, the operator console)
-#   deploy/smoke.sh                   (posts carts, checks the signals arrived)
+#   ops/smoke.sh                   (posts carts, checks the signals arrived)
 #   OTLP: grpc localhost:4317, http localhost:4318
 #
 # grafana/otel-lgtm bundles an OpenTelemetry Collector, Prometheus (metrics), Tempo
 # (traces), Loki (logs) and Grafana with the data sources pre-wired. Dashboards from
-# deploy/grafana/dashboards are provisioned on start.
+# ops/grafana/dashboards are provisioned on start.
+name: discount   # fixed project name: network discount_default, volumes discount_*
+
 services:
   lgtm:
     image: grafana/otel-lgtm:0.36.0
@@ -77,6 +79,7 @@ services:
       - "8080:8080"
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      DISCOUNT_AUTH: "off"   # local stack has no identity provider (oidc-auth-and-tenants, design 6)
       DATABASE_URL: postgres://discount:discount@postgres:5432/discount
       DISCOUNT_ENV: compose
       DISCOUNT_ROUNDING: Down

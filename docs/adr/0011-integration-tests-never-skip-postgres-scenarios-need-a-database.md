@@ -22,7 +22,7 @@ Tests do not skip. A scenario that needs an external resource either finds it or
 with the remedy in the message.
 
 - Postgres scenarios connect to `DATABASE_URL` or, when it is unset, to the
-  `discount_test` database of the local stack (`deploy/compose.yaml`,
+  `discount_test` database of the local stack (`ops/compose.yaml`,
   `postgres://discount:discount@localhost:5432/discount_test`). They create that database
   on first use and wipe it on every run; they never touch `discount`, the service's own.
 - No `if env is missing { return }` in a test, no `#[ignore]` for missing infrastructure.
