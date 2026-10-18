@@ -27,9 +27,9 @@ if [ "$B" = '{"remaining":null}' ]; then
 fi
 pass "catalogue seeded (g, P1 10% with budget, P2 fixed 500 capped at 300)"
 
-# Operator console: alive on its own, and its promotions page shows the seeded catalogue.
+# Operator console: alive on its own, and its campaigns page shows the seeded catalogue.
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$UI/healthz")" = "200" ] || fail "console not healthy at $UI"
-curl -s "$UI/promotions" | grep -q 'href="/promotions/P1"' || fail "console promotions page does not list P1"
+curl -s "$UI/campaigns" | grep -q 'href="/campaigns/P1"' || fail "console campaigns page does not list P1"
 pass "console at $UI is up and lists P1"
 
 # Fixture carts: the sample cart (priced to 749) and an invalid one (lowercase currency).
@@ -97,7 +97,13 @@ assert e and e[0]["promotion"]["metadata"]["title"] == "Smoke code", d
 ' "$CODE" || fail "customer listing lacks the metadata of $CODE"
 N=$(curl -s "$SERVICE/v1/customers/smoke/coupons?source=transfers" | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))')
 [ "$N" = "0" ] || fail "source filter should exclude other sources, got $N entries"
-[ "$(curl -s "$SERVICE/v1/promotions?source=hotels" | python3 -c 'import sys,json; print(",".join(p["promotion_id"] for p in json.load(sys.stdin)))')" = "P3" ] || fail "promotion source filter"
+# The stack's Postgres may hold campaigns from earlier sessions, so the filter is checked by
+# membership: P3 (source hotels) is listed, P1 (no source) is not.
+curl -s "$SERVICE/v1/promotions?source=hotels" | python3 -c '
+import sys,json
+ids = {p["promotion_id"] for p in json.load(sys.stdin)}
+assert "P3" in ids and "P1" not in ids, sorted(ids)
+' || fail "promotion source filter"
 pass "metadata on P3 reaches the customer listing; source filters work"
 
 # Allowlist: P4 applies only to listed customers.

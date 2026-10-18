@@ -48,7 +48,7 @@ Grafana SHALL load the dashboards from `ops/grafana/dashboards/*.json` into a
 through Grafana's data source proxies, that `discount_evaluations_total` is present in
 Prometheus, that a trace with `service.name=discount` is found in Tempo, and that a log
 line is found in Loki; it SHALL also assert that the console answers `GET /healthz` and
-that its promotions page lists `P1`; it SHALL exit non-zero otherwise.
+that its campaigns page lists `P1`; it SHALL exit non-zero otherwise.
 
 #### Scenario: Smoke passes on a fresh stack
 - **WHEN** the stack is up and `ops/smoke.sh` runs
