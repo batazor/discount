@@ -3,7 +3,6 @@ import "../styles/global.css";
 import { ClientRouter } from "astro:transitions";
 import Unreachable from "../components/Unreachable.astro";
 import ConfirmDialog from "../components/ConfirmDialog.astro";
-import { API_URL } from "../api/client";
 import { navigation, roleFrom, ROLE_HELP, ROLES } from "../model/role";
 import { authEnabled } from "../auth/config";
 
@@ -64,9 +63,7 @@ const back = encodeURIComponent(path + Astro.url.search);
               <form method="post" action="/logout" class="mt-2" data-astro-reload><button type="submit" class="btn-xs" style="padding-left: 0">Sign out</button></form>
             </div>
           )}
-          <div class="font-semibold uppercase tracking-[0.08em]">Service</div>
-          <code class="block truncate" title={API_URL}>{API_URL}</code>
-          <a href="/api-docs" class="link mt-1 inline-block" target="_blank" rel="noreferrer" data-astro-reload>API docs ↗</a>
+          <a href="/api-docs" class="link inline-block" target="_blank" rel="noreferrer" data-astro-reload>API docs ↗</a>
         </div>
       </nav>
       <main class="min-w-0 flex-1 px-5 py-6 md:px-10 md:py-8">

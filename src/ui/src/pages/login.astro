@@ -41,7 +41,7 @@ if (Astro.request.method === "POST") {
     }
   } catch (e) {
     issuerDown = true;
-    error = `The identity provider at ${OIDC.issuer} did not answer.`;
+    error = "Sign-in is unavailable right now: the identity provider did not answer.";
   }
 }
 ---
@@ -64,7 +64,6 @@ if (Astro.request.method === "POST") {
         <label class="block"><span class="label">Username</span><input type="text" name="username" value={username} required autofocus autocomplete="username" class="input mono" /></label>
         <label class="block"><span class="label">Password</span><input type="password" name="password" required autocomplete="current-password" class="input mono" /></label>
         <button type="submit" class="btn btn-primary w-full justify-center" disabled={issuerDown}>Sign in</button>
-        <p class="hint">Issuer <code>{OIDC.issuer}</code>. The console keeps your tokens on the server; the browser only gets a session cookie.</p>
       </form>
       {OIDC.demoUsers.length > 0 && (
         <section class="card">
