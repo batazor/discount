@@ -2,6 +2,7 @@
 import { actions } from "astro:actions";
 import Layout from "../layouts/Layout.astro";
 import Field from "../components/Field.astro";
+import CurrencySelect from "../components/CurrencySelect.astro";
 import FormStatus from "../components/FormStatus.astro";
 import ResultPanel from "../components/ResultPanel.astro";
 import { formState } from "../actions/run";
@@ -49,7 +50,7 @@ const cattrs = f.rows("customer_attributes").map(String);
       <section class="card space-y-4">
         <h2 class="card-title">Cart</h2>
         <div class="grid grid-cols-3 gap-3">
-          <Field state={state} name="cart.currency" label="Currency" required />
+          <CurrencySelect state={state} name="cart.currency" label="Cart currency" required blank={false} />
           <Field state={state} name="cart.tags" label="Tags" help={TERM.cartTags} hint="comma-separated" />
           <Field state={state} name="cart.coupon_codes" label="Coupon codes" help={TERM.couponCodes} hint="comma-separated" />
         </div>
@@ -60,7 +61,7 @@ const cattrs = f.rows("customer_attributes").map(String);
               <div data-row={i} class="grid grid-cols-[1fr_1fr_5.5rem_4.5rem_auto] items-end gap-2">
                 <Field state={state} name={`lines.${i}.line_id`} label="Line id" />
                 <Field state={state} name={`lines.${i}.unit_price.amount`} label="Unit price (minor units)" type="number" />
-                <Field state={state} name={`lines.${i}.unit_price.currency`} label="Currency" />
+                <CurrencySelect state={state} name={`lines.${i}.unit_price.currency`} blank={false} />
                 <Field state={state} name={`lines.${i}.quantity`} label="Qty" type="number" />
                 <button type="button" data-remove-row hidden class="row-remove">×</button>
               </div>
@@ -70,7 +71,7 @@ const cattrs = f.rows("customer_attributes").map(String);
             <div data-row="__i__" class="grid grid-cols-[1fr_1fr_5.5rem_4.5rem_auto] items-end gap-2">
               <Field state={empty} name="lines.__i__.line_id" label="Line id" />
               <Field state={empty} name="lines.__i__.unit_price.amount" label="Unit price (minor units)" type="number" />
-              <Field state={empty} name="lines.__i__.unit_price.currency" label="Currency" />
+              <CurrencySelect state={empty} name="lines.__i__.unit_price.currency" blank={false} />
               <Field state={empty} name="lines.__i__.quantity" label="Qty" type="number" />
               <button type="button" data-remove-row hidden class="row-remove">×</button>
             </div>

@@ -144,6 +144,12 @@
   .option-name { @apply text-[13px] font-semibold; font-family: var(--font-mono); }
   .option-cards.compact .option-name { @apply shrink-0; }
   .option-desc { @apply text-[12px] leading-snug; color: var(--color-ink-2); }
+  .option-card.is-chosen { border-color: var(--color-accent); background: var(--color-accent-soft); box-shadow: 0 0 0 1px var(--color-accent) inset; }
+  .step-link { @apply flex items-center gap-2 rounded-md px-2 py-1.5 no-underline; color: var(--color-ink-2); }
+  .step-link:hover { background: var(--color-surface-2); }
+  .step-link[aria-current="step"] { background: var(--color-accent-soft); color: var(--color-accent-ink); font-weight: 600; }
+  .step-no { @apply flex size-5 items-center justify-center rounded-full text-[11px] font-semibold; background: var(--color-surface-2); color: var(--color-ink-2); }
+  .step-link[aria-current="step"] .step-no, .step-link.done .step-no { background: var(--color-accent); color: #fff; }
   .check { @apply inline-flex items-center gap-2 text-[13px]; }
   .check input { @apply size-4 rounded; accent-color: var(--color-accent); }
   .row-remove { @apply self-end rounded-md px-2 py-1.5 text-[13px] font-medium; color: var(--color-ink-3); }

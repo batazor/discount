@@ -4,6 +4,7 @@
 import type { FormState } from "../actions/run";
 import { parseAmount } from "../model/units";
 import Field from "./Field.astro";
+import CurrencySelect from "./CurrencySelect.astro";
 interface Props { state: FormState; name: string; label: string; hint?: string; help?: string }
 const { state, name, label, hint, help } = Astro.props;
 const cur = (state.fields[`${name}.currency`] ?? "").trim();
@@ -12,5 +13,5 @@ const sends = minor === undefined ? "" : `; sends ${minor}`;
 ---
 <fieldset class="grid grid-cols-[1fr_5.5rem] gap-2">
   <Field state={state} name={`${name}.amount`} label={label} placeholder="5.00" mono hint={`${hint ?? "decimal, e.g. 5.00"}${sends}`} help={help} />
-  <Field state={state} name={`${name}.currency`} label="Currency" placeholder="EUR" />
+  <CurrencySelect state={state} name={`${name}.currency`} />
 </fieldset>

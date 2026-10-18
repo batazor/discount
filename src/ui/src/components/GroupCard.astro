@@ -5,13 +5,13 @@ import type { Promotion, StackingGroup } from "../api/types";
 import { STACKING_MODE_HELP, TERM } from "../model/glossary";
 import { describeAction } from "../model/campaign";
 import Help from "./Help.astro";
-interface Props { groups: StackingGroup[]; promotions: Promotion[]; selected: string; current?: string }
-const { groups, promotions, selected, current } = Astro.props;
+interface Props { groups: StackingGroup[]; promotions: Promotion[]; selected: string; current?: string; sticky?: boolean }
+const { groups, promotions, selected, current, sticky = true } = Astro.props;
 // Total order inside a group: promotion priority DESC, then id ASC (docs/ubiquitous-language.md).
 const members = (id: string) => promotions.filter((p) => p.group_id === id && p.promotion_id !== current).sort((a, b) => b.priority - a.priority || a.promotion_id.localeCompare(b.promotion_id));
 const sorted = [...groups].sort((a, b) => b.priority - a.priority || a.group_id.localeCompare(b.group_id));
 ---
-<aside class="card space-y-3 lg:sticky lg:top-6" data-group-card>
+<aside class:list={["card space-y-3", sticky && "lg:sticky lg:top-6"]} data-group-card>
   <h2 class="card-title">Stacking group <Help text={TERM.groupPriority} /></h2>
   <p class="hint">A group orders campaigns and decides whether every eligible campaign in it applies or only the first one. Groups themselves apply by priority, higher first.</p>
   <div data-group-info data-for="" hidden={selected !== ""}>

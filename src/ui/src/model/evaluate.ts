@@ -66,7 +66,7 @@ export function evaluateRequestToFields(r: EvaluateRequest): Fields {
   return out;
 }
 
-/** The sample cart of deploy/smoke.sh, the playground's starting point. */
+/** The sample cart of ops/smoke.sh, the playground's starting point. */
 export const SAMPLE_REQUEST: EvaluateRequest = {
   cart: {
     currency: "EUR",

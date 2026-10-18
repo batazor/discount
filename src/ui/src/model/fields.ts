@@ -115,9 +115,9 @@ export class Form {
     return this.raw(key) === "" ? null : this.percent(key);
   }
 
-  /** null when both parts are empty. */
+  /** null when the amount is empty (the currency select may still hold a value). */
   optMoney(prefix: string): Money | null {
-    if (this.raw(`${prefix}.amount`) === "" && this.raw(`${prefix}.currency`) === "") return null;
+    if (this.raw(`${prefix}.amount`) === "") return null;
     return this.money(prefix);
   }
 

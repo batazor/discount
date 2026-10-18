@@ -112,6 +112,7 @@ import type { GenerateCouponsRequest, Money } from "../api/types";
 import { Form, type Fields, type Parsed } from "./fields";
 import { generateRequestFromForm } from "./catalogue";
 import { metadataFromForm } from "./metadata";
+import { applyBuilder } from "./builder";
 import { promotionFromForm } from "./promotion";
 
 export type CampaignDraft = {
@@ -122,7 +123,8 @@ export type CampaignDraft = {
 };
 
 /** The creation form: promotion fields, optional title (→ metadata), budget and codes. */
-export function campaignDraftFromForm(fields: Fields): Parsed<CampaignDraft> {
+export function campaignDraftFromForm(input: Fields): Parsed<CampaignDraft> {
+  const fields = applyBuilder(input);
   const errors = [];
   const promotion = promotionFromForm(fields);
   if (!promotion.ok) errors.push(...promotion.errors);

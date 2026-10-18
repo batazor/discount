@@ -1,0 +1,66 @@
+---
+// Try the campaign on a sample cart: a dry run through the evaluate action, read for this
+// campaign only (applied with the discount, or skipped with the rule's plain name).
+import { actions } from "astro:actions";
+import type { Campaign } from "../../model/campaign";
+import { RULE_NAMES } from "../../model/campaign";
+import Field from "../Field.astro";
+import CurrencySelect from "../CurrencySelect.astro";
+import FormStatus from "../FormStatus.astro";
+import ResultPanel from "../ResultPanel.astro";
+import Money from "../Money.astro";
+import { formState } from "../../actions/run";
+import { SKIP_HELP, CLAMP_HELP } from "../../model/glossary";
+interface Props { campaign: Campaign }
+const { campaign: c } = Astro.props;
+const id = c.promotion.promotion_id;
+const result = Astro.getActionResult(actions.evaluate);
+const currency = c.promotion.action.type === "OrderFixedAmount" ? c.promotion.action.amount.currency : (c.promotion.remaining_budget?.currency ?? "EUR");
+const state = formState(result?.data, {
+  "cart.currency": currency,
+  "lines.0.line_id": "L1",
+  "lines.0.unit_price.amount": "100.00",
+  "lines.0.unit_price.currency": currency,
+  "lines.0.quantity": "1",
+  "cart.coupon_codes": c.codes[0]?.code ?? "",
+  "customer.customer_id": "",
+  "customer.completed_orders": "0",
+});
+if (result?.data?.kind === "ok") state.fields = result.data.fields;
+const priced = result?.data?.kind === "ok" ? result.data.data : null;
+const applied = priced?.applied.find((a) => a.promotion_id === id) ?? null;
+const skipped = priced?.skipped.find((s) => s.promotion_id === id) ?? null;
+const ruleName = (i: number) => (c.promotion.rules[i] ? RULE_NAMES[c.promotion.rules[i]!.type] : `rule #${i}`);
+---
+<section class="card space-y-3">
+  <h2 class="card-title">Try it on a sample cart</h2>
+  <p class="hint">A dry run: nothing is stored and no budget moves. The result reflects the catalogue as it is now.</p>
+  <form method="post" action={`?tab=overview&${String(actions.evaluate).slice(1)}`} class="space-y-3">
+    <input type="hidden" name="lines.0.line_id" value="L1" />
+    <div class="grid grid-cols-2 gap-2 md:grid-cols-4">
+      <CurrencySelect state={state} name="cart.currency" label="Cart currency" blank={false} required />
+      <Field state={state} name="lines.0.unit_price.amount" label="Unit price" mono />
+      <input type="hidden" name="lines.0.unit_price.currency" value={state.fields["cart.currency"]} />
+      <Field state={state} name="lines.0.quantity" label="Quantity" type="number" />
+      <Field state={state} name="cart.coupon_codes" label="Coupon code" hint={c.codes.length ? "one of this campaign's codes is prefilled" : "none exist yet"} />
+      <Field state={state} name="customer.customer_id" label="Customer id" hint="empty = anonymous" />
+      <Field state={state} name="customer.completed_orders" label="Completed orders" type="number" />
+      <Field state={state} name="customer_attributes.0.key" label="Customer attribute" placeholder="tier" />
+      <Field state={state} name="customer_attributes.0.value" label="its value" placeholder="gold" />
+    </div>
+    <FormStatus state={state} okText="" />
+    <button type="submit" class="btn btn-secondary">Try it</button>
+  </form>
+  {priced && (
+    <div class="space-y-3">
+      {applied && (
+        <p class="alert alert-success"><span class="alert-title mono">{id}</span> applied and granted <Money m={applied.discount} />{applied.clamped_by && <> (cut by <span class="badge badge-warn" data-tip={CLAMP_HELP[applied.clamped_by.type]}>{applied.clamped_by.type}</span>)</>}. Final total <Money m={priced.final_total} /> of <Money m={priced.original_subtotal} />.</p>
+      )}
+      {skipped && (
+        <p class="alert alert-warn"><span class="alert-title mono">{id}</span> was skipped: <span class="badge badge-muted" data-tip={SKIP_HELP[skipped.reason.type]}>{skipped.reason.type}</span>{skipped.reason.type === "NotEligible" && <> because the condition "{ruleName(skipped.reason.rule_index)}" did not hold</>}{skipped.reason.type !== "NotEligible" && <> (winner <span class="mono">{skipped.reason.winner}</span>)</>}.</p>
+      )}
+      {!applied && !skipped && <p class="alert alert-warn"><span class="mono">{id}</span> does not appear in the result at all.</p>}
+      <details><summary class="hint">Full result</summary><div class="mt-2"><ResultPanel result={priced} id="try-result" /></div></details>
+    </div>
+  )}
+</section>

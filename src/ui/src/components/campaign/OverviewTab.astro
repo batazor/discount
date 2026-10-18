@@ -5,6 +5,7 @@ import { TERM } from "../../model/glossary";
 import Money from "../Money.astro";
 import When from "../When.astro";
 import Help from "../Help.astro";
+import TryIt from "./TryIt.astro";
 interface Props { campaign: Campaign; allowlistCount: number; href: (t: "overview" | "rules" | "codes" | "audience" | "details") => string }
 const { campaign: c, allowlistCount, href } = Astro.props;
 const p = c.promotion;
@@ -19,6 +20,7 @@ if (!needsList && allowlistCount > 0) todo.push(["Has an allowlist but no rule r
 if (c.exhaustedBy === "budget") todo.push(["Budget is spent: raise it or let it end.", href("overview")]);
 ---
 <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+  <div class="space-y-4">
   <section class="card">
     <dl class="dl">
       <dt>Status</dt><dd class="font-sans">{c.status} <span class="hint inline">{CAMPAIGN_STATUS_HELP[c.status]}</span></dd>
@@ -33,6 +35,8 @@ if (c.exhaustedBy === "budget") todo.push(["Budget is spent: raise it or let it 
       <dt>Allowlisted</dt><dd>{allowlistCount}</dd>
     </dl>
   </section>
+  <TryIt campaign={c} />
+  </div>
   <aside class="space-y-4">
     {todo.length > 0 && (
       <section class="card">
