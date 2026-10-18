@@ -133,6 +133,20 @@ pub fn clamp_reason(c: &Option<ClampReason>) -> &'static str {
     }
 }
 
+/// `(outcome, reason)` of a failed redemption action (spec `telemetry`, "Redemption
+/// metrics"): `error` is a storage failure only; everything the caller caused is `rejected`
+/// with the variant name as `reason`.
+pub type RedemptionOutcome = (&'static str, Option<&'static str>);
+
+pub fn redemption_outcome(e: &RedemptionError) -> RedemptionOutcome {
+    match e {
+        RedemptionError::Storage(_) => ("error", None),
+        RedemptionError::NotFound => ("rejected", Some("NotFound")),
+        RedemptionError::InvalidTransition { .. } => ("rejected", Some("InvalidTransition")),
+        RedemptionError::Pricing(_) => ("rejected", Some("Pricing")),
+    }
+}
+
 pub fn skip_reason(r: &SkipReason) -> &'static str {
     match r {
         SkipReason::NotEligible { .. } => "NotEligible",
@@ -240,40 +254,46 @@ impl Instruments {
         elapsed: Duration,
         currency: &str,
     ) {
-        let (label, pricing): (&'static str, Option<Result<PricingResult, EvaluateError>>) =
-            match outcome {
-                Ok(ReserveOutcome::Reserved(r)) => ("ok", Some(Ok(r.result.clone()))),
-                Ok(ReserveOutcome::Idempotent(_)) => ("idempotent", None),
-                Err(RedemptionError::Pricing(e)) => {
-                    ("error", Some(Err(EvaluateError::Pricing(e.clone()))))
-                }
-                Err(_) => ("error", None),
-            };
-        self.redemptions.add(
-            1,
-            &[
-                KeyValue::new(ATTR_ACTION, action),
-                KeyValue::new(ATTR_OUTCOME, label),
-            ],
-        );
+        let (label, pricing): (
+            RedemptionOutcome,
+            Option<Result<PricingResult, EvaluateError>>,
+        ) = match outcome {
+            Ok(ReserveOutcome::Reserved(r)) => (("ok", None), Some(Ok(r.result.clone()))),
+            Ok(ReserveOutcome::Idempotent(_)) => (("idempotent", None), None),
+            Err(RedemptionError::Pricing(e)) => (
+                redemption_outcome(&RedemptionError::Pricing(e.clone())),
+                Some(Err(EvaluateError::Pricing(e.clone()))),
+            ),
+            Err(e) => (redemption_outcome(e), None),
+        };
+        self.add_redemption(action, label);
         if let Some(p) = pricing {
             self.record_evaluation(currency, elapsed, &p);
         }
     }
 
+    /// `discount.redemptions{action="confirm"|"cancel", outcome}`.
     pub fn record_transition(
         &self,
         action: &'static str,
         outcome: &Result<Redemption, RedemptionError>,
     ) {
-        let label = if outcome.is_ok() { "ok" } else { "error" };
-        self.redemptions.add(
-            1,
-            &[
-                KeyValue::new(ATTR_ACTION, action),
-                KeyValue::new(ATTR_OUTCOME, label),
-            ],
-        );
+        let label = match outcome {
+            Ok(_) => ("ok", None),
+            Err(e) => redemption_outcome(e),
+        };
+        self.add_redemption(action, label);
+    }
+
+    fn add_redemption(&self, action: &'static str, (outcome, reason): RedemptionOutcome) {
+        let mut attrs = vec![
+            KeyValue::new(ATTR_ACTION, action),
+            KeyValue::new(ATTR_OUTCOME, outcome),
+        ];
+        if let Some(r) = reason {
+            attrs.push(KeyValue::new(ATTR_REASON, r));
+        }
+        self.redemptions.add(1, &attrs);
     }
 
     /// Instruments on a no-op meter, for tests and tools that do not export.

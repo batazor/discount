@@ -584,6 +584,16 @@
           "legendFormat": "idempotent repeats",
           "refId": "D",
           "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(discount_redemptions_total{deployment_environment=~\"$env\",outcome=\"rejected\"}[$__range]))",
+          "legendFormat": "rejected (409/404/422)",
+          "refId": "E",
+          "range": true
         }
       ],
       "options": {

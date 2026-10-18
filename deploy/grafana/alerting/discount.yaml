@@ -134,3 +134,34 @@ groups:
               expression: A
               conditions:
                 - evaluator: { type: lt, params: [1] }
+
+      - uid: discount-redemption-storage-errors
+        title: Redemption storage errors
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        dashboardUid: discount-promotions
+        panelId: 10
+        labels: { service: discount, severity: critical }
+        annotations:
+          summary: "{{ printf \"%.2f\" $values.A.Value }} redemption storage errors per second over 5 minutes"
+          description: discount.redemptions{outcome="error"} counts storage failures only (rejections such as 409 InvalidTransition are outcome="rejected"); the redemption store is failing reserve/confirm/cancel.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              expr: sum(rate(discount_redemptions_total{outcome="error"}[5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }

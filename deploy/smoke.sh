@@ -183,9 +183,9 @@ spanmetrics_count() { # Tempo's metrics generator has seen the evaluate server s
 }
 retry "span metrics for POST /v1/evaluate" spanmetrics_count
 
-# Alert rules as code: the four discount-* rules are provisioned into folder Discount.
+# Alert rules as code: the five discount-* rules are provisioned into folder Discount.
 R=$(curl -s "$GRAFANA/api/v1/provisioning/alert-rules" | python3 -c 'import sys,json; print(sum(1 for r in json.load(sys.stdin) if r["uid"].startswith("discount-")))' 2>/dev/null || echo 0)
-[ "${R:-0}" -ge 4 ] || fail "expected at least 4 provisioned discount-* alert rules, found $R"
+[ "${R:-0}" -ge 5 ] || fail "expected at least 5 provisioned discount-* alert rules, found $R"
 pass "provisioned alert rules: $R"
 
 echo "smoke passed"

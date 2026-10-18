@@ -453,7 +453,8 @@ the contract the Grafana dashboards depend on (OpenSpec change `otel-grafana-obs
   `discount.amount` minor units {`currency`},
   `discount.share.bps` basis points of the original subtotal, buckets
   `0, 100, 250, 500, 1000, 1500, 2000, 3000, 5000, 7500, 10000`.
-  `discount.redemptions` {`action` = `reserve` | `confirm` | `cancel`, `outcome` = `ok` | `idempotent` | `error`},
+  `discount.redemptions` {`action` = `reserve` | `confirm` | `cancel`, `outcome` = `ok` | `idempotent` | `rejected` | `error`,
+  for `rejected` `reason` = `NotFound` | `InvalidTransition` | `Pricing`; `error` is a storage failure only},
   `discount.budget.remaining` gauge, minor units {`promotion_id`, `currency`}.
 - One log record per evaluation, `INFO` on success and `WARN` on a pricing error, carrying
   `outcome`, `total_discount` and the trace and span ids of `discount.evaluate`.

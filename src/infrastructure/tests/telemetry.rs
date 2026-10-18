@@ -662,3 +662,45 @@ fn postgres_calls_produce_db_spans() {
         Some("reserve")
     );
 }
+
+#[test]
+fn transition_rejections_and_storage_errors_are_told_apart() {
+    let h = harness();
+    let confirmed: Result<Redemption, RedemptionError> = Err(RedemptionError::InvalidTransition {
+        from: RedemptionStatus::Confirmed,
+        to: RedemptionStatus::Confirmed,
+    });
+    let missing: Result<Redemption, RedemptionError> = Err(RedemptionError::NotFound);
+    let down: Result<ReserveOutcome, RedemptionError> = Err(RedemptionError::Storage(
+        StorageError::Unavailable("down".into()),
+    ));
+    with_subscriber(&h, || {
+        h.state.instruments.record_transition("confirm", &confirmed);
+        h.state.instruments.record_transition("cancel", &missing);
+        h.state.instruments.record_redemption(
+            "reserve",
+            &down,
+            std::time::Duration::from_millis(1),
+            "EUR",
+        );
+    });
+    assert_eq!(
+        counter_points(&h, telemetry::METRIC_REDEMPTIONS),
+        vec![
+            (
+                s(&["action=cancel", "outcome=rejected", "reason=NotFound"]),
+                1
+            ),
+            (
+                s(&[
+                    "action=confirm",
+                    "outcome=rejected",
+                    "reason=InvalidTransition"
+                ]),
+                1
+            ),
+            (s(&["action=reserve", "outcome=error"]), 1),
+        ]
+    );
+    assert!(counter_points(&h, telemetry::METRIC_EVALUATIONS).is_empty());
+}
