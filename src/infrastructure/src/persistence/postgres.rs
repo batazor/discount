@@ -1,14 +1,17 @@
 //! Postgres implementation of `PromotionCatalog` and `RedemptionRepository` (sqlx).
-//! `reserve` is one transaction: `FOR UPDATE` on every budget row, snapshot, pricing,
-//! insert, decrement (design decisions 2 and 3 of the redeem-and-persistence change).
+//! `reserve` is one transaction: `FOR UPDATE` on every budget and promotion row, snapshot,
+//! pricing, insert, decrement (design decisions 2 and 3 of the redeem-and-persistence
+//! change). A `PgStore` is bound to one tenant (ADR 12): every statement carries
+//! `tenant_id`, so there is no way to read or write across tenants.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use discount_application::ports::{
-    CatalogSnapshot, Counters, GrantRule, GrantTrigger, PricingFn, PromotionCatalog,
-    PromotionMetadata, Redemption, RedemptionError, RedemptionRepository, RedemptionStatus,
-    ReserveOutcome, StorageError, Uses, transition_allowed,
+    CatalogSnapshot, Counters, DEFAULT_TENANT, GrantRule, GrantTrigger, PricingFn,
+    PromotionCatalog, PromotionMetadata, Redemption, RedemptionError, RedemptionRepository,
+    RedemptionStatus, ReserveOutcome, StorageError, Tenancy, Tenant, Uses, transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, PricingInput, PricingPolicy, PricingResult, Promotion,
@@ -20,9 +23,18 @@ use sqlx::{Postgres, Row, Transaction};
 
 use super::memory::budget_moves;
 
+/// One tenant's view of the database.
 #[derive(Clone)]
 pub struct PgStore {
     pool: PgPool,
+    tenant: String,
+}
+
+/// The whole database: hands out tenant-bound stores and administers tenants.
+#[derive(Clone)]
+pub struct PgTenants {
+    pool: PgPool,
+    default_policy: PricingPolicy,
 }
 
 /// Every sqlx failure passes through here: mark the enclosing `db.<method>` span as failed
@@ -53,12 +65,12 @@ fn parse_status(s: &str) -> RedemptionStatus {
     }
 }
 
-impl PgStore {
-    /// Connect, run the migrations, seed the policy row if missing.
+impl PgTenants {
+    /// Connect, run the migrations, seed the `default` tenant's policy if missing.
     pub async fn connect(
         url: &str,
         default_policy: &PricingPolicy,
-    ) -> Result<PgStore, StorageError> {
+    ) -> Result<PgTenants, StorageError> {
         let pool = PgPoolOptions::new()
             .max_connections(8)
             .connect(url)
@@ -68,49 +80,192 @@ impl PgStore {
             .run(&pool)
             .await
             .map_err(|e| StorageError::Unavailable(e.to_string()))?;
-        sqlx::query("INSERT INTO pricing_policy (id, body, updated_at) VALUES (1, $1, $2) ON CONFLICT (id) DO NOTHING")
-            .bind(Json(default_policy))
-            .bind(epoch())
-            .execute(&pool)
-            .await
-            .map_err(storage)?;
-        Ok(PgStore { pool })
+        let t = PgTenants {
+            pool,
+            default_policy: default_policy.clone(),
+        };
+        t.seed_policy(DEFAULT_TENANT).await?;
+        Ok(t)
     }
 
-    /// Empty every table and reset the policy; for integration tests only. Tests wipe the
-    /// database they point at, so give them a dedicated one.
+    /// A store bound to `tenant_id`.
+    pub fn store(&self, tenant_id: &str) -> PgStore {
+        PgStore {
+            pool: self.pool.clone(),
+            tenant: tenant_id.to_string(),
+        }
+    }
+
+    async fn seed_policy(&self, tenant_id: &str) -> Result<(), StorageError> {
+        sqlx::query("INSERT INTO pricing_policy (tenant_id, body, updated_at) VALUES ($1, $2, $3) ON CONFLICT (tenant_id) DO NOTHING")
+            .bind(tenant_id)
+            .bind(Json(&self.default_policy))
+            .bind(epoch())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    fn row_to_tenant(r: &sqlx::postgres::PgRow) -> Result<Tenant, sqlx::Error> {
+        Ok(Tenant {
+            tenant_id: r.try_get("tenant_id")?,
+            name: r.try_get("name")?,
+            created_at: r.try_get("created_at")?,
+        })
+    }
+}
+
+#[async_trait]
+impl Tenancy for PgTenants {
+    fn catalog(&self, tenant_id: &str) -> Arc<dyn PromotionCatalog> {
+        Arc::new(self.store(tenant_id))
+    }
+
+    fn redemptions(&self, tenant_id: &str) -> Arc<dyn RedemptionRepository> {
+        Arc::new(self.store(tenant_id))
+    }
+
+    #[tracing::instrument(name = "db.list_tenants", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_tenants"))]
+    async fn list_tenants(&self) -> Result<Vec<Tenant>, StorageError> {
+        sqlx::query("SELECT tenant_id, name, created_at FROM tenants ORDER BY tenant_id")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage)?
+            .iter()
+            .map(|r| PgTenants::row_to_tenant(r).map_err(storage))
+            .collect()
+    }
+
+    #[tracing::instrument(name = "db.get_tenant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_tenant"))]
+    async fn get_tenant(&self, tenant_id: &str) -> Result<Option<Tenant>, StorageError> {
+        sqlx::query("SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?
+            .map(|r| PgTenants::row_to_tenant(&r).map_err(storage))
+            .transpose()
+    }
+
+    #[tracing::instrument(name = "db.put_tenant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_tenant"))]
+    async fn put_tenant(&self, tenant: Tenant) -> Result<(), StorageError> {
+        sqlx::query("INSERT INTO tenants (tenant_id, name, created_at) VALUES ($1, $2, $3) ON CONFLICT (tenant_id) DO UPDATE SET name = $2")
+            .bind(&tenant.tenant_id)
+            .bind(&tenant.name)
+            .bind(tenant.created_at)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        self.seed_policy(&tenant.tenant_id).await
+    }
+
+    #[tracing::instrument(name = "db.delete_tenant", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_tenant"))]
+    async fn delete_tenant(&self, tenant_id: &str) -> Result<bool, StorageError> {
+        let redemptions: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM redemptions WHERE tenant_id = $1")
+                .bind(tenant_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(storage)?;
+        if redemptions > 0 {
+            return Err(StorageError::Conflict(format!(
+                "tenant {tenant_id} still has {redemptions} redemptions"
+            )));
+        }
+        let r = sqlx::query("DELETE FROM tenants WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
+}
+
+impl PgStore {
+    /// Connect and bind to the `default` tenant (tests and tools).
+    pub async fn connect(
+        url: &str,
+        default_policy: &PricingPolicy,
+    ) -> Result<PgStore, StorageError> {
+        Ok(PgTenants::connect(url, default_policy)
+            .await?
+            .store(DEFAULT_TENANT))
+    }
+
+    /// The same database, another tenant.
+    pub fn for_tenant(&self, tenant_id: &str) -> PgStore {
+        PgStore {
+            pool: self.pool.clone(),
+            tenant: tenant_id.to_string(),
+        }
+    }
+
+    /// The tenant administration view of the same database.
+    pub fn tenants(&self, default_policy: &PricingPolicy) -> PgTenants {
+        PgTenants {
+            pool: self.pool.clone(),
+            default_policy: default_policy.clone(),
+        }
+    }
+
+    pub fn tenant_id(&self) -> &str {
+        &self.tenant
+    }
+
+    /// Empty every table of every tenant, drop the tenants other than `default` and reset
+    /// the default policy; for integration tests only. Tests wipe the database they point
+    /// at, so give them a dedicated one.
     pub async fn reset_for_tests(&self, policy: &PricingPolicy) -> Result<(), StorageError> {
         sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants, saved_coupons, promotion_metadata, promotion_allowlist")
             .execute(&self.pool)
             .await
             .map_err(storage)?;
-        self.put_policy(policy.clone()).await
+        sqlx::query("DELETE FROM tenants WHERE tenant_id <> 'default'")
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        sqlx::query("DELETE FROM pricing_policy WHERE tenant_id <> 'default'")
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        self.for_tenant(DEFAULT_TENANT)
+            .put_policy(policy.clone())
+            .await
     }
 
     /// With `lock`, the budget and promotion rows are taken `FOR UPDATE`, so concurrent
     /// reservations serialize and each one counts the uses the previous one committed.
     async fn snapshot_in(
         tx: &mut Transaction<'_, Postgres>,
+        tenant: &str,
         lock: bool,
     ) -> Result<(CatalogSnapshot, BTreeMap<String, Money>), sqlx::Error> {
         let policy: Json<PricingPolicy> =
-            sqlx::query("SELECT body FROM pricing_policy WHERE id = 1")
+            sqlx::query("SELECT body FROM pricing_policy WHERE tenant_id = $1")
+                .bind(tenant)
                 .fetch_one(&mut **tx)
                 .await?
                 .try_get("body")?;
-        let groups = sqlx::query("SELECT body FROM stacking_groups ORDER BY group_id")
-            .fetch_all(&mut **tx)
-            .await?
-            .into_iter()
-            .map(|r| r.try_get::<Json<StackingGroup>, _>("body").map(|j| j.0))
-            .collect::<Result<Vec<_>, _>>()?;
+        let groups =
+            sqlx::query("SELECT body FROM stacking_groups WHERE tenant_id = $1 ORDER BY group_id")
+                .bind(tenant)
+                .fetch_all(&mut **tx)
+                .await?
+                .into_iter()
+                .map(|r| r.try_get::<Json<StackingGroup>, _>("body").map(|j| j.0))
+                .collect::<Result<Vec<_>, _>>()?;
         let budget_sql = if lock {
-            "SELECT promotion_id, remaining, currency FROM promotion_budgets ORDER BY promotion_id FOR UPDATE"
+            "SELECT promotion_id, remaining, currency FROM promotion_budgets WHERE tenant_id = $1 ORDER BY promotion_id FOR UPDATE"
         } else {
-            "SELECT promotion_id, remaining, currency FROM promotion_budgets ORDER BY promotion_id"
+            "SELECT promotion_id, remaining, currency FROM promotion_budgets WHERE tenant_id = $1 ORDER BY promotion_id"
         };
         let mut budgets = BTreeMap::new();
-        for r in sqlx::query(budget_sql).fetch_all(&mut **tx).await? {
+        for r in sqlx::query(budget_sql)
+            .bind(tenant)
+            .fetch_all(&mut **tx)
+            .await?
+        {
             let pid: String = r.try_get("promotion_id")?;
             let remaining: i64 = r.try_get("remaining")?;
             let currency: String = r.try_get("currency")?;
@@ -123,11 +278,12 @@ impl PgStore {
             );
         }
         let promotion_sql = if lock {
-            "SELECT body FROM promotions WHERE NOT archived ORDER BY promotion_id FOR UPDATE"
+            "SELECT body FROM promotions WHERE tenant_id = $1 AND NOT archived ORDER BY promotion_id FOR UPDATE"
         } else {
-            "SELECT body FROM promotions WHERE NOT archived ORDER BY promotion_id"
+            "SELECT body FROM promotions WHERE tenant_id = $1 AND NOT archived ORDER BY promotion_id"
         };
         let promotions = sqlx::query(promotion_sql)
+            .bind(tenant)
             .fetch_all(&mut **tx)
             .await?
             .into_iter()
@@ -139,13 +295,15 @@ impl PgStore {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let coupons = sqlx::query("SELECT body FROM coupons ORDER BY code")
+        let coupons = sqlx::query("SELECT body FROM coupons WHERE tenant_id = $1 ORDER BY code")
+            .bind(tenant)
             .fetch_all(&mut **tx)
             .await?
             .into_iter()
             .map(|r| r.try_get::<Json<Coupon>, _>("body").map(|j| j.0))
             .collect::<Result<Vec<_>, _>>()?;
-        let exchange_rates = sqlx::query("SELECT from_currency, to_currency, numerator, denominator FROM exchange_rates ORDER BY from_currency, to_currency")
+        let exchange_rates = sqlx::query("SELECT from_currency, to_currency, numerator, denominator FROM exchange_rates WHERE tenant_id = $1 ORDER BY from_currency, to_currency")
+            .bind(tenant)
             .fetch_all(&mut **tx)
             .await?
             .into_iter()
@@ -165,7 +323,7 @@ impl PgStore {
             coupons,
             exchange_rates,
         };
-        PgStore::counters_in(tx, None)
+        PgStore::counters_in(tx, tenant, None)
             .await?
             .apply_to(&mut snapshot);
         Ok((snapshot, budgets))
@@ -175,12 +333,14 @@ impl PgStore {
     /// confirmed redemptions. `codes = None` counts every stored coupon.
     async fn counters_in(
         tx: &mut Transaction<'_, Postgres>,
+        tenant: &str,
         codes: Option<&[String]>,
     ) -> Result<Counters, sqlx::Error> {
         let promotion_uses = sqlx::query(
             "SELECT a->>'promotion_id' AS pid, COUNT(*)::BIGINT AS n FROM redemptions r, jsonb_array_elements(r.result->'applied') a \
-             WHERE r.status <> 'cancelled' GROUP BY 1 ORDER BY 1",
+             WHERE r.tenant_id = $1 AND r.status <> 'cancelled' GROUP BY 1 ORDER BY 1",
         )
+        .bind(tenant)
         .fetch_all(&mut **tx)
         .await?
         .into_iter()
@@ -190,13 +350,14 @@ impl PgStore {
         let coupon_uses = sqlx::query(
             "SELECT c.code AS code, COUNT(*)::BIGINT AS n FROM redemptions r \
              JOIN LATERAL jsonb_array_elements_text(r.input->'cart'->'coupon_codes') AS presented(code) ON TRUE \
-             JOIN coupons c ON c.code = presented.code \
-             WHERE r.status <> 'cancelled' AND ($1 OR c.code = ANY($2)) \
+             JOIN coupons c ON c.tenant_id = r.tenant_id AND c.code = presented.code \
+             WHERE r.tenant_id = $3 AND r.status <> 'cancelled' AND ($1 OR c.code = ANY($2)) \
                AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.result->'applied') a WHERE a->>'promotion_id' = c.body->>'promotion_id') \
              GROUP BY 1 ORDER BY 1",
         )
         .bind(codes.is_none())
         .bind(codes.unwrap_or(&all))
+        .bind(tenant)
         .fetch_all(&mut **tx)
         .await?
         .into_iter()
@@ -210,15 +371,17 @@ impl PgStore {
 
     async fn coupon_in(
         tx: &mut Transaction<'_, Postgres>,
+        tenant: &str,
         code: &str,
     ) -> Result<Option<Coupon>, sqlx::Error> {
-        let row = sqlx::query("SELECT body FROM coupons WHERE code = $1")
+        let row = sqlx::query("SELECT body FROM coupons WHERE tenant_id = $1 AND code = $2")
+            .bind(tenant)
             .bind(code)
             .fetch_optional(&mut **tx)
             .await?;
         let Some(row) = row else { return Ok(None) };
         let mut c = row.try_get::<Json<Coupon>, _>("body")?.0;
-        c.uses = PgStore::counters_in(tx, Some(&[code.to_string()]))
+        c.uses = PgStore::counters_in(tx, tenant, Some(&[code.to_string()]))
             .await?
             .coupon(code);
         Ok(Some(c))
@@ -230,13 +393,15 @@ impl PgStore {
 
     async fn uses_in(
         tx: &mut Transaction<'_, Postgres>,
+        tenant: &str,
         customer_id: &str,
     ) -> Result<Uses, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT a->>'promotion_id' AS pid, COUNT(*)::BIGINT AS n FROM redemptions r, jsonb_array_elements(r.result->'applied') a \
-             WHERE r.customer_id = $1 AND r.status <> 'cancelled' GROUP BY 1 ORDER BY 1",
+             WHERE r.tenant_id = $2 AND r.customer_id = $1 AND r.status <> 'cancelled' GROUP BY 1 ORDER BY 1",
         )
         .bind(customer_id)
+        .bind(tenant)
         .fetch_all(&mut **tx)
         .await?;
         rows.into_iter()
@@ -258,6 +423,19 @@ impl PgStore {
             updated_at: r.try_get("updated_at")?,
         })
     }
+
+    /// Non-archived promotion exists in this tenant.
+    async fn promotion_live(&self, promotion_id: &str) -> Result<bool, StorageError> {
+        let live: Option<i64> = sqlx::query_scalar(
+            "SELECT 1::BIGINT FROM promotions WHERE tenant_id = $1 AND promotion_id = $2 AND NOT archived",
+        )
+        .bind(&self.tenant)
+        .bind(promotion_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(live.is_some())
+    }
 }
 
 #[async_trait]
@@ -265,7 +443,7 @@ impl PromotionCatalog for PgStore {
     #[tracing::instrument(name = "db.snapshot", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "snapshot"))]
     async fn snapshot(&self) -> Result<CatalogSnapshot, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
-        let (snapshot, _) = PgStore::snapshot_in(&mut tx, false)
+        let (snapshot, _) = PgStore::snapshot_in(&mut tx, &self.tenant, false)
             .await
             .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
@@ -274,18 +452,21 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.get_policy", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_policy"))]
     async fn get_policy(&self) -> Result<PricingPolicy, StorageError> {
-        let j: Json<PricingPolicy> = sqlx::query("SELECT body FROM pricing_policy WHERE id = 1")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(storage)?
-            .try_get("body")
-            .map_err(storage)?;
+        let j: Json<PricingPolicy> =
+            sqlx::query("SELECT body FROM pricing_policy WHERE tenant_id = $1")
+                .bind(&self.tenant)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(storage)?
+                .try_get("body")
+                .map_err(storage)?;
         Ok(j.0)
     }
 
     #[tracing::instrument(name = "db.put_policy", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_policy"))]
     async fn put_policy(&self, policy: PricingPolicy) -> Result<(), StorageError> {
-        sqlx::query("INSERT INTO pricing_policy (id, body, updated_at) VALUES (1, $1, $2) ON CONFLICT (id) DO UPDATE SET body = $1, updated_at = $2")
+        sqlx::query("INSERT INTO pricing_policy (tenant_id, body, updated_at) VALUES ($1, $2, $3) ON CONFLICT (tenant_id) DO UPDATE SET body = $2, updated_at = $3")
+            .bind(&self.tenant)
             .bind(Json(policy))
             .bind(epoch())
             .execute(&self.pool)
@@ -296,7 +477,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.list_groups", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_groups"))]
     async fn list_groups(&self) -> Result<Vec<StackingGroup>, StorageError> {
-        sqlx::query("SELECT body FROM stacking_groups ORDER BY group_id")
+        sqlx::query("SELECT body FROM stacking_groups WHERE tenant_id = $1 ORDER BY group_id")
+            .bind(&self.tenant)
             .fetch_all(&self.pool)
             .await
             .map_err(storage)?
@@ -311,11 +493,13 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.get_group", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_group"))]
     async fn get_group(&self, group_id: &str) -> Result<Option<StackingGroup>, StorageError> {
-        let row = sqlx::query("SELECT body FROM stacking_groups WHERE group_id = $1")
-            .bind(group_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(storage)?;
+        let row =
+            sqlx::query("SELECT body FROM stacking_groups WHERE tenant_id = $1 AND group_id = $2")
+                .bind(&self.tenant)
+                .bind(group_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(storage)?;
         row.map(|r| {
             r.try_get::<Json<StackingGroup>, _>("body")
                 .map(|j| j.0)
@@ -326,7 +510,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.put_group", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_group"))]
     async fn put_group(&self, group: StackingGroup) -> Result<(), StorageError> {
-        sqlx::query("INSERT INTO stacking_groups (group_id, body, updated_at) VALUES ($1, $2, $3) ON CONFLICT (group_id) DO UPDATE SET body = $2, updated_at = $3")
+        sqlx::query("INSERT INTO stacking_groups (tenant_id, group_id, body, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, group_id) DO UPDATE SET body = $3, updated_at = $4")
+            .bind(&self.tenant)
             .bind(&group.group_id)
             .bind(Json(&group))
             .bind(epoch())
@@ -338,7 +523,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.delete_group", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_group"))]
     async fn delete_group(&self, group_id: &str) -> Result<bool, StorageError> {
-        let r = sqlx::query("DELETE FROM stacking_groups WHERE group_id = $1")
+        let r = sqlx::query("DELETE FROM stacking_groups WHERE tenant_id = $1 AND group_id = $2")
+            .bind(&self.tenant)
             .bind(group_id)
             .execute(&self.pool)
             .await
@@ -354,8 +540,10 @@ impl PromotionCatalog for PgStore {
     #[tracing::instrument(name = "db.get_promotion", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_promotion"))]
     async fn get_promotion(&self, promotion_id: &str) -> Result<Option<Promotion>, StorageError> {
         let row = sqlx::query(
-            "SELECT p.body, b.remaining, b.currency FROM promotions p LEFT JOIN promotion_budgets b USING (promotion_id) WHERE p.promotion_id = $1 AND NOT p.archived",
+            "SELECT p.body, b.remaining, b.currency FROM promotions p LEFT JOIN promotion_budgets b USING (tenant_id, promotion_id) \
+             WHERE p.tenant_id = $1 AND p.promotion_id = $2 AND NOT p.archived",
         )
+        .bind(&self.tenant)
         .bind(promotion_id)
         .fetch_optional(&self.pool)
         .await
@@ -383,9 +571,10 @@ impl PromotionCatalog for PgStore {
         promotion.remaining_budget = None;
         let now = epoch();
         sqlx::query(
-            "INSERT INTO promotions (promotion_id, body, archived, created_at, updated_at) VALUES ($1, $2, FALSE, $3, $3) \
-             ON CONFLICT (promotion_id) DO UPDATE SET body = $2, archived = FALSE, updated_at = $3",
+            "INSERT INTO promotions (tenant_id, promotion_id, body, archived, created_at, updated_at) VALUES ($1, $2, $3, FALSE, $4, $4) \
+             ON CONFLICT (tenant_id, promotion_id) DO UPDATE SET body = $3, archived = FALSE, updated_at = $4",
         )
+        .bind(&self.tenant)
         .bind(&promotion.promotion_id)
         .bind(Json(&promotion))
         .bind(now)
@@ -397,7 +586,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.archive_promotion", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "archive_promotion"))]
     async fn archive_promotion(&self, promotion_id: &str) -> Result<bool, StorageError> {
-        let r = sqlx::query("UPDATE promotions SET archived = TRUE, updated_at = $2 WHERE promotion_id = $1 AND NOT archived")
+        let r = sqlx::query("UPDATE promotions SET archived = TRUE, updated_at = $3 WHERE tenant_id = $1 AND promotion_id = $2 AND NOT archived")
+            .bind(&self.tenant)
             .bind(promotion_id)
             .bind(epoch())
             .execute(&self.pool)
@@ -408,11 +598,15 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.get_budget", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_budget"))]
     async fn get_budget(&self, promotion_id: &str) -> Result<Option<Option<Money>>, StorageError> {
-        let row = sqlx::query("SELECT b.remaining, b.currency FROM promotions p LEFT JOIN promotion_budgets b USING (promotion_id) WHERE p.promotion_id = $1")
-            .bind(promotion_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(storage)?;
+        let row = sqlx::query(
+            "SELECT b.remaining, b.currency FROM promotions p LEFT JOIN promotion_budgets b USING (tenant_id, promotion_id) \
+             WHERE p.tenant_id = $1 AND p.promotion_id = $2",
+        )
+        .bind(&self.tenant)
+        .bind(promotion_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?;
         match row {
             None => Ok(None),
             Some(r) => {
@@ -435,18 +629,21 @@ impl PromotionCatalog for PgStore {
         promotion_id: &str,
         remaining: Option<Money>,
     ) -> Result<bool, StorageError> {
-        let exists: Option<sqlx::postgres::PgRow> =
-            sqlx::query("SELECT 1 FROM promotions WHERE promotion_id = $1")
-                .bind(promotion_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(storage)?;
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1::BIGINT FROM promotions WHERE tenant_id = $1 AND promotion_id = $2",
+        )
+        .bind(&self.tenant)
+        .bind(promotion_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?;
         if exists.is_none() {
             return Ok(false);
         }
         match remaining {
             Some(m) => {
-                sqlx::query("INSERT INTO promotion_budgets (promotion_id, remaining, currency, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (promotion_id) DO UPDATE SET remaining = $2, currency = $3, updated_at = $4")
+                sqlx::query("INSERT INTO promotion_budgets (tenant_id, promotion_id, remaining, currency, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tenant_id, promotion_id) DO UPDATE SET remaining = $3, currency = $4, updated_at = $5")
+                    .bind(&self.tenant)
                     .bind(promotion_id)
                     .bind(m.amount)
                     .bind(&m.currency)
@@ -456,11 +653,14 @@ impl PromotionCatalog for PgStore {
                     .map_err(storage)?;
             }
             None => {
-                sqlx::query("DELETE FROM promotion_budgets WHERE promotion_id = $1")
-                    .bind(promotion_id)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(storage)?;
+                sqlx::query(
+                    "DELETE FROM promotion_budgets WHERE tenant_id = $1 AND promotion_id = $2",
+                )
+                .bind(&self.tenant)
+                .bind(promotion_id)
+                .execute(&self.pool)
+                .await
+                .map_err(storage)?;
             }
         }
         Ok(true)
@@ -468,23 +668,22 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.list_budgets", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_budgets"))]
     async fn list_budgets(&self) -> Result<Vec<(PromotionId, Money)>, StorageError> {
-        sqlx::query(
-            "SELECT promotion_id, remaining, currency FROM promotion_budgets ORDER BY promotion_id",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(storage)?
-        .into_iter()
-        .map(|r| {
-            Ok((
-                r.try_get::<String, _>("promotion_id").map_err(storage)?,
-                Money {
-                    amount: r.try_get("remaining").map_err(storage)?,
-                    currency: r.try_get("currency").map_err(storage)?,
-                },
-            ))
-        })
-        .collect()
+        sqlx::query("SELECT promotion_id, remaining, currency FROM promotion_budgets WHERE tenant_id = $1 ORDER BY promotion_id")
+            .bind(&self.tenant)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage)?
+            .into_iter()
+            .map(|r| {
+                Ok((
+                    r.try_get::<String, _>("promotion_id").map_err(storage)?,
+                    Money {
+                        amount: r.try_get("remaining").map_err(storage)?,
+                        currency: r.try_get("currency").map_err(storage)?,
+                    },
+                ))
+            })
+            .collect()
     }
 
     #[tracing::instrument(name = "db.list_coupons", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_coupons"))]
@@ -495,14 +694,17 @@ impl PromotionCatalog for PgStore {
     #[tracing::instrument(name = "db.get_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_coupon"))]
     async fn get_coupon(&self, code: &str) -> Result<Option<Coupon>, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
-        let c = PgStore::coupon_in(&mut tx, code).await.map_err(storage)?;
+        let c = PgStore::coupon_in(&mut tx, &self.tenant, code)
+            .await
+            .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
         Ok(c)
     }
 
     #[tracing::instrument(name = "db.put_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_coupon"))]
     async fn put_coupon(&self, coupon: Coupon) -> Result<(), StorageError> {
-        sqlx::query("INSERT INTO coupons (code, body, updated_at) VALUES ($1, $2, $3) ON CONFLICT (code) DO UPDATE SET body = $2, updated_at = $3")
+        sqlx::query("INSERT INTO coupons (tenant_id, code, body, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, code) DO UPDATE SET body = $3, updated_at = $4")
+            .bind(&self.tenant)
             .bind(&coupon.code)
             .bind(Json(&coupon))
             .bind(epoch())
@@ -514,7 +716,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.delete_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_coupon"))]
     async fn delete_coupon(&self, code: &str) -> Result<bool, StorageError> {
-        let r = sqlx::query("DELETE FROM coupons WHERE code = $1")
+        let r = sqlx::query("DELETE FROM coupons WHERE tenant_id = $1 AND code = $2")
+            .bind(&self.tenant)
             .bind(code)
             .execute(&self.pool)
             .await
@@ -530,9 +733,10 @@ impl PromotionCatalog for PgStore {
     #[tracing::instrument(name = "db.put_rate", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_rate"))]
     async fn put_rate(&self, rate: ExchangeRate) -> Result<(), StorageError> {
         sqlx::query(
-            "INSERT INTO exchange_rates (from_currency, to_currency, numerator, denominator, updated_at) VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (from_currency, to_currency) DO UPDATE SET numerator = $3, denominator = $4, updated_at = $5",
+            "INSERT INTO exchange_rates (tenant_id, from_currency, to_currency, numerator, denominator, updated_at) VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (tenant_id, from_currency, to_currency) DO UPDATE SET numerator = $4, denominator = $5, updated_at = $6",
         )
+        .bind(&self.tenant)
         .bind(&rate.from)
         .bind(&rate.to)
         .bind(rate.numerator)
@@ -546,19 +750,20 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.delete_rate", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_rate"))]
     async fn delete_rate(&self, from: &str, to: &str) -> Result<bool, StorageError> {
-        let r =
-            sqlx::query("DELETE FROM exchange_rates WHERE from_currency = $1 AND to_currency = $2")
-                .bind(from)
-                .bind(to)
-                .execute(&self.pool)
-                .await
-                .map_err(storage)?;
+        let r = sqlx::query("DELETE FROM exchange_rates WHERE tenant_id = $1 AND from_currency = $2 AND to_currency = $3")
+            .bind(&self.tenant)
+            .bind(from)
+            .bind(to)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
         Ok(r.rows_affected() > 0)
     }
 
     #[tracing::instrument(name = "db.list_grant_rules", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_grant_rules"))]
     async fn list_grant_rules(&self) -> Result<Vec<GrantRule>, StorageError> {
-        sqlx::query("SELECT body FROM grant_rules ORDER BY rule_id")
+        sqlx::query("SELECT body FROM grant_rules WHERE tenant_id = $1 ORDER BY rule_id")
+            .bind(&self.tenant)
             .fetch_all(&self.pool)
             .await
             .map_err(storage)?
@@ -569,7 +774,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.get_grant_rule", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_grant_rule"))]
     async fn get_grant_rule(&self, rule_id: &str) -> Result<Option<GrantRule>, StorageError> {
-        sqlx::query("SELECT body FROM grant_rules WHERE rule_id = $1")
+        sqlx::query("SELECT body FROM grant_rules WHERE tenant_id = $1 AND rule_id = $2")
+            .bind(&self.tenant)
             .bind(rule_id)
             .fetch_optional(&self.pool)
             .await
@@ -580,7 +786,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.put_grant_rule", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_grant_rule"))]
     async fn put_grant_rule(&self, rule: GrantRule) -> Result<(), StorageError> {
-        sqlx::query("INSERT INTO grant_rules (rule_id, body, updated_at) VALUES ($1, $2, $3) ON CONFLICT (rule_id) DO UPDATE SET body = $2, updated_at = $3")
+        sqlx::query("INSERT INTO grant_rules (tenant_id, rule_id, body, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, rule_id) DO UPDATE SET body = $3, updated_at = $4")
+            .bind(&self.tenant)
             .bind(&rule.rule_id)
             .bind(Json(&rule))
             .bind(epoch())
@@ -592,7 +799,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.delete_grant_rule", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_grant_rule"))]
     async fn delete_grant_rule(&self, rule_id: &str) -> Result<bool, StorageError> {
-        let r = sqlx::query("DELETE FROM grant_rules WHERE rule_id = $1")
+        let r = sqlx::query("DELETE FROM grant_rules WHERE tenant_id = $1 AND rule_id = $2")
+            .bind(&self.tenant)
             .bind(rule_id)
             .execute(&self.pool)
             .await
@@ -606,13 +814,16 @@ impl PromotionCatalog for PgStore {
         let now = epoch();
         for c in &coupons {
             // A plain INSERT: an existing code aborts the whole batch.
-            sqlx::query("INSERT INTO coupons (code, body, updated_at) VALUES ($1, $2, $3)")
-                .bind(&c.code)
-                .bind(Json(c))
-                .bind(now)
-                .execute(&mut *tx)
-                .await
-                .map_err(storage)?;
+            sqlx::query(
+                "INSERT INTO coupons (tenant_id, code, body, updated_at) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(&self.tenant)
+            .bind(&c.code)
+            .bind(Json(c))
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
         }
         tx.commit().await.map_err(storage)?;
         Ok(())
@@ -625,18 +836,22 @@ impl PromotionCatalog for PgStore {
         order_id: &str,
     ) -> Result<Option<Coupon>, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
-        let code: Option<String> =
-            sqlx::query("SELECT code FROM grants WHERE trigger = $1 AND order_id = $2")
-                .bind(trigger.as_str())
-                .bind(order_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(storage)?
-                .map(|r| r.try_get("code"))
-                .transpose()
-                .map_err(storage)?;
+        let code: Option<String> = sqlx::query(
+            "SELECT code FROM grants WHERE tenant_id = $1 AND trigger = $2 AND order_id = $3",
+        )
+        .bind(&self.tenant)
+        .bind(trigger.as_str())
+        .bind(order_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(storage)?
+        .map(|r| r.try_get("code"))
+        .transpose()
+        .map_err(storage)?;
         let c = match code {
-            Some(code) => PgStore::coupon_in(&mut tx, &code).await.map_err(storage)?,
+            Some(code) => PgStore::coupon_in(&mut tx, &self.tenant, &code)
+                .await
+                .map_err(storage)?,
             None => None,
         };
         tx.commit().await.map_err(storage)?;
@@ -652,7 +867,8 @@ impl PromotionCatalog for PgStore {
         now: Timestamp,
     ) -> Result<Coupon, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
-        let inserted = sqlx::query("INSERT INTO grants (trigger, order_id, code, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (trigger, order_id) DO NOTHING")
+        let inserted = sqlx::query("INSERT INTO grants (tenant_id, trigger, order_id, code, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tenant_id, trigger, order_id) DO NOTHING")
+            .bind(&self.tenant)
             .bind(trigger.as_str())
             .bind(order_id)
             .bind(&coupon.code)
@@ -663,26 +879,33 @@ impl PromotionCatalog for PgStore {
             .rows_affected();
         if inserted == 0 {
             // Another grant for the same key won: hand back what it issued.
-            let code: String =
-                sqlx::query("SELECT code FROM grants WHERE trigger = $1 AND order_id = $2")
-                    .bind(trigger.as_str())
-                    .bind(order_id)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(storage)?
-                    .try_get("code")
-                    .map_err(storage)?;
-            let existing = PgStore::coupon_in(&mut tx, &code).await.map_err(storage)?;
+            let code: String = sqlx::query(
+                "SELECT code FROM grants WHERE tenant_id = $1 AND trigger = $2 AND order_id = $3",
+            )
+            .bind(&self.tenant)
+            .bind(trigger.as_str())
+            .bind(order_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(storage)?
+            .try_get("code")
+            .map_err(storage)?;
+            let existing = PgStore::coupon_in(&mut tx, &self.tenant, &code)
+                .await
+                .map_err(storage)?;
             tx.commit().await.map_err(storage)?;
             return Ok(existing.unwrap_or(coupon));
         }
-        sqlx::query("INSERT INTO coupons (code, body, updated_at) VALUES ($1, $2, $3)")
-            .bind(&coupon.code)
-            .bind(Json(&coupon))
-            .bind(now)
-            .execute(&mut *tx)
-            .await
-            .map_err(storage)?;
+        sqlx::query(
+            "INSERT INTO coupons (tenant_id, code, body, updated_at) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&self.tenant)
+        .bind(&coupon.code)
+        .bind(Json(&coupon))
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
         Ok(coupon)
     }
@@ -690,18 +913,18 @@ impl PromotionCatalog for PgStore {
     #[tracing::instrument(name = "db.coupons_bound_to", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "coupons_bound_to"))]
     async fn coupons_bound_to(&self, customer_id: &str) -> Result<Vec<Coupon>, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
-        let mut coupons =
-            sqlx::query("SELECT body FROM coupons WHERE body ->> 'customer_id' = $1 ORDER BY code")
-                .bind(customer_id)
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(storage)?
-                .into_iter()
-                .map(|r| r.try_get::<Json<Coupon>, _>("body").map(|j| j.0))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(storage)?;
+        let mut coupons = sqlx::query("SELECT body FROM coupons WHERE tenant_id = $1 AND body ->> 'customer_id' = $2 ORDER BY code")
+            .bind(&self.tenant)
+            .bind(customer_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(storage)?
+            .into_iter()
+            .map(|r| r.try_get::<Json<Coupon>, _>("body").map(|j| j.0))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage)?;
         let codes: Vec<String> = coupons.iter().map(|c| c.code.clone()).collect();
-        let counters = PgStore::counters_in(&mut tx, Some(&codes))
+        let counters = PgStore::counters_in(&mut tx, &self.tenant, Some(&codes))
             .await
             .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
@@ -713,7 +936,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.saved_codes", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "saved_codes"))]
     async fn saved_codes(&self, customer_id: &str) -> Result<Vec<String>, StorageError> {
-        sqlx::query("SELECT code FROM saved_coupons WHERE customer_id = $1 ORDER BY code")
+        sqlx::query("SELECT code FROM saved_coupons WHERE tenant_id = $1 AND customer_id = $2 ORDER BY code")
+            .bind(&self.tenant)
             .bind(customer_id)
             .fetch_all(&self.pool)
             .await
@@ -725,7 +949,8 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.save_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "save_coupon"))]
     async fn save_coupon(&self, customer_id: &str, code: &str) -> Result<(), StorageError> {
-        sqlx::query("INSERT INTO saved_coupons (customer_id, code, created_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
+        sqlx::query("INSERT INTO saved_coupons (tenant_id, customer_id, code, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING")
+            .bind(&self.tenant)
             .bind(customer_id)
             .bind(code)
             .bind(epoch())
@@ -737,12 +962,15 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.forget_coupon", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "forget_coupon"))]
     async fn forget_coupon(&self, customer_id: &str, code: &str) -> Result<bool, StorageError> {
-        let r = sqlx::query("DELETE FROM saved_coupons WHERE customer_id = $1 AND code = $2")
-            .bind(customer_id)
-            .bind(code)
-            .execute(&self.pool)
-            .await
-            .map_err(storage)?;
+        let r = sqlx::query(
+            "DELETE FROM saved_coupons WHERE tenant_id = $1 AND customer_id = $2 AND code = $3",
+        )
+        .bind(&self.tenant)
+        .bind(customer_id)
+        .bind(code)
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -751,13 +979,17 @@ impl PromotionCatalog for PgStore {
         &self,
         promotion_id: &str,
     ) -> Result<Option<PromotionMetadata>, StorageError> {
-        sqlx::query("SELECT m.body FROM promotion_metadata m JOIN promotions p USING (promotion_id) WHERE m.promotion_id = $1 AND NOT p.archived")
-            .bind(promotion_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(storage)?
-            .map(|r| r.try_get::<Json<PromotionMetadata>, _>("body").map(|j| j.0).map_err(storage))
-            .transpose()
+        sqlx::query(
+            "SELECT m.body FROM promotion_metadata m JOIN promotions p USING (tenant_id, promotion_id) \
+             WHERE m.tenant_id = $1 AND m.promotion_id = $2 AND NOT p.archived",
+        )
+        .bind(&self.tenant)
+        .bind(promotion_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?
+        .map(|r| r.try_get::<Json<PromotionMetadata>, _>("body").map(|j| j.0).map_err(storage))
+        .transpose()
     }
 
     #[tracing::instrument(name = "db.put_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_metadata"))]
@@ -767,10 +999,11 @@ impl PromotionCatalog for PgStore {
         metadata: PromotionMetadata,
     ) -> Result<bool, StorageError> {
         let r = sqlx::query(
-            "INSERT INTO promotion_metadata (promotion_id, body, updated_at) \
-             SELECT promotion_id, $2, $3 FROM promotions WHERE promotion_id = $1 AND NOT archived \
-             ON CONFLICT (promotion_id) DO UPDATE SET body = $2, updated_at = $3",
+            "INSERT INTO promotion_metadata (tenant_id, promotion_id, body, updated_at) \
+             SELECT tenant_id, promotion_id, $3, $4 FROM promotions WHERE tenant_id = $1 AND promotion_id = $2 AND NOT archived \
+             ON CONFLICT (tenant_id, promotion_id) DO UPDATE SET body = $3, updated_at = $4",
         )
+        .bind(&self.tenant)
         .bind(promotion_id)
         .bind(Json(&metadata))
         .bind(epoch())
@@ -782,42 +1015,44 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.delete_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_metadata"))]
     async fn delete_metadata(&self, promotion_id: &str) -> Result<bool, StorageError> {
-        let r = sqlx::query("DELETE FROM promotion_metadata WHERE promotion_id = $1")
-            .bind(promotion_id)
-            .execute(&self.pool)
-            .await
-            .map_err(storage)?;
+        let r = sqlx::query(
+            "DELETE FROM promotion_metadata WHERE tenant_id = $1 AND promotion_id = $2",
+        )
+        .bind(&self.tenant)
+        .bind(promotion_id)
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
         Ok(r.rows_affected() > 0)
     }
 
     #[tracing::instrument(name = "db.list_metadata", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "list_metadata"))]
     async fn list_metadata(&self) -> Result<Vec<(PromotionId, PromotionMetadata)>, StorageError> {
-        sqlx::query("SELECT m.promotion_id, m.body FROM promotion_metadata m JOIN promotions p USING (promotion_id) WHERE NOT p.archived ORDER BY m.promotion_id")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(storage)?
-            .iter()
-            .map(|r| {
-                Ok((
-                    r.try_get::<String, _>("promotion_id").map_err(storage)?,
-                    r.try_get::<Json<PromotionMetadata>, _>("body").map(|j| j.0).map_err(storage)?,
-                ))
-            })
-            .collect()
+        sqlx::query(
+            "SELECT m.promotion_id, m.body FROM promotion_metadata m JOIN promotions p USING (tenant_id, promotion_id) \
+             WHERE m.tenant_id = $1 AND NOT p.archived ORDER BY m.promotion_id",
+        )
+        .bind(&self.tenant)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage)?
+        .iter()
+        .map(|r| {
+            Ok((
+                r.try_get::<String, _>("promotion_id").map_err(storage)?,
+                r.try_get::<Json<PromotionMetadata>, _>("body").map(|j| j.0).map_err(storage)?,
+            ))
+        })
+        .collect()
     }
+
     #[tracing::instrument(name = "db.get_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_allowlist"))]
     async fn get_allowlist(&self, promotion_id: &str) -> Result<Option<Vec<String>>, StorageError> {
-        let live: Option<i64> = sqlx::query_scalar(
-            "SELECT 1::BIGINT FROM promotions WHERE promotion_id = $1 AND NOT archived",
-        )
-        .bind(promotion_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(storage)?;
-        if live.is_none() {
+        if !self.promotion_live(promotion_id).await? {
             return Ok(None);
         }
-        let ids: Vec<String> = sqlx::query_scalar("SELECT customer_id FROM promotion_allowlist WHERE promotion_id = $1 ORDER BY customer_id")
+        let ids: Vec<String> = sqlx::query_scalar("SELECT customer_id FROM promotion_allowlist WHERE tenant_id = $1 AND promotion_id = $2 ORDER BY customer_id")
+            .bind(&self.tenant)
             .bind(promotion_id)
             .fetch_all(&self.pool)
             .await
@@ -833,8 +1068,9 @@ impl PromotionCatalog for PgStore {
     ) -> Result<bool, StorageError> {
         let mut tx = self.pool.begin().await.map_err(storage)?;
         let live: Option<i64> = sqlx::query_scalar(
-            "SELECT 1::BIGINT FROM promotions WHERE promotion_id = $1 AND NOT archived FOR UPDATE",
+            "SELECT 1::BIGINT FROM promotions WHERE tenant_id = $1 AND promotion_id = $2 AND NOT archived FOR UPDATE",
         )
+        .bind(&self.tenant)
         .bind(promotion_id)
         .fetch_optional(&mut *tx)
         .await
@@ -842,7 +1078,8 @@ impl PromotionCatalog for PgStore {
         if live.is_none() {
             return Ok(false);
         }
-        sqlx::query("DELETE FROM promotion_allowlist WHERE promotion_id = $1")
+        sqlx::query("DELETE FROM promotion_allowlist WHERE tenant_id = $1 AND promotion_id = $2")
+            .bind(&self.tenant)
             .bind(promotion_id)
             .execute(&mut *tx)
             .await
@@ -850,7 +1087,8 @@ impl PromotionCatalog for PgStore {
         let mut ids = customer_ids;
         ids.sort();
         ids.dedup();
-        sqlx::query("INSERT INTO promotion_allowlist (promotion_id, customer_id, created_at) SELECT $1, unnest($2::TEXT[]), $3")
+        sqlx::query("INSERT INTO promotion_allowlist (tenant_id, promotion_id, customer_id, created_at) SELECT $1, $2, unnest($3::TEXT[]), $4")
+            .bind(&self.tenant)
             .bind(promotion_id)
             .bind(&ids)
             .bind(epoch())
@@ -863,17 +1101,11 @@ impl PromotionCatalog for PgStore {
 
     #[tracing::instrument(name = "db.delete_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_allowlist"))]
     async fn delete_allowlist(&self, promotion_id: &str) -> Result<bool, StorageError> {
-        let live: Option<i64> = sqlx::query_scalar(
-            "SELECT 1::BIGINT FROM promotions WHERE promotion_id = $1 AND NOT archived",
-        )
-        .bind(promotion_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(storage)?;
-        if live.is_none() {
+        if !self.promotion_live(promotion_id).await? {
             return Ok(false);
         }
-        sqlx::query("DELETE FROM promotion_allowlist WHERE promotion_id = $1")
+        sqlx::query("DELETE FROM promotion_allowlist WHERE tenant_id = $1 AND promotion_id = $2")
+            .bind(&self.tenant)
             .bind(promotion_id)
             .execute(&self.pool)
             .await
@@ -888,10 +1120,11 @@ impl PromotionCatalog for PgStore {
         customer_id: &str,
     ) -> Result<bool, StorageError> {
         let r = sqlx::query(
-            "INSERT INTO promotion_allowlist (promotion_id, customer_id, created_at) \
-             SELECT promotion_id, $2, $3 FROM promotions WHERE promotion_id = $1 AND NOT archived \
-             ON CONFLICT (promotion_id, customer_id) DO UPDATE SET created_at = promotion_allowlist.created_at",
+            "INSERT INTO promotion_allowlist (tenant_id, promotion_id, customer_id, created_at) \
+             SELECT tenant_id, promotion_id, $3, $4 FROM promotions WHERE tenant_id = $1 AND promotion_id = $2 AND NOT archived \
+             ON CONFLICT (tenant_id, promotion_id, customer_id) DO UPDATE SET created_at = promotion_allowlist.created_at",
         )
+        .bind(&self.tenant)
         .bind(promotion_id)
         .bind(customer_id)
         .bind(epoch())
@@ -907,14 +1140,13 @@ impl PromotionCatalog for PgStore {
         promotion_id: &str,
         customer_id: &str,
     ) -> Result<bool, StorageError> {
-        let r = sqlx::query(
-            "DELETE FROM promotion_allowlist WHERE promotion_id = $1 AND customer_id = $2",
-        )
-        .bind(promotion_id)
-        .bind(customer_id)
-        .execute(&self.pool)
-        .await
-        .map_err(storage)?;
+        let r = sqlx::query("DELETE FROM promotion_allowlist WHERE tenant_id = $1 AND promotion_id = $2 AND customer_id = $3")
+            .bind(&self.tenant)
+            .bind(promotion_id)
+            .bind(customer_id)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -925,9 +1157,10 @@ impl PromotionCatalog for PgStore {
         customer_id: &str,
     ) -> Result<bool, StorageError> {
         let hit: Option<i64> = sqlx::query_scalar(
-            "SELECT 1::BIGINT FROM promotion_allowlist a JOIN promotions p USING (promotion_id) \
-             WHERE a.promotion_id = $1 AND a.customer_id = $2 AND NOT p.archived",
+            "SELECT 1::BIGINT FROM promotion_allowlist a JOIN promotions p USING (tenant_id, promotion_id) \
+             WHERE a.tenant_id = $1 AND a.promotion_id = $2 AND a.customer_id = $3 AND NOT p.archived",
         )
+        .bind(&self.tenant)
         .bind(promotion_id)
         .bind(customer_id)
         .fetch_optional(&self.pool)
@@ -939,9 +1172,10 @@ impl PromotionCatalog for PgStore {
     #[tracing::instrument(name = "db.allowlisted_for", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "allowlisted_for"))]
     async fn allowlisted_for(&self, customer_id: &str) -> Result<Vec<PromotionId>, StorageError> {
         sqlx::query_scalar(
-            "SELECT a.promotion_id FROM promotion_allowlist a JOIN promotions p USING (promotion_id) \
-             WHERE a.customer_id = $1 AND NOT p.archived ORDER BY a.promotion_id",
+            "SELECT a.promotion_id FROM promotion_allowlist a JOIN promotions p USING (tenant_id, promotion_id) \
+             WHERE a.tenant_id = $1 AND a.customer_id = $2 AND NOT p.archived ORDER BY a.promotion_id",
         )
+        .bind(&self.tenant)
         .bind(customer_id)
         .fetch_all(&self.pool)
         .await
@@ -961,7 +1195,8 @@ impl RedemptionRepository for PgStore {
         price: &PricingFn<'_>,
     ) -> Result<ReserveOutcome, RedemptionError> {
         let mut tx = self.pool.begin().await.map_err(redemption_storage)?;
-        let existing = sqlx::query("SELECT order_id, customer_id, status, input, result, created_at, updated_at FROM redemptions WHERE order_id = $1 FOR UPDATE")
+        let existing = sqlx::query("SELECT order_id, customer_id, status, input, result, created_at, updated_at FROM redemptions WHERE tenant_id = $1 AND order_id = $2 FOR UPDATE")
+            .bind(&self.tenant)
             .bind(order_id)
             .fetch_optional(&mut *tx)
             .await
@@ -973,18 +1208,19 @@ impl RedemptionRepository for PgStore {
                 return Ok(ReserveOutcome::Idempotent(r));
             }
         }
-        let (snapshot, budgets) = PgStore::snapshot_in(&mut tx, true)
+        let (snapshot, budgets) = PgStore::snapshot_in(&mut tx, &self.tenant, true)
             .await
             .map_err(redemption_storage)?;
         let uses = match customer_id {
-            Some(c) => PgStore::uses_in(&mut tx, c)
+            Some(c) => PgStore::uses_in(&mut tx, &self.tenant, c)
                 .await
                 .map_err(redemption_storage)?,
             None => Vec::new(),
         };
         let (input, result) = price(snapshot, uses).map_err(RedemptionError::Pricing)?;
         for (pid, amount) in budget_moves(&result, &budgets) {
-            sqlx::query("UPDATE promotion_budgets SET remaining = remaining - $2, updated_at = $3 WHERE promotion_id = $1")
+            sqlx::query("UPDATE promotion_budgets SET remaining = remaining - $3, updated_at = $4 WHERE tenant_id = $1 AND promotion_id = $2")
+                .bind(&self.tenant)
                 .bind(&pid)
                 .bind(amount)
                 .bind(now)
@@ -993,9 +1229,10 @@ impl RedemptionRepository for PgStore {
                 .map_err(redemption_storage)?;
         }
         sqlx::query(
-            "INSERT INTO redemptions (order_id, customer_id, status, input, result, created_at, updated_at) VALUES ($1, $5, 'reserved', $2, $3, $4, $4) \
-             ON CONFLICT (order_id) DO UPDATE SET customer_id = $5, status = 'reserved', input = $2, result = $3, created_at = $4, updated_at = $4",
+            "INSERT INTO redemptions (tenant_id, order_id, customer_id, status, input, result, created_at, updated_at) VALUES ($1, $2, $6, 'reserved', $3, $4, $5, $5) \
+             ON CONFLICT (tenant_id, order_id) DO UPDATE SET customer_id = $6, status = 'reserved', input = $3, result = $4, created_at = $5, updated_at = $5",
         )
+        .bind(&self.tenant)
         .bind(order_id)
         .bind(Json(&input))
         .bind(Json(&result))
@@ -1024,7 +1261,8 @@ impl RedemptionRepository for PgStore {
         now: Timestamp,
     ) -> Result<Redemption, RedemptionError> {
         let mut tx = self.pool.begin().await.map_err(redemption_storage)?;
-        let row = sqlx::query("SELECT order_id, customer_id, status, input, result, created_at, updated_at FROM redemptions WHERE order_id = $1 FOR UPDATE")
+        let row = sqlx::query("SELECT order_id, customer_id, status, input, result, created_at, updated_at FROM redemptions WHERE tenant_id = $1 AND order_id = $2 FOR UPDATE")
+            .bind(&self.tenant)
             .bind(order_id)
             .fetch_optional(&mut *tx)
             .await
@@ -1040,7 +1278,8 @@ impl RedemptionRepository for PgStore {
         if to == RedemptionStatus::Cancelled {
             // Restore what the result granted to promotions that still have a budget row.
             for a in &current.result.applied {
-                sqlx::query("UPDATE promotion_budgets SET remaining = remaining + $2, updated_at = $3 WHERE promotion_id = $1")
+                sqlx::query("UPDATE promotion_budgets SET remaining = remaining + $3, updated_at = $4 WHERE tenant_id = $1 AND promotion_id = $2")
+                    .bind(&self.tenant)
                     .bind(&a.promotion_id)
                     .bind(a.discount.amount)
                     .bind(now)
@@ -1049,7 +1288,8 @@ impl RedemptionRepository for PgStore {
                     .map_err(redemption_storage)?;
             }
         }
-        sqlx::query("UPDATE redemptions SET status = $2, updated_at = $3 WHERE order_id = $1")
+        sqlx::query("UPDATE redemptions SET status = $3, updated_at = $4 WHERE tenant_id = $1 AND order_id = $2")
+            .bind(&self.tenant)
             .bind(order_id)
             .bind(to.as_str())
             .bind(now)
@@ -1065,7 +1305,7 @@ impl RedemptionRepository for PgStore {
     #[tracing::instrument(name = "db.uses_for_customer", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "uses_for_customer"))]
     async fn uses_for_customer(&self, customer_id: &str) -> Result<Uses, RedemptionError> {
         let mut tx = self.pool.begin().await.map_err(redemption_storage)?;
-        let uses = PgStore::uses_in(&mut tx, customer_id)
+        let uses = PgStore::uses_in(&mut tx, &self.tenant, customer_id)
             .await
             .map_err(redemption_storage)?;
         tx.commit().await.map_err(redemption_storage)?;
@@ -1075,7 +1315,7 @@ impl RedemptionRepository for PgStore {
     #[tracing::instrument(name = "db.counters", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "counters"))]
     async fn counters(&self, codes: &[String]) -> Result<Counters, RedemptionError> {
         let mut tx = self.pool.begin().await.map_err(redemption_storage)?;
-        let c = PgStore::counters_in(&mut tx, Some(codes))
+        let c = PgStore::counters_in(&mut tx, &self.tenant, Some(codes))
             .await
             .map_err(redemption_storage)?;
         tx.commit().await.map_err(redemption_storage)?;
@@ -1090,11 +1330,12 @@ impl RedemptionRepository for PgStore {
         sqlx::query(
             "SELECT presented.code AS code, r.order_id AS order_id FROM redemptions r \
              JOIN LATERAL jsonb_array_elements_text(r.input->'cart'->'coupon_codes') AS presented(code) ON TRUE \
-             JOIN coupons c ON c.code = presented.code \
-             WHERE r.customer_id = $1 AND r.status <> 'cancelled' \
+             JOIN coupons c ON c.tenant_id = r.tenant_id AND c.code = presented.code \
+             WHERE r.tenant_id = $1 AND r.customer_id = $2 AND r.status <> 'cancelled' \
                AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.result->'applied') a WHERE a->>'promotion_id' = c.body->>'promotion_id') \
              ORDER BY r.created_at, r.order_id, presented.code",
         )
+        .bind(&self.tenant)
         .bind(customer_id)
         .fetch_all(&self.pool)
         .await
@@ -1107,11 +1348,12 @@ impl RedemptionRepository for PgStore {
 
     #[tracing::instrument(name = "db.get", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get"))]
     async fn get(&self, order_id: &str) -> Result<Option<Redemption>, RedemptionError> {
-        let row = sqlx::query("SELECT order_id, customer_id, status, input, result, created_at, updated_at FROM redemptions WHERE order_id = $1")
-            .bind(order_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(redemption_storage)?;
+        let row = sqlx::query("SELECT order_id, customer_id, status, input, result, created_at, updated_at FROM redemptions WHERE tenant_id = $1 AND order_id = $2")
+        .bind(&self.tenant)
+        .bind(order_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(redemption_storage)?;
         row.map(|r| PgStore::row_to_redemption(&r).map_err(redemption_storage))
             .transpose()
     }

@@ -11,9 +11,10 @@ use async_trait::async_trait;
 use discount_application::CodeSource;
 use discount_application::coupons::CODE_LENGTH;
 use discount_application::ports::{
-    CatalogSnapshot, Clock, Counters, Event, EventPublisher, GrantRule, GrantTrigger, PricingFn,
-    PromotionCatalog, PromotionMetadata, Redemption, RedemptionError, RedemptionRepository,
-    RedemptionStatus, ReserveOutcome, StorageError, Uses, transition_allowed,
+    CatalogSnapshot, Clock, Counters, DEFAULT_TENANT, Event, EventPublisher, GrantRule,
+    GrantTrigger, PricingFn, PromotionCatalog, PromotionMetadata, Redemption, RedemptionError,
+    RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError, Tenancy, Tenant, Uses,
+    transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, OrderCap, PricingPolicy, Promotion, PromotionId, RoundingPolicy,
@@ -737,6 +738,110 @@ impl RedemptionRepository for InMemoryStore {
             .redemptions
             .get(order_id)
             .cloned())
+    }
+}
+
+/// Tenants in memory: one `InMemoryStore` per tenant, created with the default policy on
+/// first use (ADR 12). The `default` tenant is seeded from the fixture.
+#[derive(Clone)]
+pub struct InMemoryTenants {
+    inner: Arc<Mutex<BTreeMap<String, (Tenant, InMemoryStore)>>>,
+    policy: PricingPolicy,
+}
+
+impl InMemoryTenants {
+    /// A tenancy whose `default` tenant is `store`.
+    pub fn single(store: InMemoryStore, policy: PricingPolicy) -> InMemoryTenants {
+        let mut map = BTreeMap::new();
+        map.insert(
+            DEFAULT_TENANT.to_string(),
+            (
+                Tenant {
+                    tenant_id: DEFAULT_TENANT.to_string(),
+                    name: "Default".to_string(),
+                    created_at: 0,
+                },
+                store,
+            ),
+        );
+        InMemoryTenants {
+            inner: Arc::new(Mutex::new(map)),
+            policy,
+        }
+    }
+
+    pub fn new(policy: PricingPolicy) -> InMemoryTenants {
+        InMemoryTenants::single(InMemoryStore::new(policy.clone()), policy)
+    }
+
+    /// The store of a tenant, created on first use.
+    pub fn store(&self, tenant_id: &str) -> InMemoryStore {
+        let mut map = self.inner.lock().unwrap();
+        map.entry(tenant_id.to_string())
+            .or_insert_with(|| {
+                (
+                    Tenant {
+                        tenant_id: tenant_id.to_string(),
+                        name: tenant_id.to_string(),
+                        created_at: 0,
+                    },
+                    InMemoryStore::new(self.policy.clone()),
+                )
+            })
+            .1
+            .clone()
+    }
+}
+
+#[async_trait]
+impl Tenancy for InMemoryTenants {
+    fn catalog(&self, tenant_id: &str) -> Arc<dyn PromotionCatalog> {
+        Arc::new(self.store(tenant_id))
+    }
+    fn redemptions(&self, tenant_id: &str) -> Arc<dyn RedemptionRepository> {
+        Arc::new(self.store(tenant_id))
+    }
+    async fn list_tenants(&self) -> Result<Vec<Tenant>, StorageError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .values()
+            .map(|(t, _)| t.clone())
+            .collect())
+    }
+    async fn get_tenant(&self, tenant_id: &str) -> Result<Option<Tenant>, StorageError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .get(tenant_id)
+            .map(|(t, _)| t.clone()))
+    }
+    async fn put_tenant(&self, tenant: Tenant) -> Result<(), StorageError> {
+        let mut map = self.inner.lock().unwrap();
+        match map.get_mut(&tenant.tenant_id) {
+            Some((t, _)) => t.name = tenant.name,
+            None => {
+                map.insert(
+                    tenant.tenant_id.clone(),
+                    (tenant, InMemoryStore::new(self.policy.clone())),
+                );
+            }
+        }
+        Ok(())
+    }
+    async fn delete_tenant(&self, tenant_id: &str) -> Result<bool, StorageError> {
+        let mut map = self.inner.lock().unwrap();
+        if let Some((_, store)) = map.get(tenant_id) {
+            let n = store.inner.lock().unwrap().redemptions.len();
+            if n > 0 {
+                return Err(StorageError::Conflict(format!(
+                    "tenant {tenant_id} still has {n} redemptions"
+                )));
+            }
+        }
+        Ok(map.remove(tenant_id).is_some())
     }
 }
 

@@ -4,10 +4,11 @@
 use std::sync::Arc;
 
 use discount_domain::*;
-use discount_infrastructure::http::AppState;
+use discount_infrastructure::http::{AppState, AuthMode};
 use discount_infrastructure::telemetry::Instruments;
 use discount_infrastructure::{
-    CatalogFixture, FixedClock, InMemoryStore, NoopEventPublisher, PgStore, default_policy,
+    CatalogFixture, FixedClock, InMemoryStore, InMemoryTenants, NoopEventPublisher, PgStore,
+    default_policy,
 };
 
 pub const NOW: i64 = 1_760_227_200;
@@ -51,8 +52,8 @@ pub fn sample_cart() -> CartSnapshot {
 
 pub fn state_with(store: InMemoryStore, instruments: Instruments) -> Arc<AppState> {
     Arc::new(AppState {
-        catalog: Arc::new(store.clone()),
-        redemptions: Arc::new(store),
+        tenancy: Arc::new(InMemoryTenants::single(store, default_policy())),
+        auth: AuthMode::Off,
         clock: Arc::new(FixedClock(NOW)),
         events: Arc::new(NoopEventPublisher),
         codes: Arc::new(discount_infrastructure::SequentialCodes::default()),

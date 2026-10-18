@@ -410,6 +410,13 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
   and how it is reported, stored next to it in the catalogue and never read by pricing
   (OpenSpec change `promotion-metadata`). `source` partitions listings (hotels, cars, …);
   `labels` is a small string map of reporting dimensions.
+- `Tenant`: one consumer system (a storefront, a business line) with its own policy,
+  catalogue and redemptions; every stored record belongs to exactly one tenant and every
+  store handle is bound to one (OpenSpec `access-control`, ADR 12). `default` is the tenant
+  of unauthenticated local runs and of data that predates tenancy.
+- `Principal { tenant_id, scopes, subject }`: who is calling, resolved from a bearer JWT
+  issued by a configured OIDC issuer; `Scope` is one of `discount:pricing`,
+  `discount:customers`, `discount:catalog.read`, `discount:catalog.write`, `discount:admin`.
 - `Allowlist`: the set of customer ids a promotion is open to, stored next to it in the
   catalogue (OpenSpec change `customer-attributes`). Pricing never reads the set: `Evaluate`
   and `Redeem` put the ids of the promotions whose allowlist contains `customer.customer_id`

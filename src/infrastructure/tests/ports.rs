@@ -8,7 +8,8 @@ use std::sync::Arc;
 use common::*;
 use discount_application::ports::{
     Counters, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog, PromotionMetadata,
-    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome,
+    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError, Tenancy,
+    Tenant,
 };
 use discount_application::{
     CancelRedemption, ConfirmRedemption, CouponError, CouponStatus, CustomerCouponError, Evaluate,
@@ -1269,4 +1270,132 @@ async fn allowlists_gate_promotions() {
         assert!(!p.catalog.is_allowlisted("P2", "c1").await.unwrap());
     })
     .await;
+}
+
+/// Spec `access-control`, "Tenant isolation": the same ids in two tenants are different
+/// records on both backends, and tenant administration seeds a policy per tenant.
+#[tokio::test]
+async fn tenants_are_hard_partitions() {
+    // in-memory
+    {
+        let tenancy = discount_infrastructure::InMemoryTenants::new(default_policy());
+        check_isolation(&tenancy).await;
+    }
+    // postgres: the wiped test store, viewed as a tenancy (never skipped, ADR 11)
+    let _serial = PG_LOCK.lock().await;
+    let store = pg_store().await;
+    let tenancy = store.tenants(&default_policy());
+    check_isolation(&tenancy).await;
+}
+
+async fn check_isolation(tenancy: &dyn Tenancy) {
+    let clock = FixedClock(NOW);
+    for t in ["hotels", "cars"] {
+        tenancy
+            .put_tenant(Tenant {
+                tenant_id: t.into(),
+                name: t.into(),
+                created_at: NOW,
+            })
+            .await
+            .unwrap();
+    }
+    let hotels = tenancy.catalog("hotels");
+    let cars = tenancy.catalog("cars");
+    hotels.put_group(group_g()).await.unwrap();
+    hotels.put_promotion(fixed_300("P1")).await.unwrap();
+    hotels.put_budget("P1", Some(eur(1000))).await.unwrap();
+    hotels
+        .put_coupon(Coupon {
+            customer_id: Some("c1".into()),
+            ..coupon("WELCOME", None)
+        })
+        .await
+        .unwrap();
+    // cars sees none of it and has its own policy row
+    assert!(cars.list_promotions().await.unwrap().is_empty());
+    assert_eq!(cars.get_promotion("P1").await.unwrap(), None);
+    assert_eq!(cars.get_coupon("WELCOME").await.unwrap(), None);
+    assert_eq!(cars.list_groups().await.unwrap().len(), 0);
+    assert_eq!(cars.get_policy().await.unwrap(), default_policy());
+    // the same promotion id in cars is another promotion with another budget
+    cars.put_group(group_g()).await.unwrap();
+    let mut p1 = fixed_300("P1");
+    p1.action = Action::OrderFixedAmount { amount: eur(100) };
+    cars.put_promotion(p1).await.unwrap();
+    assert_eq!(
+        hotels.get_budget("P1").await.unwrap(),
+        Some(Some(eur(1000)))
+    );
+    assert_eq!(cars.get_budget("P1").await.unwrap(), Some(None));
+    // redemptions and counters are per tenant
+    let h = tenancy.catalog("hotels");
+    let hr = tenancy.redemptions("hotels");
+    let redeem_h = Redeem {
+        catalog: &*h,
+        redemptions: &*hr,
+        clock: &clock,
+        events: &NoopEventPublisher,
+    };
+    let o = redeem_h
+        .run("o1", sample_cart(), CustomerContext::default())
+        .await
+        .unwrap();
+    assert_eq!(o.redemption().result.total_discount.amount, 300);
+    let c = tenancy.catalog("cars");
+    let cr = tenancy.redemptions("cars");
+    let redeem_c = Redeem {
+        catalog: &*c,
+        redemptions: &*cr,
+        clock: &clock,
+        events: &NoopEventPublisher,
+    };
+    let o2 = redeem_c
+        .run("o1", sample_cart(), CustomerContext::default())
+        .await
+        .unwrap();
+    assert_eq!(o2.redemption().result.total_discount.amount, 100);
+    assert_eq!(
+        tenancy
+            .redemptions("hotels")
+            .get("o1")
+            .await
+            .unwrap()
+            .unwrap()
+            .result
+            .total_discount
+            .amount,
+        300
+    );
+    assert_eq!(
+        tenancy.catalog("hotels").get_budget("P1").await.unwrap(),
+        Some(Some(eur(700)))
+    );
+    // deleting a tenant with redemptions is refused; an empty one goes
+    assert!(matches!(
+        tenancy.delete_tenant("hotels").await,
+        Err(StorageError::Conflict(_))
+    ));
+    tenancy
+        .put_tenant(Tenant {
+            tenant_id: "transfers".into(),
+            name: "T".into(),
+            created_at: NOW,
+        })
+        .await
+        .unwrap();
+    assert!(tenancy.delete_tenant("transfers").await.unwrap());
+    assert!(!tenancy.delete_tenant("transfers").await.unwrap());
+    let ids: Vec<String> = tenancy
+        .list_tenants()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tenant_id)
+        .collect();
+    assert!(
+        ids.contains(&"hotels".to_string())
+            && ids.contains(&"cars".to_string())
+            && ids.contains(&"default".to_string())
+    );
 }

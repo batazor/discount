@@ -1,0 +1,185 @@
+{
+  "realm": "discount",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 900,
+  "roles": {
+    "realm": [
+      {
+        "name": "discount:pricing",
+        "description": "Price and redeem"
+      },
+      {
+        "name": "discount:customers",
+        "description": "Customer coupon listings"
+      },
+      {
+        "name": "discount:catalog.read",
+        "description": "Read the catalogue"
+      },
+      {
+        "name": "discount:catalog.write",
+        "description": "Write the catalogue"
+      },
+      {
+        "name": "discount:admin",
+        "description": "Everything, any tenant"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "discount-storefront",
+      "name": "Hotels storefront (service account)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "storefront-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "tenant_id",
+            "claim.value": "hotels",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "discount-operator",
+      "name": "Back office (service account)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "operator-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "tenant_id",
+            "claim.value": "hotels",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "discount-console",
+      "name": "Operator console",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:4321/*",
+        "http://ui:4321/*"
+      ],
+      "webOrigins": [
+        "http://localhost:4321"
+      ],
+      "protocol": "openid-connect",
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "tenant_id",
+            "claim.value": "hotels",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-discount-storefront",
+      "enabled": true,
+      "serviceAccountClientId": "discount-storefront",
+      "realmRoles": [
+        "discount:pricing",
+        "discount:customers"
+      ]
+    },
+    {
+      "username": "service-account-discount-operator",
+      "enabled": true,
+      "serviceAccountClientId": "discount-operator",
+      "realmRoles": [
+        "discount:catalog.read",
+        "discount:catalog.write"
+      ]
+    },
+    {
+      "username": "marketing",
+      "enabled": true,
+      "firstName": "Marketing",
+      "lastName": "Operator",
+      "email": "marketing@example.com",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "marketing",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "discount:catalog.read",
+        "discount:catalog.write",
+        "discount:pricing",
+        "discount:customers"
+      ]
+    },
+    {
+      "username": "support",
+      "enabled": true,
+      "firstName": "Support",
+      "lastName": "Agent",
+      "email": "support@example.com",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "support",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "discount:pricing",
+        "discount:customers",
+        "discount:catalog.read"
+      ]
+    }
+  ]
+}

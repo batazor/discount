@@ -11,3 +11,4 @@
 * [9. Evaluation result reports skipped promotions and clamp reasons](0009-evaluation-result-reports-skipped-promotions-and-clamp-reasons.md)
 * [10. Spec-first HTTP API: OpenAPI is the contract, clients are generated](0010-spec-first-http-api-openapi-is-the-contract-clients-are-generated.md)
 * [11. Integration tests never skip: Postgres scenarios need a database](0011-integration-tests-never-skip-postgres-scenarios-need-a-database.md)
+* [12. Authentication is delegated to OIDC issuers and tenancy is a hard partition](0012-authentication-is-delegated-to-oidc-issuers-and-tenancy-is-a-hard-partition.md)

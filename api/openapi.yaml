@@ -11,7 +11,8 @@ info:
 servers:
   - url: http://localhost:8080
     description: Local compose stack
-security: []
+security:
+  - bearerAuth: []
 tags:
   - name: pricing
     description: Price a cart without side effects
@@ -21,6 +22,8 @@ tags:
     description: Policy, groups, promotions, budgets, coupons and exchange rates
   - name: customers
     description: 'What a customer owns: their coupons, with status'
+  - name: tenants
+    description: Platform administration of tenants (scope discount:admin)
   - name: system
     description: Health and the API document itself
 paths:
@@ -411,11 +414,48 @@ paths:
       responses:
         '204': { description: Forgotten }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/tenants:
+    get:
+      operationId: listTenants
+      tags: [tenants]
+      summary: Tenants (platform administrators only)
+      x-required-scope: discount:admin
+      responses:
+        '200': { description: Tenants, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Tenant' } } } } }
+  /v1/tenants/{tenant_id}:
+    parameters: [ { name: tenant_id, in: path, required: true, schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' } } ]
+    get:
+      operationId: getTenant
+      tags: [tenants]
+      summary: One tenant
+      x-required-scope: discount:admin
+      responses:
+        '200': { description: Tenant, content: { application/json: { schema: { $ref: '#/components/schemas/Tenant' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putTenant
+      tags: [tenants]
+      summary: Create or rename a tenant (the path id wins over the body); a new tenant starts with the default pricing policy
+      x-required-scope: discount:admin
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Tenant' } } } }
+      responses:
+        '200': { description: Stored tenant, content: { application/json: { schema: { $ref: '#/components/schemas/Tenant' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+    delete:
+      operationId: deleteTenant
+      tags: [tenants]
+      summary: Delete a tenant and everything it owns; refused while it has redemptions
+      x-required-scope: discount:admin
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The tenant still has redemptions, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } } }
   /healthz:
     get:
       operationId: healthz
       tags: [system]
       summary: Liveness
+      security: []
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [ok] } }, required: [status] } } } }
   /openapi.yaml:
@@ -423,6 +463,7 @@ paths:
       operationId: openapiDocument
       tags: [system]
       summary: This document
+      security: []
       responses:
         '200': { description: OpenAPI 3.1 document, content: { application/yaml: { schema: { type: string } } } }
   /docs:
@@ -430,6 +471,7 @@ paths:
       operationId: swaggerUi
       tags: [system]
       summary: Swagger UI for this document
+      security: []
       responses:
         '200': { description: HTML, content: { text/html: { schema: { type: string } } } }
 components:
@@ -437,7 +479,26 @@ components:
     OrderId: { name: order_id, in: path, required: true, schema: { type: string } }
     PromotionId: { name: promotion_id, in: path, required: true, schema: { type: string } }
     Source: { name: source, in: query, required: false, schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,31}$' }, description: Only promotions whose metadata has this `source` }
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        A JWT from one of the configured OIDC issuers. The claim named by
+        DISCOUNT_AUTH_TENANT_CLAIM selects the tenant; the claim named by
+        DISCOUNT_AUTH_SCOPES_CLAIM carries the scopes. Each operation states its scope in
+        `x-required-scope`; `discount:admin` satisfies every operation and may name the tenant
+        with the `X-Tenant` header. Missing or invalid tokens are `401`, missing scopes `403`,
+        both as RFC 9457 problem details.
   responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      headers: { WWW-Authenticate: { schema: { type: string } } }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    Forbidden:
+      description: The token lacks the operation's scope or names an unknown tenant
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
     DecodeError:
       description: Malformed body (invalid JSON, schema mismatch, unknown key); `decode_error` is set
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
@@ -454,6 +515,23 @@ components:
       description: The catalogue or redemption store is unavailable; `storage_error` is set
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
   schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details
+      required: [type, title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+    Tenant:
+      type: object
+      required: [tenant_id, name, created_at]
+      additionalProperties: false
+      properties:
+        tenant_id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        created_at: { $ref: '#/components/schemas/Timestamp', description: 'Set by the service; ignored on PUT' }
     ErrorBody:
       description: |
         Every non-2xx response carries this shape. Exactly one of `error`, `decode_error` and

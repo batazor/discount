@@ -11,8 +11,11 @@
    knobs with JSON-pointer syntax cover Keycloak, Kratos/Hydra, Auth0 and Azure AD without
    code.
 3. **Tenant is a hard partition in the store**, not a filter in the handlers: every table
-   gets `tenant_id` in its primary key and every repository method takes the tenant, so a
-   forgotten filter is a compile error, not a leak. The core never sees it.
+   gets `tenant_id` in its primary key and a store handle is bound to one tenant when the
+   `Tenancy` port hands it out (`catalog(tenant_id)`, `redemptions(tenant_id)`), so there is
+   no method that could run without a tenant and the application-layer ports stay exactly as
+   they were. Handlers get their stores through a `Ctx` extractor built from the principal
+   the middleware resolved. The core never sees tenants.
 4. **Scopes by route family, five of them.** Fine-grained per-resource scopes are easy to
    add later; five is what a storefront, a back office and an operator need today.
 5. **Problem details (RFC 9457)** for 401/403; the existing `{"error": …}` bodies of the
@@ -28,3 +31,8 @@
 - [Large migration: tenant_id everywhere] → one migration adds the column with default
   `'default'`, backfills, then rebuilds primary keys; existing data lands in tenant
   `default`.
+- [Budget gauge is per promotion id] → it keeps reporting the `default` tenant only; a
+  per-tenant attribute is a telemetry follow-up owned by that spec.
+- [Keycloak hostname] → the overlay pins `KC_HOSTNAME=http://keycloak:8080` so the issuer
+  in tokens equals the one the service trusts; the auth smoke therefore runs inside the
+  compose network.

@@ -29,4 +29,5 @@ syn = { version = "3.0.9", features = ["full"] }
 [dev-dependencies]
 axum = "0.8.9"
 discount-infrastructure = { path = "../infrastructure" }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net"] }
