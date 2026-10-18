@@ -384,6 +384,16 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
   Pure with respect to the domain: a dry run.
 - `Redeem`: use case that records an `Evaluate` result for an order and consumes budgets
   and usage counters. Iteration 2 (ADR 7, ADR 4).
+- `SavedCoupon { customer_id, code }`: a public code a customer keeps; stored in the
+  catalogue, never read by pricing (OpenSpec change `customer-coupons`).
+- `CustomerCoupon { coupon, status, order_id?, promotion? }`: read model returned by
+  `ListCustomerCoupons`; `promotion` is `{ promotion_id, action }` of the coupon's promotion.
+- `CouponStatus`: `applied` (the customer used the coupon; `order_id` names the earliest such
+  redemption) | `expired` (`ends_at ≤ now`, or `uses ≥ max_uses`, or the promotion is
+  archived or missing) | `scheduled` (`starts_at > now`) | `active`. Cart-free: whether the
+  coupon applies to a cart is `Evaluate`'s answer.
+- `ListCustomerCoupons`: use case that merges the customer's bound, used and saved coupons
+  and computes each `CouponStatus` at `Clock.now`.
 
 ## Telemetry vocabulary (not verified; `src/infrastructure/`)
 

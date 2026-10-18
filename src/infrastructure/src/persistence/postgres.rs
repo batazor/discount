@@ -75,7 +75,7 @@ impl PgStore {
     /// Empty every table and reset the policy; for integration tests only. Tests wipe the
     /// database they point at, so give them a dedicated one.
     pub async fn reset_for_tests(&self, policy: &PricingPolicy) -> Result<(), StorageError> {
-        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants")
+        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants, saved_coupons")
             .execute(&self.pool)
             .await
             .map_err(storage)?;
@@ -653,6 +653,61 @@ impl PromotionCatalog for PgStore {
         tx.commit().await.map_err(storage)?;
         Ok(coupon)
     }
+
+    async fn coupons_bound_to(&self, customer_id: &str) -> Result<Vec<Coupon>, StorageError> {
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let mut coupons =
+            sqlx::query("SELECT body FROM coupons WHERE body ->> 'customer_id' = $1 ORDER BY code")
+                .bind(customer_id)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(storage)?
+                .into_iter()
+                .map(|r| r.try_get::<Json<Coupon>, _>("body").map(|j| j.0))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(storage)?;
+        let codes: Vec<String> = coupons.iter().map(|c| c.code.clone()).collect();
+        let counters = PgStore::counters_in(&mut tx, Some(&codes))
+            .await
+            .map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+        for c in &mut coupons {
+            c.uses = counters.coupon(&c.code);
+        }
+        Ok(coupons)
+    }
+
+    async fn saved_codes(&self, customer_id: &str) -> Result<Vec<String>, StorageError> {
+        sqlx::query("SELECT code FROM saved_coupons WHERE customer_id = $1 ORDER BY code")
+            .bind(customer_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage)?
+            .iter()
+            .map(|r| r.try_get::<String, _>("code").map_err(storage))
+            .collect()
+    }
+
+    async fn save_coupon(&self, customer_id: &str, code: &str) -> Result<(), StorageError> {
+        sqlx::query("INSERT INTO saved_coupons (customer_id, code, created_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
+            .bind(customer_id)
+            .bind(code)
+            .bind(epoch())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn forget_coupon(&self, customer_id: &str, code: &str) -> Result<bool, StorageError> {
+        let r = sqlx::query("DELETE FROM saved_coupons WHERE customer_id = $1 AND code = $2")
+            .bind(customer_id)
+            .bind(code)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
 }
 
 #[async_trait]
@@ -782,6 +837,28 @@ impl RedemptionRepository for PgStore {
             .map_err(redemption_storage)?;
         tx.commit().await.map_err(redemption_storage)?;
         Ok(c)
+    }
+
+    async fn coupon_uses_of_customer(
+        &self,
+        customer_id: &str,
+    ) -> Result<Vec<(String, String)>, RedemptionError> {
+        sqlx::query(
+            "SELECT presented.code AS code, r.order_id AS order_id FROM redemptions r \
+             JOIN LATERAL jsonb_array_elements_text(r.input->'cart'->'coupon_codes') AS presented(code) ON TRUE \
+             JOIN coupons c ON c.code = presented.code \
+             WHERE r.customer_id = $1 AND r.status <> 'cancelled' \
+               AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.result->'applied') a WHERE a->>'promotion_id' = c.body->>'promotion_id') \
+             ORDER BY r.created_at, r.order_id, presented.code",
+        )
+        .bind(customer_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(redemption_storage)?
+        .iter()
+        .map(|r| Ok((r.try_get::<String, _>("code")?, r.try_get::<String, _>("order_id")?)))
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(redemption_storage)
     }
 
     async fn get(&self, order_id: &str) -> Result<Option<Redemption>, RedemptionError> {

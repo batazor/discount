@@ -61,6 +61,18 @@ U=$(curl -s "$SERVICE/v1/coupons/$CODE" | python3 -c 'import sys,json; print(jso
 [ "$U" = "1" ] || fail "coupon uses should be 1, got $U"
 pass "single-use code $CODE: applied once, skipped on reuse, uses = 1"
 
+# Customer coupons: the code the smoke customer just used is listed as applied with its order.
+L=$(curl -s "$SERVICE/v1/customers/smoke/coupons")
+echo "$L" | python3 -c '
+import sys,json
+code, order = sys.argv[1], sys.argv[2]
+d = json.load(sys.stdin)
+e = [x for x in d if x["coupon"]["code"] == code]
+assert e and e[0]["status"] == "applied" and e[0]["order_id"] == order, d
+' "$CODE" "$ORDER-c1" || fail "customer listing did not show $CODE as applied: $L"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$SERVICE/v1/customers/smoke/coupons/NOPE")" = "404" ] || fail "saving an unknown code should be 404"
+pass "customer smoke sees $CODE as applied in order $ORDER-c1"
+
 # Give the periodic exporters time to flush (metrics export every 60s by default is too
 # slow for a smoke; the service sets OTEL_METRIC_EXPORT_INTERVAL=5000).
 echo "waiting for export..."

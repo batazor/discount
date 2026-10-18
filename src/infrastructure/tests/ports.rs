@@ -11,8 +11,8 @@ use discount_application::ports::{
     RedemptionRepository, RedemptionStatus, ReserveOutcome,
 };
 use discount_application::{
-    CancelRedemption, ConfirmRedemption, CouponError, Evaluate, GenerateCouponsUseCase,
-    GrantCoupon, Redeem,
+    CancelRedemption, ConfirmRedemption, CouponError, CouponStatus, CustomerCouponError, Evaluate,
+    GenerateCouponsUseCase, GrantCoupon, ListCustomerCoupons, Redeem, SaveCustomerCoupon,
 };
 use discount_domain::*;
 use discount_infrastructure::{FixedClock, NoopEventPublisher, PgStore, default_policy};
@@ -769,6 +769,249 @@ async fn generation_and_grants() {
         );
         assert!(p.catalog.delete_grant_rule("high").await.unwrap());
         assert!(!p.catalog.delete_grant_rule("high").await.unwrap());
+    })
+    .await;
+}
+
+/// Spec `customer-coupons`: three sources, statuses, save and forget; spec `redemption`:
+/// coupon uses of a customer.
+#[tokio::test]
+async fn customer_coupons_listing() {
+    for_each_backend(|p| async move {
+        let clock = FixedClock(NOW);
+        p.catalog.put_group(group_g()).await.unwrap();
+        let mut p1 = fixed_300("P1");
+        p1.rules = vec![Rule::RequiresCoupon];
+        p.catalog.put_promotion(p1).await.unwrap();
+        // P2 requires a coupon and a tag the sample cart lacks: presenting its code is not a use
+        let mut p2 = fixed_300("P2");
+        p2.rules = vec![
+            Rule::RequiresCoupon,
+            Rule::TagsMatch {
+                all: vec!["#vip".into()],
+                any: vec![],
+                none: vec![],
+            },
+        ];
+        p.catalog.put_promotion(p2).await.unwrap();
+        let bound = |code: &str, cid: &str| Coupon {
+            customer_id: Some(cid.into()),
+            ..coupon(code, None)
+        };
+        p.catalog.put_coupon(bound("GRANT-1", "c1")).await.unwrap();
+        p.catalog.put_coupon(bound("GRANT-2", "c2")).await.unwrap();
+        p.catalog
+            .put_coupon(Coupon {
+                starts_at: Some(NOW + 10),
+                ..bound("LATER", "c1")
+            })
+            .await
+            .unwrap();
+        p.catalog
+            .put_coupon(Coupon {
+                ends_at: Some(NOW),
+                ..bound("GONE", "c1")
+            })
+            .await
+            .unwrap();
+        p.catalog.put_coupon(coupon("WELCOME", None)).await.unwrap();
+        p.catalog.put_coupon(coupon("SPRING", None)).await.unwrap();
+        p.catalog.put_coupon(coupon("ONCE", Some(1))).await.unwrap();
+        p.catalog.put_coupon(coupon("OTHER", None)).await.unwrap();
+        p.catalog
+            .put_coupon(Coupon {
+                promotion_id: "P2".into(),
+                ..coupon("VIP", None)
+            })
+            .await
+            .unwrap();
+
+        let redeem = redeem(&p, &clock);
+        let c1 = CustomerContext {
+            customer_id: Some("c1".into()),
+            ..CustomerContext::default()
+        };
+        let c2 = CustomerContext {
+            customer_id: Some("c2".into()),
+            ..CustomerContext::default()
+        };
+        // c1 uses WELCOME twice (o1, o2), presents VIP without applying it (o3), c2 uses ONCE
+        let mut two = cart_with("WELCOME");
+        two.coupon_codes.push("VIP".into());
+        assert_eq!(
+            redeem
+                .run("o1", two.clone(), c1.clone())
+                .await
+                .unwrap()
+                .redemption()
+                .result
+                .applied
+                .len(),
+            1
+        );
+        redeem
+            .run("o2", cart_with("WELCOME"), c1.clone())
+            .await
+            .unwrap();
+        assert!(
+            redeem
+                .run("o3", cart_with("VIP"), c1.clone())
+                .await
+                .unwrap()
+                .redemption()
+                .result
+                .applied
+                .is_empty()
+        );
+        redeem
+            .run("o4", cart_with("ONCE"), c2.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            p.redemptions.coupon_uses_of_customer("c1").await.unwrap(),
+            vec![
+                ("WELCOME".to_string(), "o1".to_string()),
+                ("WELCOME".to_string(), "o2".to_string())
+            ]
+        );
+        assert_eq!(
+            p.redemptions
+                .coupon_uses_of_customer("nobody")
+                .await
+                .unwrap(),
+            vec![]
+        );
+
+        let list = ListCustomerCoupons {
+            catalog: &*p.catalog,
+            redemptions: &*p.redemptions,
+            clock: &clock,
+        };
+        let save = SaveCustomerCoupon {
+            list: ListCustomerCoupons {
+                catalog: &*p.catalog,
+                redemptions: &*p.redemptions,
+                clock: &clock,
+            },
+        };
+        // save: idempotent, unknown, bound to another, own bound coupon
+        let saved = save.run("c1", "SPRING").await.unwrap();
+        assert_eq!(
+            (saved.coupon.code.as_str(), saved.status),
+            ("SPRING", CouponStatus::Active)
+        );
+        save.run("c1", "SPRING").await.unwrap();
+        save.run("c1", "ONCE").await.unwrap();
+        assert_eq!(
+            save.run("c1", "NOPE").await,
+            Err(CustomerCouponError::UnknownCode)
+        );
+        assert_eq!(
+            save.run("c1", "GRANT-2").await,
+            Err(CustomerCouponError::BoundToAnotherCustomer)
+        );
+        assert_eq!(
+            save.run("c1", "GRANT-1").await.unwrap().status,
+            CouponStatus::Active
+        );
+        assert_eq!(
+            p.catalog.saved_codes("c1").await.unwrap(),
+            vec!["ONCE".to_string(), "SPRING".to_string()]
+        );
+
+        let listed = list.run("c1").await.unwrap();
+        let codes: Vec<&str> = listed.iter().map(|e| e.coupon.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            vec!["GONE", "GRANT-1", "LATER", "ONCE", "SPRING", "WELCOME"]
+        );
+        let by = |code: &str| listed.iter().find(|e| e.coupon.code == code).unwrap();
+        assert_eq!(
+            (by("GRANT-1").status, by("GRANT-1").order_id.as_deref()),
+            (CouponStatus::Active, None)
+        );
+        assert_eq!(by("LATER").status, CouponStatus::Scheduled);
+        assert_eq!(by("GONE").status, CouponStatus::Expired);
+        assert_eq!(
+            (by("WELCOME").status, by("WELCOME").order_id.as_deref()),
+            (CouponStatus::Applied, Some("o1"))
+        );
+        // ONCE: saved by c1, exhausted by c2
+        assert_eq!(
+            (by("ONCE").status, by("ONCE").coupon.uses),
+            (CouponStatus::Expired, 1)
+        );
+        assert_eq!(
+            by("SPRING")
+                .promotion
+                .as_ref()
+                .map(|p| p.promotion_id.as_str()),
+            Some("P1")
+        );
+        assert!(
+            by("SPRING")
+                .promotion
+                .as_ref()
+                .is_some_and(|p| matches!(p.action, Action::OrderFixedAmount { .. }))
+        );
+        // c2: bound GRANT-2 and applied ONCE; nothing of c1's
+        let listed2 = list.run("c2").await.unwrap();
+        let codes2: Vec<(&str, CouponStatus)> = listed2
+            .iter()
+            .map(|e| (e.coupon.code.as_str(), e.status))
+            .collect();
+        assert_eq!(
+            codes2,
+            vec![
+                ("GRANT-2", CouponStatus::Active),
+                ("ONCE", CouponStatus::Applied)
+            ]
+        );
+        assert_eq!(list.run("nobody").await.unwrap(), vec![]);
+        // cancelling o1 and o2 drops WELCOME from c1's list
+        let cancel = CancelRedemption {
+            redemptions: &*p.redemptions,
+            clock: &clock,
+            events: &NoopEventPublisher,
+        };
+        cancel.run("o1").await.unwrap();
+        assert_eq!(
+            list.run("c1")
+                .await
+                .unwrap()
+                .iter()
+                .find(|e| e.coupon.code == "WELCOME")
+                .map(|e| e.order_id.clone()),
+            Some(Some("o2".into()))
+        );
+        cancel.run("o2").await.unwrap();
+        assert!(
+            list.run("c1")
+                .await
+                .unwrap()
+                .iter()
+                .all(|e| e.coupon.code != "WELCOME")
+        );
+        // deleted promotion -> expired with no promotion
+        p.catalog.archive_promotion("P1").await.unwrap();
+        let e = list
+            .run("c1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|e| e.coupon.code == "GRANT-1")
+            .unwrap();
+        assert_eq!((e.status, e.promotion), (CouponStatus::Expired, None));
+        // forget
+        assert!(p.catalog.forget_coupon("c1", "SPRING").await.unwrap());
+        assert!(!p.catalog.forget_coupon("c1", "SPRING").await.unwrap());
+        assert!(
+            list.run("c1")
+                .await
+                .unwrap()
+                .iter()
+                .all(|e| e.coupon.code != "SPRING")
+        );
     })
     .await;
 }

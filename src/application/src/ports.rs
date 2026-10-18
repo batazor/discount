@@ -197,6 +197,14 @@ pub trait PromotionCatalog: Send + Sync {
         coupon: Coupon,
         now: Timestamp,
     ) -> Result<Coupon, StorageError>;
+    /// Coupons whose `customer_id` is `customer_id`, with `uses` counted, ordered by code.
+    async fn coupons_bound_to(&self, customer_id: &str) -> Result<Vec<Coupon>, StorageError>;
+    /// Codes the customer saved (`SavedCoupon`), ordered.
+    async fn saved_codes(&self, customer_id: &str) -> Result<Vec<String>, StorageError>;
+    /// Idempotent; the caller has checked that the code exists.
+    async fn save_coupon(&self, customer_id: &str, code: &str) -> Result<(), StorageError>;
+    /// `Ok(false)` when nothing was saved.
+    async fn forget_coupon(&self, customer_id: &str, code: &str) -> Result<bool, StorageError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -287,6 +295,13 @@ pub trait RedemptionRepository: Send + Sync {
     /// Promotion and coupon counters over all reserved and confirmed redemptions, for the
     /// given coupon codes.
     async fn counters(&self, codes: &[String]) -> Result<Counters, RedemptionError>;
+    /// Spec `redemption`, "Coupon uses of a customer": `(code, order_id)` for every code the
+    /// customer's reserved or confirmed redemptions presented and whose promotion applied,
+    /// ordered by `created_at` then `order_id`.
+    async fn coupon_uses_of_customer(
+        &self,
+        customer_id: &str,
+    ) -> Result<Vec<(String, String)>, RedemptionError>;
     /// `reserved → confirmed`, `reserved|confirmed → cancelled` (restoring budgets).
     async fn transition(
         &self,

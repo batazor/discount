@@ -408,6 +408,8 @@ async fn openapi_covers_every_route() {
         "/v1/coupons/grant",
         "/v1/grant-rules:",
         "/v1/grant-rules/{rule_id}",
+        "/v1/customers/{customer_id}/coupons:",
+        "/v1/customers/{customer_id}/coupons/{code}",
         "/v1/exchange-rates:",
         "/v1/exchange-rates/{from}/{to}",
         "/healthz",
@@ -643,4 +645,170 @@ async fn coupon_lifecycle_routes() {
             .0,
         StatusCode::NOT_FOUND
     );
+}
+
+/// Spec `customer-coupons` over HTTP: list, save (200/404/409), forget (204/404).
+#[tokio::test]
+async fn customer_coupon_routes() {
+    let app = router(state_with(
+        discount_infrastructure::InMemoryStore::new(discount_infrastructure::default_policy()),
+        discount_infrastructure::telemetry::Instruments::noop(),
+    ));
+    call(
+        &app,
+        Method::PUT,
+        "/v1/groups/g",
+        Some(json!({"group_id": "g", "priority": 0, "mode": {"type": "Stackable"}}).to_string()),
+    )
+    .await;
+    let promo = json!({"promotion_id": "P1", "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
+        "remaining_budget": null, "uses_total": 0, "rounding": null, "rules": [{"type": "RequiresCoupon"}],
+        "action": {"type": "OrderPercentage", "bps": 1000}});
+    call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P1",
+        Some(promo.to_string()),
+    )
+    .await;
+    let coupon = |code: &str, cid: Option<&str>| {
+        json!({"code": code, "promotion_id": "P1", "starts_at": null, "ends_at": null, "customer_id": cid, "max_uses": null, "uses": 0}).to_string()
+    };
+    call(
+        &app,
+        Method::PUT,
+        "/v1/coupons/GRANT-1",
+        Some(coupon("GRANT-1", Some("c1"))),
+    )
+    .await;
+    call(
+        &app,
+        Method::PUT,
+        "/v1/coupons/GRANT-2",
+        Some(coupon("GRANT-2", Some("c2"))),
+    )
+    .await;
+    call(
+        &app,
+        Method::PUT,
+        "/v1/coupons/SPRING",
+        Some(coupon("SPRING", None)),
+    )
+    .await;
+    call(
+        &app,
+        Method::PUT,
+        "/v1/coupons/WELCOME",
+        Some(coupon("WELCOME", None)),
+    )
+    .await;
+    let mut cart = cart_json();
+    cart["coupon_codes"] = json!(["WELCOME"]);
+    let customer = json!({"customer_id": "c1", "completed_orders": 0, "uses": []});
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        "/v1/redeem",
+        Some(json!({"order_id": "o1", "cart": cart, "customer": customer}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, l) = call(&app, Method::GET, "/v1/customers/nobody/coupons", None).await;
+    assert_eq!((status, l), (StatusCode::OK, json!([])));
+    let (status, saved) = call(&app, Method::PUT, "/v1/customers/c1/coupons/SPRING", None).await;
+    assert_eq!(
+        (
+            status,
+            saved["status"].as_str(),
+            saved["coupon"]["code"].as_str()
+        ),
+        (StatusCode::OK, Some("active"), Some("SPRING"))
+    );
+    assert_eq!(
+        call(&app, Method::PUT, "/v1/customers/c1/coupons/SPRING", None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, Method::PUT, "/v1/customers/c1/coupons/NOPE", None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, b) = call(&app, Method::PUT, "/v1/customers/c1/coupons/GRANT-2", None).await;
+    assert_eq!(
+        (status, b["error"].as_str()),
+        (StatusCode::CONFLICT, Some("BoundToAnotherCustomer"))
+    );
+
+    let (status, l) = call(&app, Method::GET, "/v1/customers/c1/coupons", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let entries = l.as_array().unwrap();
+    let summary: Vec<(&str, &str, Option<&str>)> = entries
+        .iter()
+        .map(|e| {
+            (
+                e["coupon"]["code"].as_str().unwrap(),
+                e["status"].as_str().unwrap(),
+                e["order_id"].as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("GRANT-1", "active", None),
+            ("SPRING", "active", None),
+            ("WELCOME", "applied", Some("o1"))
+        ]
+    );
+    assert_eq!(
+        entries[0]["promotion"],
+        json!({"promotion_id": "P1", "action": {"type": "OrderPercentage", "bps": 1000}})
+    );
+
+    assert_eq!(
+        call(
+            &app,
+            Method::DELETE,
+            "/v1/customers/c1/coupons/SPRING",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::DELETE,
+            "/v1/customers/c1/coupons/SPRING",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    // forgetting a bound coupon is a 404 too and it stays listed
+    assert_eq!(
+        call(
+            &app,
+            Method::DELETE,
+            "/v1/customers/c1/coupons/GRANT-1",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, l) = call(&app, Method::GET, "/v1/customers/c1/coupons", None).await;
+    let codes: Vec<&str> = l
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["coupon"]["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, vec!["GRANT-1", "WELCOME"]);
 }

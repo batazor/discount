@@ -19,6 +19,8 @@ tags:
     description: Apply a pricing result to an order and manage its lifecycle
   - name: catalogue
     description: Policy, groups, promotions, budgets, coupons and exchange rates
+  - name: customers
+    description: 'What a customer owns: their coupons, with status'
   - name: system
     description: Health and the API document itself
 paths:
@@ -293,6 +295,37 @@ paths:
       responses:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/customers/{customer_id}/coupons:
+    parameters: [ { name: customer_id, in: path, required: true, schema: { type: string } } ]
+    get:
+      operationId: listCustomerCoupons
+      tags: [customers]
+      summary: The customer's coupons with their status
+      description: >-
+        Coupons bound to the customer, coupons the customer used in a reserved or confirmed
+        redemption, and public codes the customer saved; each once, ordered by code. The
+        status is cart-free: whether a coupon applies to a cart is `evaluate`'s answer.
+      responses:
+        '200': { description: Coupons, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/CustomerCoupon' } } } } }
+  /v1/customers/{customer_id}/coupons/{code}:
+    parameters:
+      - { name: customer_id, in: path, required: true, schema: { type: string } }
+      - { name: code, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: saveCustomerCoupon
+      tags: [customers]
+      summary: Save a public code for the customer (idempotent)
+      responses:
+        '200': { description: The saved coupon as listed, content: { application/json: { schema: { $ref: '#/components/schemas/CustomerCoupon' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The code is bound to another customer, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } } }
+    delete:
+      operationId: forgetCustomerCoupon
+      tags: [customers]
+      summary: Forget a saved code (bound and used coupons stay listed)
+      responses:
+        '204': { description: Forgotten }
+        '404': { $ref: '#/components/responses/NotFound' }
   /healthz:
     get:
       operationId: healthz
@@ -530,6 +563,28 @@ components:
         trigger: { $ref: '#/components/schemas/GrantTrigger' }
         customer_id: { type: string }
         order_id: { type: string }
+    CouponStatus:
+      type: string
+      enum: [active, scheduled, expired, applied]
+      description: >-
+        `applied` = the customer used it (see `order_id`); `expired` = window closed, uses
+        exhausted, or promotion gone; `scheduled` = `starts_at` is in the future; else `active`.
+    CouponPromotion:
+      type: object
+      required: [promotion_id, action]
+      additionalProperties: false
+      properties:
+        promotion_id: { type: string }
+        action: { $ref: '#/components/schemas/Action' }
+    CustomerCoupon:
+      type: object
+      required: [coupon, status, order_id, promotion]
+      additionalProperties: false
+      properties:
+        coupon: { $ref: '#/components/schemas/Coupon' }
+        status: { $ref: '#/components/schemas/CouponStatus' }
+        order_id: { type: string, nullable: true, description: The earliest redemption of the customer that used the coupon }
+        promotion: { type: object, allOf: [ { $ref: '#/components/schemas/CouponPromotion' } ], nullable: true }
     Budget:
       type: object
       required: [remaining]

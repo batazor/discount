@@ -5,11 +5,16 @@
 //! every use case prices with `discount_domain::apply` and only adds bookkeeping.
 
 pub mod coupons;
+pub mod customer_coupons;
 pub mod evaluate;
 pub mod ports;
 
 pub use coupons::{
     CodeSource, CouponError, GenerateCouponsUseCase, GrantCoupon, pick_rule, render_code,
+};
+pub use customer_coupons::{
+    CouponPromotion, CouponStatus, CustomerCoupon, CustomerCouponError, ListCustomerCoupons,
+    SaveCustomerCoupon, coupon_status,
 };
 pub use evaluate::{
     CancelRedemption, ConfirmRedemption, Evaluate, EvaluateError, Redeem, pricing_input,

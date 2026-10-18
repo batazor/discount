@@ -58,6 +58,7 @@ struct Store {
     redemptions: BTreeMap<String, Redemption>,
     grant_rules: BTreeMap<String, GrantRule>,
     grants: BTreeMap<(String, String), String>,
+    saved: std::collections::BTreeSet<(String, String)>,
 }
 
 /// In-memory catalogue and redemption store.
@@ -422,6 +423,47 @@ impl PromotionCatalog for InMemoryStore {
         s.coupons.insert(coupon.code.clone(), coupon.clone());
         Ok(coupon)
     }
+
+    async fn coupons_bound_to(&self, customer_id: &str) -> Result<Vec<Coupon>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        let counters = InMemoryStore::counters_locked(&s, None);
+        Ok(s.coupons
+            .values()
+            .filter(|c| c.customer_id.as_deref() == Some(customer_id))
+            .map(|c| {
+                let mut c = c.clone();
+                c.uses = counters.coupon(&c.code);
+                c
+            })
+            .collect())
+    }
+    async fn saved_codes(&self, customer_id: &str) -> Result<Vec<String>, StorageError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .saved
+            .iter()
+            .filter(|(c, _)| c == customer_id)
+            .map(|(_, code)| code.clone())
+            .collect())
+    }
+    async fn save_coupon(&self, customer_id: &str, code: &str) -> Result<(), StorageError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .saved
+            .insert((customer_id.to_string(), code.to_string()));
+        Ok(())
+    }
+    async fn forget_coupon(&self, customer_id: &str, code: &str) -> Result<bool, StorageError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .saved
+            .remove(&(customer_id.to_string(), code.to_string())))
+    }
 }
 
 /// Budget bookkeeping shared with the Postgres adapter's logic: what each applied promotion
@@ -520,6 +562,42 @@ impl RedemptionRepository for InMemoryStore {
             &self.inner.lock().unwrap(),
             Some(codes),
         ))
+    }
+
+    async fn coupon_uses_of_customer(
+        &self,
+        customer_id: &str,
+    ) -> Result<Vec<(String, String)>, RedemptionError> {
+        let s = self.inner.lock().unwrap();
+        let mut rs: Vec<&Redemption> = s
+            .redemptions
+            .values()
+            .filter(|r| {
+                r.status != RedemptionStatus::Cancelled
+                    && r.customer_id.as_deref() == Some(customer_id)
+            })
+            .collect();
+        rs.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.order_id.cmp(&b.order_id))
+        });
+        let mut out = Vec::new();
+        for r in rs {
+            for code in &r.input.cart.coupon_codes {
+                let Some(c) = s.coupons.get(code) else {
+                    continue;
+                };
+                if r.result
+                    .applied
+                    .iter()
+                    .any(|a| a.promotion_id == c.promotion_id)
+                {
+                    out.push((code.clone(), r.order_id.clone()));
+                }
+            }
+        }
+        Ok(out)
     }
 
     async fn get(&self, order_id: &str) -> Result<Option<Redemption>, RedemptionError> {

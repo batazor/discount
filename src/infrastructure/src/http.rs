@@ -1,5 +1,5 @@
 //! HTTP adapter: specs `evaluate-http-api`, `redemption` (routes), `promotion-catalog`
-//! (routes) and `coupon-lifecycle` (generation, grants, grant rules).
+//! (routes), `coupon-lifecycle` (generation, grants, grant rules) and `customer-coupons`.
 
 use std::sync::Arc;
 
@@ -14,8 +14,9 @@ use discount_application::ports::{
     RedemptionError, RedemptionRepository, ReserveOutcome, StorageError,
 };
 use discount_application::{
-    CancelRedemption, CodeSource, ConfirmRedemption, CouponError, Evaluate, EvaluateError,
-    GenerateCouponsUseCase, GrantCoupon, Redeem,
+    CancelRedemption, CodeSource, ConfirmRedemption, CouponError, CustomerCouponError, Evaluate,
+    EvaluateError, GenerateCouponsUseCase, GrantCoupon, ListCustomerCoupons, Redeem,
+    SaveCustomerCoupon,
 };
 use discount_domain::{
     CartSnapshot, Coupon, CustomerContext, ExchangeRate, Money, PricingPolicy, PricingResult,
@@ -87,6 +88,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/coupons/generate", post(generate_coupons))
         .route("/v1/coupons/grant", post(grant_coupon))
         .route("/v1/grant-rules", get(list_grant_rules))
+        .route(
+            "/v1/customers/{customer_id}/coupons",
+            get(list_customer_coupons),
+        )
+        .route(
+            "/v1/customers/{customer_id}/coupons/{code}",
+            axum::routing::put(save_customer_coupon).delete(forget_customer_coupon),
+        )
         .route(
             "/v1/grant-rules/{rule_id}",
             get(get_grant_rule)
@@ -619,6 +628,62 @@ async fn delete_grant_rule(
     Path(rule_id): Path<String>,
 ) -> Response {
     match state.catalog.delete_grant_rule(&rule_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+// ---------------------------------------------------------------- customer coupons
+
+fn customer_coupon_error(e: CustomerCouponError) -> Response {
+    match e {
+        CustomerCouponError::UnknownCode => not_found(),
+        CustomerCouponError::BoundToAnotherCustomer => (
+            StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({ "error": "BoundToAnotherCustomer" })),
+        )
+            .into_response(),
+        CustomerCouponError::Storage(e) => storage_error(&e),
+    }
+}
+
+fn list_use_case(state: &AppState) -> ListCustomerCoupons<'_> {
+    ListCustomerCoupons {
+        catalog: &*state.catalog,
+        redemptions: &*state.redemptions,
+        clock: &*state.clock,
+    }
+}
+
+async fn list_customer_coupons(
+    State(state): State<Arc<AppState>>,
+    Path(customer_id): Path<String>,
+) -> Response {
+    match list_use_case(&state).run(&customer_id).await {
+        Ok(cs) => ok_json(&cs),
+        Err(e) => customer_coupon_error(e),
+    }
+}
+
+async fn save_customer_coupon(
+    State(state): State<Arc<AppState>>,
+    Path((customer_id, code)): Path<(String, String)>,
+) -> Response {
+    let uc = SaveCustomerCoupon {
+        list: list_use_case(&state),
+    };
+    match uc.run(&customer_id, &code).await {
+        Ok(c) => ok_json(&c),
+        Err(e) => customer_coupon_error(e),
+    }
+}
+
+async fn forget_customer_coupon(
+    State(state): State<Arc<AppState>>,
+    Path((customer_id, code)): Path<(String, String)>,
+) -> Response {
+    match state.catalog.forget_coupon(&customer_id, &code).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),

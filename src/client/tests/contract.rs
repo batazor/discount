@@ -223,6 +223,44 @@ async fn generated_client_drives_the_documented_flows() {
         other => panic!("expected 404, got {other:?}"),
     }
 
+    // customer coupons: the granted code is listed for c1, a public code can be saved and forgotten
+    let listed = client
+        .list_customer_coupons("c1")
+        .await
+        .expect("list customer coupons")
+        .into_inner();
+    assert!(
+        listed
+            .iter()
+            .any(|e| e.coupon.code == g1.code && matches!(e.status, types::CouponStatus::Active))
+    );
+    let saved = client
+        .save_customer_coupon("c1", &generated.codes[0])
+        .await
+        .expect("save coupon")
+        .into_inner();
+    assert_eq!(saved.coupon.code, generated.codes[0]);
+    assert!(
+        saved
+            .promotion
+            .as_ref()
+            .is_some_and(|p| p.promotion_id == "P1")
+    );
+    match client.save_customer_coupon("c1", "NOPE").await {
+        Err(discount_client::Error::ErrorResponse(e)) => assert_eq!(e.status(), 404),
+        other => panic!("expected 404, got {other:?}"),
+    }
+    client
+        .forget_customer_coupon("c1", &generated.codes[0])
+        .await
+        .expect("forget coupon");
+    let listed = client
+        .list_customer_coupons("c1")
+        .await
+        .expect("list again")
+        .into_inner();
+    assert!(listed.iter().all(|e| e.coupon.code != generated.codes[0]));
+
     // the service serves the very document the client was generated from
     let doc = client.openapi_document().await.expect("openapi document");
     assert_eq!(doc.status(), 200);
