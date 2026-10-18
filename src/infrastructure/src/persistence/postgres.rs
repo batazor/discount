@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use discount_application::ports::{
-    CatalogSnapshot, Counters, GrantRule, GrantTrigger, PricingFn, PromotionCatalog, Redemption,
-    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, StorageError, Uses,
-    transition_allowed,
+    CatalogSnapshot, Counters, GrantRule, GrantTrigger, PricingFn, PromotionCatalog,
+    PromotionMetadata, Redemption, RedemptionError, RedemptionRepository, RedemptionStatus,
+    ReserveOutcome, StorageError, Uses, transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, PricingInput, PricingPolicy, PricingResult, Promotion,
@@ -75,7 +75,7 @@ impl PgStore {
     /// Empty every table and reset the policy; for integration tests only. Tests wipe the
     /// database they point at, so give them a dedicated one.
     pub async fn reset_for_tests(&self, policy: &PricingPolicy) -> Result<(), StorageError> {
-        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants, saved_coupons")
+        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants, saved_coupons, promotion_metadata")
             .execute(&self.pool)
             .await
             .map_err(storage)?;
@@ -707,6 +707,62 @@ impl PromotionCatalog for PgStore {
             .await
             .map_err(storage)?;
         Ok(r.rows_affected() > 0)
+    }
+
+    async fn get_metadata(
+        &self,
+        promotion_id: &str,
+    ) -> Result<Option<PromotionMetadata>, StorageError> {
+        sqlx::query("SELECT m.body FROM promotion_metadata m JOIN promotions p USING (promotion_id) WHERE m.promotion_id = $1 AND NOT p.archived")
+            .bind(promotion_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?
+            .map(|r| r.try_get::<Json<PromotionMetadata>, _>("body").map(|j| j.0).map_err(storage))
+            .transpose()
+    }
+
+    async fn put_metadata(
+        &self,
+        promotion_id: &str,
+        metadata: PromotionMetadata,
+    ) -> Result<bool, StorageError> {
+        let r = sqlx::query(
+            "INSERT INTO promotion_metadata (promotion_id, body, updated_at) \
+             SELECT promotion_id, $2, $3 FROM promotions WHERE promotion_id = $1 AND NOT archived \
+             ON CONFLICT (promotion_id) DO UPDATE SET body = $2, updated_at = $3",
+        )
+        .bind(promotion_id)
+        .bind(Json(&metadata))
+        .bind(epoch())
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    async fn delete_metadata(&self, promotion_id: &str) -> Result<bool, StorageError> {
+        let r = sqlx::query("DELETE FROM promotion_metadata WHERE promotion_id = $1")
+            .bind(promotion_id)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    async fn list_metadata(&self) -> Result<Vec<(PromotionId, PromotionMetadata)>, StorageError> {
+        sqlx::query("SELECT m.promotion_id, m.body FROM promotion_metadata m JOIN promotions p USING (promotion_id) WHERE NOT p.archived ORDER BY m.promotion_id")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage)?
+            .iter()
+            .map(|r| {
+                Ok((
+                    r.try_get::<String, _>("promotion_id").map_err(storage)?,
+                    r.try_get::<Json<PromotionMetadata>, _>("body").map(|j| j.0).map_err(storage)?,
+                ))
+            })
+            .collect()
     }
 }
 

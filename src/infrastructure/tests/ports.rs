@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use common::*;
 use discount_application::ports::{
-    Counters, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog, RedemptionError,
-    RedemptionRepository, RedemptionStatus, ReserveOutcome,
+    Counters, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog, PromotionMetadata,
+    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome,
 };
 use discount_application::{
     CancelRedemption, ConfirmRedemption, CouponError, CouponStatus, CustomerCouponError, Evaluate,
@@ -1013,6 +1013,139 @@ async fn customer_coupons_listing() {
                 .iter()
                 .all(|e| e.coupon.code != "SPRING")
         );
+    })
+    .await;
+}
+
+fn metadata(title: &str, source: Option<&str>) -> PromotionMetadata {
+    PromotionMetadata {
+        title: title.into(),
+        description: String::new(),
+        source: source.map(str::to_string),
+        labels: [("channel".to_string(), "app".to_string())]
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// Spec `promotion-catalog`: metadata round trip, status codes, listing and source filter;
+/// spec `customer-coupons`: metadata in the entry and the source filter.
+#[tokio::test]
+async fn promotion_metadata_and_source_filter() {
+    for_each_backend(|p| async move {
+        let clock = FixedClock(NOW);
+        p.catalog.put_group(group_g()).await.unwrap();
+        for id in ["P1", "P2", "P3"] {
+            let mut pr = fixed_300(id);
+            pr.rules = vec![Rule::RequiresCoupon];
+            p.catalog.put_promotion(pr).await.unwrap();
+        }
+        // nothing stored yet
+        assert_eq!(p.catalog.get_metadata("P1").await.unwrap(), None);
+        assert!(!p.catalog.delete_metadata("P1").await.unwrap());
+        assert!(
+            !p.catalog
+                .put_metadata("nope", metadata("x", None))
+                .await
+                .unwrap()
+        );
+        // round trip
+        assert!(
+            p.catalog
+                .put_metadata("P1", metadata("Summer", Some("hotels")))
+                .await
+                .unwrap()
+        );
+        assert!(
+            p.catalog
+                .put_metadata("P2", metadata("Roads", Some("cars")))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            p.catalog.get_metadata("P1").await.unwrap(),
+            Some(metadata("Summer", Some("hotels")))
+        );
+        // upsert replaces
+        assert!(
+            p.catalog
+                .put_metadata("P1", metadata("Summer 2", Some("hotels")))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            p.catalog.get_metadata("P1").await.unwrap().unwrap().title,
+            "Summer 2"
+        );
+        let listed = p.catalog.list_metadata().await.unwrap();
+        assert_eq!(
+            listed.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["P1", "P2"]
+        );
+        // limits are checked by the type, independent of the store
+        assert!(metadata("", None).check().is_err());
+        assert!(metadata("ok", Some("Hotels")).check().is_err());
+        assert!(metadata("ok", Some("hotels-2")).check().is_ok());
+        let mut many = metadata("ok", None);
+        many.labels = (0..21).map(|i| (format!("k{i}"), String::new())).collect();
+        assert!(many.check().is_err());
+
+        // customer coupons carry the metadata and filter by source
+        let bound = |code: &str, pid: &str| Coupon {
+            customer_id: Some("c1".into()),
+            promotion_id: pid.into(),
+            ..coupon(code, None)
+        };
+        p.catalog.put_coupon(bound("H1", "P1")).await.unwrap();
+        p.catalog.put_coupon(bound("C1", "P2")).await.unwrap();
+        p.catalog.put_coupon(bound("N1", "P3")).await.unwrap();
+        let list = ListCustomerCoupons {
+            catalog: &*p.catalog,
+            redemptions: &*p.redemptions,
+            clock: &clock,
+        };
+        let all = list.run("c1").await.unwrap();
+        assert_eq!(all.len(), 3);
+        let by = |code: &str| all.iter().find(|e| e.coupon.code == code).unwrap();
+        assert_eq!(
+            by("H1")
+                .promotion
+                .as_ref()
+                .unwrap()
+                .metadata
+                .as_ref()
+                .unwrap()
+                .title,
+            "Summer 2"
+        );
+        assert_eq!(by("N1").promotion.as_ref().unwrap().metadata, None);
+        let hotels = list.run_filtered("c1", Some("hotels")).await.unwrap();
+        assert_eq!(
+            hotels
+                .iter()
+                .map(|e| e.coupon.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["H1"]
+        );
+        assert!(
+            list.run_filtered("c1", Some("transfers"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // archiving hides the metadata from reads and listings, deleting removes it
+        p.catalog.archive_promotion("P2").await.unwrap();
+        assert_eq!(p.catalog.get_metadata("P2").await.unwrap(), None);
+        assert_eq!(p.catalog.list_metadata().await.unwrap().len(), 1);
+        assert!(
+            !p.catalog
+                .put_metadata("P2", metadata("x", None))
+                .await
+                .unwrap()
+        );
+        assert!(p.catalog.delete_metadata("P1").await.unwrap());
+        assert_eq!(p.catalog.get_metadata("P1").await.unwrap(), None);
     })
     .await;
 }

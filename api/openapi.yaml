@@ -142,6 +142,7 @@ paths:
       operationId: listPromotions
       tags: [catalogue]
       summary: Non-archived promotions with their remaining budget
+      parameters: [ { $ref: '#/components/parameters/Source' } ]
       responses:
         '200': { description: Promotions, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Promotion' } } } } }
   /v1/promotions/{promotion_id}:
@@ -186,6 +187,39 @@ paths:
         '200': { description: Stored budget, content: { application/json: { schema: { $ref: '#/components/schemas/Budget' } } } }
         '400': { $ref: '#/components/responses/DecodeError' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/promotions/{promotion_id}/metadata:
+    parameters: [ { $ref: '#/components/parameters/PromotionId' } ]
+    get:
+      operationId: getPromotionMetadata
+      tags: [catalogue]
+      summary: Title, description, source and labels of a promotion
+      responses:
+        '200': { description: Metadata, content: { application/json: { schema: { $ref: '#/components/schemas/PromotionMetadata' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putPromotionMetadata
+      tags: [catalogue]
+      summary: Upsert the metadata of a non-archived promotion (pricing never reads it)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PromotionMetadata' } } } }
+      responses:
+        '200': { description: Stored metadata, content: { application/json: { schema: { $ref: '#/components/schemas/PromotionMetadata' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deletePromotionMetadata
+      tags: [catalogue]
+      summary: Remove the metadata
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/promotion-metadata:
+    get:
+      operationId: listPromotionMetadata
+      tags: [catalogue]
+      summary: Metadata of every non-archived promotion that has some, by promotion id
+      parameters: [ { $ref: '#/components/parameters/Source' } ]
+      responses:
+        '200': { description: Entries, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MetadataEntry' } } } } }
   /v1/coupons:
     get:
       operationId: listCoupons
@@ -305,6 +339,7 @@ paths:
         Coupons bound to the customer, coupons the customer used in a reserved or confirmed
         redemption, and public codes the customer saved; each once, ordered by code. The
         status is cart-free: whether a coupon applies to a cart is `evaluate`'s answer.
+      parameters: [ { $ref: '#/components/parameters/Source' } ]
       responses:
         '200': { description: Coupons, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/CustomerCoupon' } } } } }
   /v1/customers/{customer_id}/coupons/{code}:
@@ -351,6 +386,7 @@ components:
   parameters:
     OrderId: { name: order_id, in: path, required: true, schema: { type: string } }
     PromotionId: { name: promotion_id, in: path, required: true, schema: { type: string } }
+    Source: { name: source, in: query, required: false, schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,31}$' }, description: Only promotions whose metadata has this `source` }
   responses:
     DecodeError:
       description: Malformed body (invalid JSON, schema mismatch, unknown key); `decode_error` is set
@@ -569,13 +605,35 @@ components:
       description: >-
         `applied` = the customer used it (see `order_id`); `expired` = window closed, uses
         exhausted, or promotion gone; `scheduled` = `starts_at` is in the future; else `active`.
+    PromotionMetadata:
+      type: object
+      required: [title, description, source, labels]
+      additionalProperties: false
+      description: Application state next to a promotion; pricing never reads it
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        source: { type: string, pattern: '^[a-z][a-z0-9_-]{0,31}$', nullable: true, description: 'Partition for listings, e.g. hotels, cars, transfers' }
+        labels:
+          type: object
+          maxProperties: 20
+          additionalProperties: { type: string, maxLength: 256 }
+          description: Reporting dimensions (issuer, business line, aim, channel, ...); keys 1-64 characters
+    MetadataEntry:
+      type: object
+      required: [promotion_id, metadata]
+      additionalProperties: false
+      properties:
+        promotion_id: { type: string }
+        metadata: { $ref: '#/components/schemas/PromotionMetadata' }
     CouponPromotion:
       type: object
-      required: [promotion_id, action]
+      required: [promotion_id, action, metadata]
       additionalProperties: false
       properties:
         promotion_id: { type: string }
         action: { $ref: '#/components/schemas/Action' }
+        metadata: { type: object, allOf: [ { $ref: '#/components/schemas/PromotionMetadata' } ], nullable: true }
     CustomerCoupon:
       type: object
       required: [coupon, status, order_id, promotion]

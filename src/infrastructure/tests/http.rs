@@ -400,6 +400,8 @@ async fn openapi_covers_every_route() {
         "/v1/groups:",
         "/v1/groups/{group_id}",
         "/v1/promotions:",
+        "/v1/promotions/{promotion_id}/metadata",
+        "/v1/promotion-metadata",
         "/v1/promotions/{promotion_id}:",
         "/v1/promotions/{promotion_id}/budget",
         "/v1/coupons:",
@@ -766,7 +768,7 @@ async fn customer_coupon_routes() {
     );
     assert_eq!(
         entries[0]["promotion"],
-        json!({"promotion_id": "P1", "action": {"type": "OrderPercentage", "bps": 1000}})
+        json!({"promotion_id": "P1", "action": {"type": "OrderPercentage", "bps": 1000}, "metadata": null})
     );
 
     assert_eq!(
@@ -811,4 +813,212 @@ async fn customer_coupon_routes() {
         .map(|e| e["coupon"]["code"].as_str().unwrap())
         .collect();
     assert_eq!(codes, vec!["GRANT-1", "WELCOME"]);
+}
+
+/// Spec `promotion-catalog`, metadata over HTTP: round trip, limits, status codes, listing and
+/// the source filter on promotions and customer coupons.
+#[tokio::test]
+async fn promotion_metadata_routes() {
+    let app = router(state_with(
+        discount_infrastructure::InMemoryStore::new(discount_infrastructure::default_policy()),
+        discount_infrastructure::telemetry::Instruments::noop(),
+    ));
+    call(
+        &app,
+        Method::PUT,
+        "/v1/groups/g",
+        Some(json!({"group_id": "g", "priority": 0, "mode": {"type": "Stackable"}}).to_string()),
+    )
+    .await;
+    for id in ["P1", "P2", "P3"] {
+        let promo = json!({"promotion_id": id, "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
+            "remaining_budget": null, "uses_total": 0, "rounding": null, "rules": [{"type": "RequiresCoupon"}],
+            "action": {"type": "OrderPercentage", "bps": 1000}});
+        call(
+            &app,
+            Method::PUT,
+            &format!("/v1/promotions/{id}"),
+            Some(promo.to_string()),
+        )
+        .await;
+    }
+    let md = json!({"title": "Summer", "description": "", "source": "hotels", "labels": {"channel": "app"}});
+    assert_eq!(
+        call(&app, Method::GET, "/v1/promotions/P1/metadata", None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, body) = call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P1/metadata",
+        Some(md.to_string()),
+    )
+    .await;
+    assert_eq!((status, &body), (StatusCode::OK, &md));
+    let (status, body) = call(&app, Method::GET, "/v1/promotions/P1/metadata", None).await;
+    assert_eq!((status, body), (StatusCode::OK, md.clone()));
+    let cars = json!({"title": "Roads", "description": "x", "source": "cars", "labels": {}});
+    call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P2/metadata",
+        Some(cars.to_string()),
+    )
+    .await;
+    // limits -> 400 decode_error; unknown promotion -> 404; unknown key -> 400
+    let mut bad = md.clone();
+    bad["title"] = json!("");
+    let (status, b) = call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P1/metadata",
+        Some(bad.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(b["decode_error"].as_str().unwrap().contains("title"));
+    let mut bad = md.clone();
+    bad["labels"] =
+        serde_json::Value::Object((0..21).map(|i| (format!("k{i}"), json!(""))).collect());
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/P1/metadata",
+            Some(bad.to_string())
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let mut bad = md.clone();
+    bad["source"] = json!("Hotels");
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/P1/metadata",
+            Some(bad.to_string())
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let mut bad = md.clone();
+    bad["extra"] = json!(1);
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/P1/metadata",
+            Some(bad.to_string())
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/nope/metadata",
+            Some(md.to_string())
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    // listing and filters
+    let (status, l) = call(&app, Method::GET, "/v1/promotion-metadata", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<&str> = l
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["promotion_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["P1", "P2"]);
+    let (_, l) = call(
+        &app,
+        Method::GET,
+        "/v1/promotion-metadata?source=cars",
+        None,
+    )
+    .await;
+    assert_eq!(l.as_array().unwrap().len(), 1);
+    let (_, l) = call(&app, Method::GET, "/v1/promotions", None).await;
+    assert_eq!(l.as_array().unwrap().len(), 3);
+    let (_, l) = call(&app, Method::GET, "/v1/promotions?source=hotels", None).await;
+    assert_eq!(
+        l.as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["promotion_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["P1"]
+    );
+    let (_, l) = call(&app, Method::GET, "/v1/promotions?source=transfers", None).await;
+    assert_eq!(l.as_array().unwrap().len(), 0);
+    // customer coupons: metadata in the entry, source filter
+    let coupon = |code: &str, pid: &str| {
+        json!({"code": code, "promotion_id": pid, "starts_at": null, "ends_at": null, "customer_id": "c1", "max_uses": null, "uses": 0}).to_string()
+    };
+    call(
+        &app,
+        Method::PUT,
+        "/v1/coupons/H1",
+        Some(coupon("H1", "P1")),
+    )
+    .await;
+    call(
+        &app,
+        Method::PUT,
+        "/v1/coupons/N1",
+        Some(coupon("N1", "P3")),
+    )
+    .await;
+    let (_, l) = call(&app, Method::GET, "/v1/customers/c1/coupons", None).await;
+    let entries = l.as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["promotion"]["metadata"], md);
+    assert_eq!(entries[1]["promotion"]["metadata"], serde_json::Value::Null);
+    let (_, l) = call(
+        &app,
+        Method::GET,
+        "/v1/customers/c1/coupons?source=hotels",
+        None,
+    )
+    .await;
+    assert_eq!(
+        l.as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["coupon"]["code"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["H1"]
+    );
+    // archive hides, delete removes
+    call(&app, Method::DELETE, "/v1/promotions/P2", None).await;
+    assert_eq!(
+        call(&app, Method::GET, "/v1/promotions/P2/metadata", None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, l) = call(&app, Method::GET, "/v1/promotion-metadata", None).await;
+    assert_eq!(l.as_array().unwrap().len(), 1);
+    assert_eq!(
+        call(&app, Method::DELETE, "/v1/promotions/P1/metadata", None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(&app, Method::DELETE, "/v1/promotions/P1/metadata", None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
 }

@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 use discount_domain::{Action, Coupon, Promotion, Timestamp};
 use serde::{Deserialize, Serialize};
 
-use crate::ports::{Clock, PromotionCatalog, RedemptionError, RedemptionRepository, StorageError};
+use crate::ports::{
+    Clock, PromotionCatalog, PromotionMetadata, RedemptionError, RedemptionRepository, StorageError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -22,6 +24,7 @@ pub enum CouponStatus {
 pub struct CouponPromotion {
     pub promotion_id: String,
     pub action: Action,
+    pub metadata: Option<PromotionMetadata>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +88,15 @@ pub struct ListCustomerCoupons<'a> {
 impl ListCustomerCoupons<'_> {
     /// Bound ∪ used ∪ saved, each once, ordered by code.
     pub async fn run(&self, customer_id: &str) -> Result<Vec<CustomerCoupon>, CustomerCouponError> {
+        self.run_filtered(customer_id, None).await
+    }
+
+    /// With `source`, only entries whose promotion metadata has that `source`.
+    pub async fn run_filtered(
+        &self,
+        customer_id: &str,
+        source: Option<&str>,
+    ) -> Result<Vec<CustomerCoupon>, CustomerCouponError> {
         let now = self.clock.now();
         let uses = self
             .redemptions
@@ -108,10 +120,22 @@ impl ListCustomerCoupons<'_> {
         }
         let mut out = Vec::with_capacity(coupons.len());
         for (code, coupon) in coupons {
-            out.push(
-                self.entry(coupon, first_order.get(&code).map(String::as_str), now)
-                    .await?,
-            );
+            let e = self
+                .entry(coupon, first_order.get(&code).map(String::as_str), now)
+                .await?;
+            let keep = match source {
+                None => true,
+                Some(src) => {
+                    e.promotion
+                        .as_ref()
+                        .and_then(|p| p.metadata.as_ref())
+                        .and_then(|m| m.source.as_deref())
+                        == Some(src)
+                }
+            };
+            if keep {
+                out.push(e);
+            }
         }
         Ok(out)
     }
@@ -144,10 +168,14 @@ impl ListCustomerCoupons<'_> {
         Ok(CustomerCoupon {
             status,
             order_id: used.map(str::to_string),
-            promotion: promotion.map(|p| CouponPromotion {
-                promotion_id: p.promotion_id,
-                action: p.action,
-            }),
+            promotion: match promotion {
+                None => None,
+                Some(p) => Some(CouponPromotion {
+                    metadata: self.catalog.get_metadata(&p.promotion_id).await?,
+                    promotion_id: p.promotion_id,
+                    action: p.action,
+                }),
+            },
             coupon,
         })
     }

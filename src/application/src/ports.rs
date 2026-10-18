@@ -128,6 +128,61 @@ pub struct GrantRule {
     pub max_uses: Option<i64>,
 }
 
+/// What a promotion is called and how it is reported; never read by pricing
+/// (OpenSpec `promotion-metadata`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromotionMetadata {
+    pub title: String,
+    pub description: String,
+    pub source: Option<String>,
+    pub labels: std::collections::BTreeMap<String, String>,
+}
+
+impl PromotionMetadata {
+    pub const MAX_TITLE: usize = 200;
+    pub const MAX_DESCRIPTION: usize = 2000;
+    pub const MAX_LABELS: usize = 20;
+    pub const MAX_LABEL_KEY: usize = 64;
+    pub const MAX_LABEL_VALUE: usize = 256;
+
+    /// `^[a-z][a-z0-9_-]{0,31}$`
+    pub fn valid_source(s: &str) -> bool {
+        let mut chars = s.chars();
+        matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
+            && s.len() <= 32
+            && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+    }
+
+    /// The limits of the spec; `Err` names the offending field.
+    pub fn check(&self) -> Result<(), String> {
+        let n = |s: &str| s.chars().count();
+        if n(&self.title) == 0 || n(&self.title) > Self::MAX_TITLE {
+            return Err("title must be 1..=200 characters".into());
+        }
+        if n(&self.description) > Self::MAX_DESCRIPTION {
+            return Err("description must be at most 2000 characters".into());
+        }
+        if let Some(src) = &self.source
+            && !Self::valid_source(src)
+        {
+            return Err("source must match ^[a-z][a-z0-9_-]{0,31}$".into());
+        }
+        if self.labels.len() > Self::MAX_LABELS {
+            return Err("labels must have at most 20 entries".into());
+        }
+        for (k, v) in &self.labels {
+            if n(k) == 0 || n(k) > Self::MAX_LABEL_KEY {
+                return Err(format!("label key '{k}' must be 1..=64 characters"));
+            }
+            if n(v) > Self::MAX_LABEL_VALUE {
+                return Err(format!("label '{k}' value must be at most 256 characters"));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Request to generate a batch of coupon codes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -205,6 +260,21 @@ pub trait PromotionCatalog: Send + Sync {
     async fn save_coupon(&self, customer_id: &str, code: &str) -> Result<(), StorageError>;
     /// `Ok(false)` when nothing was saved.
     async fn forget_coupon(&self, customer_id: &str, code: &str) -> Result<bool, StorageError>;
+    /// Metadata of a non-archived promotion, if stored.
+    async fn get_metadata(
+        &self,
+        promotion_id: &str,
+    ) -> Result<Option<PromotionMetadata>, StorageError>;
+    /// Upsert; `Ok(false)` when the promotion is unknown or archived.
+    async fn put_metadata(
+        &self,
+        promotion_id: &str,
+        metadata: PromotionMetadata,
+    ) -> Result<bool, StorageError>;
+    /// `Ok(false)` when nothing was stored.
+    async fn delete_metadata(&self, promotion_id: &str) -> Result<bool, StorageError>;
+    /// Metadata of every non-archived promotion that has some, ordered by promotion id.
+    async fn list_metadata(&self) -> Result<Vec<(PromotionId, PromotionMetadata)>, StorageError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

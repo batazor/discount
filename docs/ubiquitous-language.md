@@ -386,8 +386,13 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
   and usage counters. Iteration 2 (ADR 7, ADR 4).
 - `SavedCoupon { customer_id, code }`: a public code a customer keeps; stored in the
   catalogue, never read by pricing (OpenSpec change `customer-coupons`).
+- `PromotionMetadata { title, description, source?, labels }`: what a promotion is called
+  and how it is reported, stored next to it in the catalogue and never read by pricing
+  (OpenSpec change `promotion-metadata`). `source` partitions listings (hotels, cars, …);
+  `labels` is a small string map of reporting dimensions.
 - `CustomerCoupon { coupon, status, order_id?, promotion? }`: read model returned by
-  `ListCustomerCoupons`; `promotion` is `{ promotion_id, action }` of the coupon's promotion.
+  `ListCustomerCoupons`; `promotion` is `{ promotion_id, action, metadata? }` of the coupon's
+  promotion.
 - `CouponStatus`: `applied` (the customer used the coupon; `order_id` names the earliest such
   redemption) | `expired` (`ends_at ≤ now`, or `uses ≥ max_uses`, or the promotion is
   archived or missing) | `scheduled` (`starts_at > now`) | `active`. Cart-free: whether the

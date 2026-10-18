@@ -12,8 +12,8 @@ use discount_application::CodeSource;
 use discount_application::coupons::CODE_LENGTH;
 use discount_application::ports::{
     CatalogSnapshot, Clock, Counters, Event, EventPublisher, GrantRule, GrantTrigger, PricingFn,
-    PromotionCatalog, Redemption, RedemptionError, RedemptionRepository, RedemptionStatus,
-    ReserveOutcome, StorageError, Uses, transition_allowed,
+    PromotionCatalog, PromotionMetadata, Redemption, RedemptionError, RedemptionRepository,
+    RedemptionStatus, ReserveOutcome, StorageError, Uses, transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, OrderCap, PricingPolicy, Promotion, PromotionId, RoundingPolicy,
@@ -59,6 +59,7 @@ struct Store {
     grant_rules: BTreeMap<String, GrantRule>,
     grants: BTreeMap<(String, String), String>,
     saved: std::collections::BTreeSet<(String, String)>,
+    metadata: BTreeMap<String, PromotionMetadata>,
 }
 
 /// In-memory catalogue and redemption store.
@@ -463,6 +464,48 @@ impl PromotionCatalog for InMemoryStore {
             .unwrap()
             .saved
             .remove(&(customer_id.to_string(), code.to_string())))
+    }
+
+    async fn get_metadata(
+        &self,
+        promotion_id: &str,
+    ) -> Result<Option<PromotionMetadata>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        match s.promotions.get(promotion_id) {
+            Some(p) if !p.archived => Ok(s.metadata.get(promotion_id).cloned()),
+            _ => Ok(None),
+        }
+    }
+    async fn put_metadata(
+        &self,
+        promotion_id: &str,
+        metadata: PromotionMetadata,
+    ) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        match s.promotions.get(promotion_id) {
+            Some(p) if !p.archived => {
+                s.metadata.insert(promotion_id.to_string(), metadata);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+    async fn delete_metadata(&self, promotion_id: &str) -> Result<bool, StorageError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .metadata
+            .remove(promotion_id)
+            .is_some())
+    }
+    async fn list_metadata(&self) -> Result<Vec<(PromotionId, PromotionMetadata)>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        Ok(s.metadata
+            .iter()
+            .filter(|(pid, _)| s.promotions.get(*pid).is_some_and(|p| !p.archived))
+            .map(|(pid, m)| (pid.clone(), m.clone()))
+            .collect())
     }
 }
 

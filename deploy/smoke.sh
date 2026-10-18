@@ -73,6 +73,20 @@ assert e and e[0]["status"] == "applied" and e[0]["order_id"] == order, d
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$SERVICE/v1/customers/smoke/coupons/NOPE")" = "404" ] || fail "saving an unknown code should be 404"
 pass "customer smoke sees $CODE as applied in order $ORDER-c1"
 
+# Promotion metadata: title and source on P3, visible in the customer's listing and in the filters.
+[ "$(put /v1/promotions/P3/metadata '{"title":"Smoke code","description":"single use","source":"hotels","labels":{"channel":"smoke"}}')" = "200" ] || fail "put metadata"
+curl -s "$SERVICE/v1/customers/smoke/coupons?source=hotels" | python3 -c '
+import sys,json
+code = sys.argv[1]
+d = json.load(sys.stdin)
+e = [x for x in d if x["coupon"]["code"] == code]
+assert e and e[0]["promotion"]["metadata"]["title"] == "Smoke code", d
+' "$CODE" || fail "customer listing lacks the metadata of $CODE"
+N=$(curl -s "$SERVICE/v1/customers/smoke/coupons?source=transfers" | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))')
+[ "$N" = "0" ] || fail "source filter should exclude other sources, got $N entries"
+[ "$(curl -s "$SERVICE/v1/promotions?source=hotels" | python3 -c 'import sys,json; print(",".join(p["promotion_id"] for p in json.load(sys.stdin)))')" = "P3" ] || fail "promotion source filter"
+pass "metadata on P3 reaches the customer listing; source filters work"
+
 # Give the periodic exporters time to flush (metrics export every 60s by default is too
 # slow for a smoke; the service sets OTEL_METRIC_EXPORT_INTERVAL=5000).
 echo "waiting for export..."

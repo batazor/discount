@@ -2,11 +2,12 @@
 //! (routes), `coupon-lifecycle` (generation, grants, grant rules) and `customer-coupons`.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, Path, Request, State};
-use axum::http::StatusCode;
+use axum::extract::{FromRequest, MatchedPath, Path, Request, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use discount_application::ports::{
@@ -23,8 +24,11 @@ use discount_domain::{
     Promotion, StackingGroup,
 };
 use serde::{Deserialize, Serialize};
+use opentelemetry::global;
+use opentelemetry::trace::TraceContextExt;
 use tower_http::trace::TraceLayer;
 use tracing::Instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::telemetry::{Instruments, evaluate_span};
 
@@ -114,17 +118,86 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/healthz", get(healthz))
         .route("/openapi.yaml", get(openapi_yaml))
         .route("/docs", get(swagger_ui))
-        .layer(TraceLayer::new_for_http().make_span_with(|req: &Request| {
-            tracing::info_span!(
-                "http.request",
-                otel.name = %format!("{} {}", req.method(), req.uri().path()),
-                otel.kind = "server",
-                http.request.method = %req.method(),
-                url.path = %req.uri().path(),
-            )
-        }))
+        .layer(trace_layer())
         .with_state(state)
 }
+
+/// The HTTP server span (spec `telemetry`, server-span requirements): named by the matched
+/// route template, parented to an incoming W3C trace context, carrying `http.route`,
+/// `url.path` and the response status; `GET /healthz` gets no span at all. 5xx responses
+/// set the span status to `Error`; 4xx (including `422` pricing rejections) do not.
+pub fn trace_layer() -> HttpTraceLayer {
+    TraceLayer::new_for_http()
+        .make_span_with(make_span as MakeSpan)
+        .on_response(on_response as OnResponse)
+}
+
+type MakeSpan = fn(&Request) -> tracing::Span;
+type OnResponse = fn(&Response, Duration, &tracing::Span);
+pub type HttpTraceLayer = TraceLayer<
+    tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
+    MakeSpan,
+    tower_http::trace::DefaultOnRequest,
+    OnResponse,
+>;
+
+fn make_span(req: &Request) -> tracing::Span {
+    let route = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|m| m.as_str().to_owned());
+    if route.as_deref() == Some("/healthz") {
+        return tracing::Span::none();
+    }
+    let name = match &route {
+        Some(r) => format!("{} {}", req.method(), r),
+        None => req.method().to_string(),
+    };
+    let span = tracing::info_span!(
+        "http.request",
+        otel.name = %name,
+        otel.kind = "server",
+        http.request.method = %req.method(),
+        http.route = tracing::field::Empty,
+        url.path = %req.uri().path(),
+        http.response.status_code = tracing::field::Empty,
+    );
+    if let Some(r) = &route {
+        span.record("http.route", r.as_str());
+    }
+    let parent = global::get_text_map_propagator(|p| p.extract(&HeaderExtractor(req.headers())));
+    if parent.span().span_context().is_valid() {
+        // Fails only when no OpenTelemetry layer is installed (plain stdout logging).
+        let _ = span.set_parent(parent);
+    }
+    span
+}
+
+fn on_response(res: &Response, _latency: Duration, span: &tracing::Span) {
+    let status = res.status();
+    span.record("http.response.status_code", status.as_u16() as i64);
+    if status.is_server_error() {
+        span.set_status(opentelemetry::trace::Status::error(
+            status
+                .canonical_reason()
+                .unwrap_or("server error")
+                .to_owned(),
+        ));
+    }
+}
+
+/// `opentelemetry::propagation::Extractor` over the request headers.
+struct HeaderExtractor<'a>(&'a HeaderMap);
+
+impl opentelemetry::propagation::Extractor for HeaderExtractor<'_> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|v| v.to_str().ok())
+    }
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|k| k.as_str()).collect()
+    }
+}
+
 
 /// The OpenAPI document, embedded from `api/openapi.yaml` (the contract, ADR 10).
 pub const OPENAPI_YAML: &str = include_str!("../../../api/openapi.yaml");

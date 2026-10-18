@@ -72,7 +72,7 @@ async fn generated_client_drives_the_documented_flows() {
     let budget: types::Budget =
         from_json(json!({"remaining": {"amount": 100000, "currency": "EUR"}}));
     client.put_budget("P1", &budget).await.expect("put budget");
-    let listed = client.list_promotions().await.expect("list promotions");
+    let listed = client.list_promotions(None).await.expect("list promotions");
     assert_eq!(listed.len(), 1);
     assert_eq!(
         listed[0].remaining_budget.as_ref().map(|m| m.amount),
@@ -225,7 +225,7 @@ async fn generated_client_drives_the_documented_flows() {
 
     // customer coupons: the granted code is listed for c1, a public code can be saved and forgotten
     let listed = client
-        .list_customer_coupons("c1")
+        .list_customer_coupons("c1", None)
         .await
         .expect("list customer coupons")
         .into_inner();
@@ -255,11 +255,80 @@ async fn generated_client_drives_the_documented_flows() {
         .await
         .expect("forget coupon");
     let listed = client
-        .list_customer_coupons("c1")
+        .list_customer_coupons("c1", None)
         .await
         .expect("list again")
         .into_inner();
     assert!(listed.iter().all(|e| e.coupon.code != generated.codes[0]));
+
+    // promotion metadata: round trip, listing, source filter on promotions and customer coupons
+    let md: types::PromotionMetadata = from_json(json!({
+        "title": "Summer sale", "description": "10 % off", "source": "hotels", "labels": {"channel": "app"}
+    }));
+    let stored = client
+        .put_promotion_metadata("P1", &md)
+        .await
+        .expect("put metadata")
+        .into_inner();
+    assert_eq!(stored.title.as_str(), "Summer sale");
+    let got = client
+        .get_promotion_metadata("P1")
+        .await
+        .expect("get metadata")
+        .into_inner();
+    assert_eq!(got.source.as_ref().map(|s| s.as_str()), Some("hotels"));
+    let entries = client
+        .list_promotion_metadata(None)
+        .await
+        .expect("list metadata")
+        .into_inner();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].promotion_id, "P1");
+    let hotels: types::ListPromotionsSource = "hotels".parse().unwrap();
+    assert_eq!(
+        client
+            .list_promotions(Some(&hotels))
+            .await
+            .expect("filtered")
+            .len(),
+        1
+    );
+    let cars: types::ListPromotionsSource = "cars".parse().unwrap();
+    assert_eq!(
+        client
+            .list_promotions(Some(&cars))
+            .await
+            .expect("filtered")
+            .len(),
+        0
+    );
+    let cc_hotels: types::ListCustomerCouponsSource = "hotels".parse().unwrap();
+    let listed = client
+        .list_customer_coupons("c1", Some(&cc_hotels))
+        .await
+        .expect("filtered coupons")
+        .into_inner();
+    assert!(!listed.is_empty());
+    assert!(listed.iter().all(|e| {
+        e.promotion
+            .as_ref()
+            .and_then(|p| p.metadata.as_ref())
+            .and_then(|m| m.source.as_ref())
+            .map(|s| s.as_str())
+            == Some("hotels")
+    }));
+    match client.put_promotion_metadata("nope", &md).await {
+        Err(discount_client::Error::ErrorResponse(e)) => assert_eq!(e.status(), 404),
+        other => panic!("expected 404, got {other:?}"),
+    }
+    client
+        .delete_promotion_metadata("P1")
+        .await
+        .expect("delete metadata");
+    match client.get_promotion_metadata("P1").await {
+        Err(discount_client::Error::ErrorResponse(e)) => assert_eq!(e.status(), 404),
+        other => panic!("expected 404, got {other:?}"),
+    }
 
     // the service serves the very document the client was generated from
     let doc = client.openapi_document().await.expect("openapi document");
