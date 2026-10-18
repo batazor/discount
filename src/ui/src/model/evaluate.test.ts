@@ -55,12 +55,12 @@ describe("result rows", () => {
     const rows = resultRows(result);
     expect(rows.totals.map((t) => t.value)).toEqual(["EUR", "4499 EUR", "749 EUR", "3750 EUR"]);
     expect(rows.applied).toEqual([
-      { promotion_id: "P1", discount: "449 EUR", clamped_by: "—", allocation: "L1 399" },
-      { promotion_id: "P2", discount: "300 EUR", clamped_by: "Cap", allocation: "" },
+      { promotion_id: "P1", discount: "449 EUR", clamped_by: "—", clamp: null, allocation: "L1 399" },
+      { promotion_id: "P2", discount: "300 EUR", clamped_by: "Cap", clamp: "Cap", allocation: "" },
     ]);
     expect(rows.skipped).toEqual([
-      { promotion_id: "P3", reason: "NotEligible (rule #0)" },
-      { promotion_id: "P4", reason: "ExclusiveApplied (winner P1)" },
+      { promotion_id: "P3", reason: "NotEligible (rule #0)", skip: "NotEligible" },
+      { promotion_id: "P4", reason: "ExclusiveApplied (winner P1)", skip: "ExclusiveApplied" },
     ]);
     expect(skipReasonText({ type: "FirstMatchTaken", winner: "P9" })).toBe("FirstMatchTaken (winner P9)");
   });

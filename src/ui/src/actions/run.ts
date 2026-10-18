@@ -6,9 +6,9 @@ import { fieldsOf, type FieldError, type Fields, type Parsed } from "../model/fi
 
 export type ActionOutcome<T> =
   | { kind: "ok"; data: T; fields: Fields }
-  | { kind: "api"; status: number; body: unknown; fields: Fields }
+  | { kind: "api"; status: number; body: unknown; fields: Fields; traceId: string }
   | { kind: "invalid"; errors: FieldError[]; fields: Fields }
-  | { kind: "unreachable"; url: string; fields: Fields };
+  | { kind: "unreachable"; url: string; fields: Fields; traceId: string };
 
 type Reply<T> = { data?: T; error?: unknown; response: Response };
 
@@ -32,8 +32,8 @@ export async function runPlain<T>(fd: FormData, send: (fields: Fields) => Promis
 
 export function fold<T>(o: Outcome<T>, fields: Fields): ActionOutcome<T> {
   if (o.ok) return { kind: "ok", data: o.data, fields };
-  if (o.unreachable) return { kind: "unreachable", url: o.url, fields };
-  return { kind: "api", status: o.status, body: o.body, fields };
+  if (o.unreachable) return { kind: "unreachable", url: o.url, fields, traceId: o.traceId };
+  return { kind: "api", status: o.status, body: o.body, fields, traceId: o.traceId };
 }
 
 /** What a form needs to render after an action (or before any): fields, field errors, API error. */
@@ -42,17 +42,20 @@ export type FormState = {
   errors: FieldError[];
   api: { status: number; body: unknown } | null;
   unreachable: string | null;
+  /** Trace id of the failed call (api or unreachable), for the error panel. */
+  traceId: string | null;
   ok: boolean;
 };
 
 export function formState(result: ActionOutcome<unknown> | undefined, initial: Fields): FormState {
-  if (!result) return { fields: initial, errors: [], api: null, unreachable: null, ok: false };
+  if (!result) return { fields: initial, errors: [], api: null, unreachable: null, traceId: null, ok: false };
   return {
     // After a success the page re-reads the record, so the fresh fields win.
     fields: result.kind === "ok" ? initial : result.fields,
     errors: result.kind === "invalid" ? result.errors : [],
     api: result.kind === "api" ? { status: result.status, body: result.body } : null,
     unreachable: result.kind === "unreachable" ? result.url : null,
+    traceId: result.kind === "api" || result.kind === "unreachable" ? result.traceId : null,
     ok: result.kind === "ok",
   };
 }

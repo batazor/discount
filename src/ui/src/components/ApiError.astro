@@ -1,8 +1,9 @@
 ---
 // The API's error body is the contract (ErrorBody in api/openapi.yaml): status and JSON
 // are printed unchanged next to the form that caused them (spec: errors are shown verbatim).
-interface Props { status: number; body: unknown }
-const { status, body } = Astro.props;
+import TraceRef from "./TraceRef.astro";
+interface Props { status: number; body: unknown; traceId?: string | null }
+const { status, body, traceId = null } = Astro.props;
 const b = (body ?? {}) as Record<string, unknown>;
 const summary =
   typeof b.decode_error === "string" ? b.decode_error
@@ -15,4 +16,5 @@ const text = typeof body === "string" ? body : JSON.stringify(body, null, 2);
 <div role="alert" class="alert alert-warn">
   <p class="alert-title">API answered {status}{summary && <span class="font-normal">: {summary}</span>}</p>
   <pre>{text}</pre>
+  <TraceRef traceId={traceId} />
 </div>

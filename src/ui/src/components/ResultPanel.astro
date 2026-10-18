@@ -22,7 +22,7 @@ const rows = resultRows(result);
     <h3 class="card-title px-4 pt-4">Applied <span class="badge badge-ok ml-1">{rows.applied.length}</span> <Help text={`In application order. ${TERM.applicationOrder}`} /></h3>
     {rows.applied.length === 0 ? <p class="hint px-4 pb-4">Nothing applied.</p> : (
       <table class="table"><thead><tr><th>Promotion</th><th>Discount</th><th>Clamped by <Help text="Why the discount is smaller than its raw value: the first bound that cut it." /></th><th>Allocation <Help text={TERM.allocation} /></th></tr></thead>
-        <tbody>{rows.applied.map((a) => <tr><td class="mono"><a href={`/promotions/${encodeURIComponent(a.promotion_id)}`} class="link">{a.promotion_id}</a></td><td class="mono">{a.discount}</td><td>{a.clamped_by === "—" ? <span style="color: var(--color-ink-3)">—</span> : <span class="badge badge-warn" data-tip={CLAMP_HELP[a.clamped_by]}>{a.clamped_by}</span>}</td><td class="mono">{a.allocation}</td></tr>)}</tbody>
+        <tbody>{rows.applied.map((a) => <tr><td class="mono"><a href={`/promotions/${encodeURIComponent(a.promotion_id)}`} class="link">{a.promotion_id}</a></td><td class="mono">{a.discount}</td><td>{a.clamped_by === "—" ? <span style="color: var(--color-ink-3)">—</span> : <span class="badge badge-warn" data-tip={a.clamp ? CLAMP_HELP[a.clamp] : undefined}>{a.clamped_by}</span>}</td><td class="mono">{a.allocation}</td></tr>)}</tbody>
       </table>
     )}
   </div>
@@ -30,7 +30,7 @@ const rows = resultRows(result);
     <h3 class="card-title px-4 pt-4">Skipped <span class="badge badge-muted ml-1">{rows.skipped.length}</span></h3>
     {rows.skipped.length === 0 ? <p class="hint px-4 pb-4">Nothing skipped.</p> : (
       <table class="table"><thead><tr><th>Promotion</th><th>Reason</th></tr></thead>
-        <tbody>{rows.skipped.map((s) => <tr><td class="mono"><a href={`/promotions/${encodeURIComponent(s.promotion_id)}`} class="link">{s.promotion_id}</a></td><td><span class="badge badge-muted mono" data-tip={SKIP_HELP[s.reason.split(" ")[0] ?? ""]}>{s.reason}</span></td></tr>)}</tbody>
+        <tbody>{rows.skipped.map((s) => <tr><td class="mono"><a href={`/promotions/${encodeURIComponent(s.promotion_id)}`} class="link">{s.promotion_id}</a></td><td><span class="badge badge-muted mono" data-tip={SKIP_HELP[s.skip]}>{s.reason}</span></td></tr>)}</tbody>
       </table>
     )}
   </div>

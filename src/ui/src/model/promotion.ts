@@ -1,6 +1,6 @@
 // Promotion form ↔ contract body. Every Rule and Action variant of api/openapi.yaml is
 // offered as a choice; the submitted object is the tagged ubiquitous-language shape.
-import type { Action, Promotion, Rule, RoundingPolicy } from "../api/types";
+import type { Action, Complete, Promotion, Rule, RoundingPolicy } from "../api/types";
 import { Form, flatten, type Fields, type Parsed } from "./fields";
 import { toDatetimeLocal } from "./time";
 
@@ -17,11 +17,17 @@ export const RULE_TYPES = [
   "CustomerAttributeIn",
   "CustomerAttributeRange",
   "RequiresAllowlist",
-] as const;
+] as const satisfies readonly Rule["type"][];
 export type RuleType = (typeof RULE_TYPES)[number];
 
-export const ACTION_TYPES = ["OrderPercentage", "OrderFixedAmount"] as const;
-export const ROUNDING_POLICIES = ["HalfUp", "HalfEven", "Down"] as const;
+export const ACTION_TYPES = ["OrderPercentage", "OrderFixedAmount"] as const satisfies readonly Action["type"][];
+export const ROUNDING_POLICIES = ["HalfUp", "HalfEven", "Down"] as const satisfies readonly RoundingPolicy["type"][];
+
+// The contract is the source of these lists (ADR 10): a variant added to api/openapi.yaml
+// that the form does not offer fails `astro check` here, naming the variant.
+export const RULE_TYPES_COMPLETE: Complete<Rule["type"], typeof RULE_TYPES> = true;
+export const ACTION_TYPES_COMPLETE: Complete<Action["type"], typeof ACTION_TYPES> = true;
+export const ROUNDING_POLICIES_COMPLETE: Complete<RoundingPolicy["type"], typeof ROUNDING_POLICIES> = true;
 
 export function ruleFromForm(f: Form, p: string): Rule {
   const type = f.enum(`${p}.type`, RULE_TYPES);

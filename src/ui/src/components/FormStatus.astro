@@ -5,8 +5,8 @@ import Unreachable from "./Unreachable.astro";
 interface Props { state: FormState; okText?: string }
 const { state, okText = "Saved." } = Astro.props;
 ---
-{state.api && <ApiError status={state.api.status} body={state.api.body} />}
-{state.unreachable && <Unreachable url={state.unreachable} />}
+{state.api && <ApiError status={state.api.status} body={state.api.body} traceId={state.traceId} />}
+{state.unreachable && <Unreachable url={state.unreachable} traceId={state.traceId} />}
 {state.ok && <p role="status" class="alert alert-success">{okText}</p>}
 {state.errors.length > 0 && (
   <p role="alert" class="field-error">Fix the {state.errors.length} highlighted field{state.errors.length > 1 && "s"}; nothing was sent.</p>

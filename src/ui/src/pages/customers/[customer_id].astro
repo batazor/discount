@@ -16,7 +16,7 @@ const actionText = (a: { type: string; bps?: number; amount?: { amount: number; 
   a.type === "OrderPercentage" ? `${a.bps} bps` : fmtMoney(a.amount);
 ---
 <Layout title={customerId} crumbs={[["Customers", "/customers"], [customerId]]} description="Bound, used and saved coupons with their cart-free status, as the service lists them." unreachable={unreachableUrl(list)}>
-  {!list.ok && !list.unreachable && <ApiError status={list.status} body={list.body} />}
+  {!list.ok && !list.unreachable && <ApiError status={list.status} body={list.body} traceId={list.traceId} />}
   <form method="get" class="mb-4 flex items-end gap-2">
     <label class="block"><span class="label">Source</span><input type="text" name="source" value={source} placeholder="hotels" class="input mono w-44" /></label>
     <button type="submit" class="btn btn-secondary">Filter</button>

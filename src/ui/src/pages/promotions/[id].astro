@@ -61,7 +61,7 @@ const title = isNew ? "New promotion" : meta?.ok ? meta.data.title : id;
   <Fragment slot="actions">
     {!isNew && current?.ok && <DeleteButton action={actions.deletePromotion} id={id} label="Archive" />}
   </Fragment>
-  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
+  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} traceId={current.traceId} />}
   <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
     <form method="post" action={actions.putPromotion} class="space-y-5">
       <section class="card space-y-4">

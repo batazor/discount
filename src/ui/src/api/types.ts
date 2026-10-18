@@ -33,3 +33,14 @@ export type Redemption = S["Redemption"];
 export type PromotionMetadata = S["PromotionMetadata"];
 export type MetadataEntry = S["MetadataEntry"];
 export type Allowlist = S["Allowlist"];
+export type CouponStatus = S["CouponStatus"];
+export type RedemptionStatus = S["RedemptionStatus"];
+
+/**
+ * Compile-time completeness of a list over a union of the contract. Use as
+ * `export const X_COMPLETE: Complete<Union, typeof LIST> = true;` — when the contract gains
+ * a member the list lacks, the type becomes `{ missing_from_list: "<member>" }` and the
+ * assignment fails with the member's name in the error.
+ */
+export type Complete<U extends string, L extends readonly string[]> =
+  [Exclude<U, L[number]>] extends [never] ? true : { missing_from_list: Exclude<U, L[number]> };

@@ -1,8 +1,12 @@
 // Form ↔ body for the rest of the catalogue: policy, groups, coupons, grant rules, rates,
 // coupon generation and grants.
 import type {
+  Complete,
   Coupon,
   ExchangeRate,
+  GrantTrigger,
+  StackingMode,
+  StackingPolicy,
   GenerateCouponsRequest,
   GrantRequest,
   GrantRule,
@@ -13,9 +17,14 @@ import { Form, flatten, type Fields, type Parsed } from "./fields";
 import { ROUNDING_POLICIES } from "./promotion";
 import { toDatetimeLocal } from "./time";
 
-export const STACKING_POLICIES = ["Sequential", "Additive"] as const;
-export const STACKING_MODES = ["Stackable", "FirstMatch"] as const;
-export const GRANT_TRIGGERS = ["cancel", "review"] as const;
+export const STACKING_POLICIES = ["Sequential", "Additive"] as const satisfies readonly StackingPolicy["type"][];
+export const STACKING_MODES = ["Stackable", "FirstMatch"] as const satisfies readonly StackingMode["type"][];
+export const GRANT_TRIGGERS = ["cancel", "review"] as const satisfies readonly GrantTrigger[];
+
+// Completeness against the contract, see model/promotion.ts.
+export const STACKING_POLICIES_COMPLETE: Complete<StackingPolicy["type"], typeof STACKING_POLICIES> = true;
+export const STACKING_MODES_COMPLETE: Complete<StackingMode["type"], typeof STACKING_MODES> = true;
+export const GRANT_TRIGGERS_COMPLETE: Complete<GrantTrigger, typeof GRANT_TRIGGERS> = true;
 
 export function policyFromForm(fields: Fields): Parsed<PricingPolicy> {
   const f = new Form(fields);

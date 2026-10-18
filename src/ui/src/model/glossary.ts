@@ -1,28 +1,31 @@
 // Help texts shown next to fields, options and badges. One place, worded after
 // docs/ubiquitous-language.md so the console explains the engine's actual semantics.
+// Every map is typed over the contract's union, so a new variant without a text fails
+// `astro check`.
+import type { Action, ClampReason, CouponStatus, GrantTrigger, RedemptionStatus, RoundingPolicy, Rule, SkipReason, StackingMode, StackingPolicy } from "../api/types";
 
-export const ROUNDING_HELP: Record<string, string> = {
+export const ROUNDING_HELP: Record<RoundingPolicy["type"], string> = {
   HalfUp: "A remainder of exactly one half rounds away from zero.",
   HalfEven: "A remainder of exactly one half rounds to the even neighbour.",
   Down: "Toward zero: fractions of a minor unit are dropped.",
 };
 
-export const STACKING_HELP: Record<string, string> = {
+export const STACKING_HELP: Record<StackingPolicy["type"], string> = {
   Sequential: "A percentage is taken from the running subtotal, after the promotions applied before it.",
   Additive: "Every percentage is taken from the original subtotal, as if it applied alone.",
 };
 
-export const STACKING_MODE_HELP: Record<string, string> = {
+export const STACKING_MODE_HELP: Record<StackingMode["type"], string> = {
   Stackable: "Every eligible promotion in the group applies, in order.",
   FirstMatch: "Only the first eligible promotion of the group applies; the rest are skipped as FirstMatchTaken.",
 };
 
-export const ACTION_HELP: Record<string, string> = {
+export const ACTION_HELP: Record<Action["type"], string> = {
   OrderPercentage: "A share of the order subtotal, in basis points: 1000 = 10 %. The base depends on the stacking policy.",
   OrderFixedAmount: "A fixed amount off the order, converted to the cart currency when needed.",
 };
 
-export const RULE_HELP: Record<string, string> = {
+export const RULE_HELP: Record<Rule["type"], string> = {
   DateWindow: "Holds from Starts (inclusive) until Ends (exclusive); either bound may be empty.",
   OrderTotalRange: "The order subtotal, in the cart currency, is within the bounds; either bound may be empty.",
   TagsMatch: "The cart carries every tag of All, at least one of Any (when Any is given), and none of None.",
@@ -37,32 +40,32 @@ export const RULE_HELP: Record<string, string> = {
   RequiresAllowlist: "The customer is on this promotion's allowlist.",
 };
 
-export const GRANT_TRIGGER_HELP: Record<string, string> = {
+export const GRANT_TRIGGER_HELP: Record<GrantTrigger, string> = {
   cancel: "Issued when an order is cancelled.",
   review: "Issued when the customer leaves a review.",
 };
 
-export const COUPON_STATUS_HELP: Record<string, string> = {
+export const COUPON_STATUS_HELP: Record<CouponStatus, string> = {
   active: "Can be used now.",
   scheduled: "Starts in the future.",
   expired: "Window closed, uses exhausted, or the promotion is gone.",
   applied: "The customer used it; the order links to that redemption.",
 };
 
-export const REDEMPTION_STATUS_HELP: Record<string, string> = {
+export const REDEMPTION_STATUS_HELP: Record<RedemptionStatus, string> = {
   reserved: "The discount is held and budgets are consumed; waiting for confirmation.",
   confirmed: "The order went through; budgets stay consumed.",
   cancelled: "Budgets and use counts were restored.",
 };
 
-export const CLAMP_HELP: Record<string, string> = {
+export const CLAMP_HELP: Record<ClampReason["type"], string> = {
   Cap: "Cut to the promotion's cap.",
   Budget: "Cut to the remaining budget.",
   OrderCap: "Cut to what the order cap still allowed.",
   Running: "Cut to the remaining order subtotal.",
 };
 
-export const SKIP_HELP: Record<string, string> = {
+export const SKIP_HELP: Record<SkipReason["type"], string> = {
   NotEligible: "A rule did not hold; the index is the first failing rule of the promotion.",
   ExclusiveApplied: "An exclusive promotion applied alone.",
   FirstMatchTaken: "Another promotion of a first-match group applied before this one.",

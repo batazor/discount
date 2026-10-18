@@ -1,6 +1,6 @@
 // The playground: an EvaluateRequest from form rows, and the PricingResult as rows to
 // render. Nothing here prices anything; it only reshapes the service's answer.
-import type { EvaluateRequest, Money, PricingResult, SkipReason } from "../api/types";
+import type { ClampReason, EvaluateRequest, Money, PricingResult, SkipReason } from "../api/types";
 import { Form, type Fields, type Parsed } from "./fields";
 
 export function evaluateRequestFromForm(fields: Fields): Parsed<EvaluateRequest> {
@@ -99,8 +99,8 @@ export function skipReasonText(r: SkipReason): string {
 export type ResultRows = {
   totals: { label: string; value: string }[];
   lines: { line_id: string; subtotal: string; discount: string; total: string }[];
-  applied: { promotion_id: string; discount: string; clamped_by: string; allocation: string }[];
-  skipped: { promotion_id: string; reason: string }[];
+  applied: { promotion_id: string; discount: string; clamped_by: string; clamp: ClampReason["type"] | null; allocation: string }[];
+  skipped: { promotion_id: string; reason: string; skip: SkipReason["type"] }[];
 };
 
 export function resultRows(r: PricingResult): ResultRows {
@@ -121,9 +121,10 @@ export function resultRows(r: PricingResult): ResultRows {
       promotion_id: a.promotion_id,
       discount: fmtMoney(a.discount),
       clamped_by: a.clamped_by?.type ?? "—",
+      clamp: a.clamped_by?.type ?? null,
       allocation: a.allocation.map((x) => `${x.line_id} ${x.amount.amount}`).join(", "),
     })),
-    skipped: r.skipped.map((s) => ({ promotion_id: s.promotion_id, reason: skipReasonText(s.reason) })),
+    skipped: r.skipped.map((s) => ({ promotion_id: s.promotion_id, reason: skipReasonText(s.reason), skip: s.reason.type })),
   };
 }
 

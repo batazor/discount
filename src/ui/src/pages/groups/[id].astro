@@ -20,7 +20,7 @@ const state = formState(result?.data, current?.ok ? groupToFields(current.data) 
 ---
 <Layout title={isNew ? "New group" : id} crumbs={[["Groups", "/groups"], [isNew ? "New" : id]]} unreachable={current ? unreachableUrl(current) : null}>
   <Fragment slot="actions">{!isNew && current?.ok && <DeleteButton action={actions.deleteGroup} id={id} />}</Fragment>
-  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
+  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} traceId={current.traceId} />}
   <form method="post" action={actions.putGroup} class="max-w-xl space-y-5">
     <section class="card space-y-4">
       <Field state={state} name="group_id" label="Group id" required readonly={!isNew} />

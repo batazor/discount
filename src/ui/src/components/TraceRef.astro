@@ -1,0 +1,13 @@
+---
+// The trace id the console sent with the failed request, linked to Grafana Explore (Tempo),
+// so the operator can open the service's spans for exactly this call.
+import { traceLink } from "../api/trace";
+interface Props { traceId?: string | null }
+const { traceId = null } = Astro.props;
+---
+{traceId && (
+  <p class="mt-2 text-xs opacity-80">
+    trace <a href={traceLink(traceId)} target="_blank" rel="noopener" class="underline"><code>{traceId}</code></a>
+    <span class="ml-1">(opens in Grafana)</span>
+  </p>
+)}

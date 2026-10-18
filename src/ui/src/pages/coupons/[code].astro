@@ -26,7 +26,7 @@ const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
 <Layout title={isNew ? "New coupon" : code} crumbs={[["Coupons", "/coupons"], [isNew ? "New" : code]]} unreachable={unreachableUrl(current ?? promotions, promotions)}>
   <Fragment slot="badge">{current?.ok && (current.data.customer_id ? <span class="badge badge-info">bound to {current.data.customer_id}</span> : <span class="badge badge-muted">public</span>)}</Fragment>
   <Fragment slot="actions">{!isNew && current?.ok && <DeleteButton action={actions.deleteCoupon} id={code} />}</Fragment>
-  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
+  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} traceId={current.traceId} />}
   <form method="post" action={actions.putCoupon} class="max-w-3xl space-y-5">
     <section class="card grid grid-cols-2 gap-4">
       <Field state={state} name="code" label="Code" required readonly={!isNew} />

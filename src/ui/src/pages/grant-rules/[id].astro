@@ -24,7 +24,7 @@ const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
 ---
 <Layout title={isNew ? "New grant rule" : id} crumbs={[["Grant rules", "/grant-rules"], [isNew ? "New" : id]]} unreachable={unreachableUrl(current ?? promotions, promotions)}>
   <Fragment slot="actions">{!isNew && current?.ok && <DeleteButton action={actions.deleteGrantRule} id={id} />}</Fragment>
-  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
+  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} traceId={current.traceId} />}
   <form method="post" action={actions.putGrantRule} class="max-w-3xl space-y-5">
     <section class="card grid grid-cols-2 gap-4">
       <Field state={state} name="rule_id" label="Rule id" required readonly={!isNew} />

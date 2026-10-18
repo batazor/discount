@@ -1,8 +1,10 @@
 ---
-interface Props { url: string }
-const { url } = Astro.props;
+import TraceRef from "./TraceRef.astro";
+interface Props { url: string; traceId?: string | null }
+const { url, traceId = null } = Astro.props;
 ---
 <div role="alert" class="alert alert-danger">
   <p class="alert-title">Service unreachable</p>
   <p class="mt-1">The discount service at <code>{url}</code> did not answer. Set <code>DISCOUNT_API_URL</code> or start the service.</p>
+  <TraceRef traceId={traceId} />
 </div>

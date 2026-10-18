@@ -32,7 +32,7 @@ const badge: Record<string, string> = { reserved: "badge-info", confirmed: "badg
       </>
     )}
   </Fragment>
-  {!current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
+  {!current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} traceId={current.traceId} />}
   {current.ok && (
     <div class="space-y-4">
       <FormStatus state={transition} okText={`Now ${current.data.status}.`} />
