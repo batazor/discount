@@ -1,10 +1,10 @@
 //! # discount-domain
 //!
 //! The pure pricing engine. No IO, no async, no clock, no randomness (ADR 7). Every
-//! module mirrors a module of the Lean specification in `spec/Discount/`, function by
+//! module mirrors a module of the Lean specification in `verification/spec/Discount/`, function by
 //! function, with the names of `docs/ubiquitous-language.md`. The Lean model is the source
 //! of truth (ADR 2); this crate is checked against it by differential random testing in
-//! `drt/`.
+//! `verification/drt/`.
 //!
 //! Arithmetic: the Lean model works on unbounded `Int`. Here amounts are `i64`, the
 //! products `D * s_i` of the allocation and the line subtotals before validation are
