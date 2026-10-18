@@ -27,7 +27,8 @@ describe("spec admin-ui: rule builder in plain words", () => {
   });
   it("without the builder flag the raw rules stay", () => {
     expect(applyBuilder({ "rules.0.type": "RequiresCoupon", "b.first_order": "on" })).toEqual({ "rules.0.type": "RequiresCoupon", "b.first_order": "on" });
-    expect(applyBuilder({ builder: "1", "rules.0.type": "RequiresCoupon", "b.first_order": "on" })).toEqual({ builder: "1", "b.first_order": "on", "rules.0.type": "MaxCompletedOrders", "rules.0.max": "0" });
+    // With the builder, raw rows are advanced rules and follow the builder's rules.
+    expect(applyBuilder({ builder: "1", "rules.0.type": "RequiresCoupon", "b.first_order": "on" })).toEqual({ builder: "1", "b.first_order": "on", "rules.0.type": "MaxCompletedOrders", "rules.0.max": "0", "rules.1.type": "RequiresCoupon" });
   });
 });
 

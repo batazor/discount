@@ -1,58 +1,72 @@
 ---
 import { actions } from "astro:actions";
 import type { Campaign } from "../../model/campaign";
+import type { Promotion, StackingGroup } from "../../api/types";
 import Field from "../Field.astro";
 import MoneyField from "../MoneyField.astro";
 import FormStatus from "../FormStatus.astro";
 import RuleRow from "../RuleRow.astro";
+import OptionCards from "../OptionCards.astro";
+import GroupCard from "../GroupCard.astro";
+import ConditionsEditor from "./ConditionsEditor.astro";
 import { formState } from "../../actions/run";
 import { ACTION_TYPES, promotionToFields, ROUNDING_POLICIES } from "../../model/promotion";
 import { ACTION_HELP, ROUNDING_HELP, TERM } from "../../model/glossary";
 import { Form } from "../../model/fields";
-import GroupCard from "../GroupCard.astro";
-import OptionCards from "../OptionCards.astro";
-import type { Promotion, StackingGroup } from "../../api/types";
+import { builderFromRules, leftoverFields } from "../../model/builder";
+import { describeConditions } from "../../model/summary";
 interface Props { campaign: Campaign; groupIds: string[]; groups: StackingGroup[]; promotions: Promotion[] }
 const { campaign: c, groupIds, groups, promotions } = Astro.props;
 const put = Astro.getActionResult(actions.putPromotion);
-const state = formState(put?.data, promotionToFields(c.promotion));
-const ruleIndices = new Form(state.fields).rows("rules").map(String);
+// Initial fields: the promotion without raw rules, the builder's conditions, and the rules
+// the builder cannot express as advanced rows.
+const base = Object.fromEntries(Object.entries(promotionToFields(c.promotion)).filter(([k]) => !k.startsWith("rules.")));
+const { fields: cond, leftover } = builderFromRules(c.promotion.rules);
+const state = formState(put?.data, { ...base, ...cond, ...leftoverFields(leftover), builder: "1" });
+const advanced = new Form(state.fields).rows("rules").map(String);
 const empty = formState(undefined, {});
 const action = `?tab=rules&${String(actions.putPromotion).slice(1)}`;
 ---
 <div class="grid gap-6 lg:grid-cols-[minmax(0,48rem)_20rem]">
-<form method="post" action={action} class="space-y-5">
+<form method="post" action={action} class="space-y-5" data-conditions>
+  <input type="hidden" name="builder" value="1" />
   <section class="card space-y-4">
     <h2 class="card-title">Action</h2>
     <input type="hidden" name="promotion_id" value={c.promotion.promotion_id} />
     <div data-row-list>
       <div data-rows>
-        <div data-row="action" class="grid grid-cols-2 gap-4">
-          <div class="col-span-full"><OptionCards state={state} name="action.type" label="Type" options={ACTION_TYPES} help={ACTION_HELP} names={{ OrderPercentage: "Percent off", OrderFixedAmount: "Amount off" }} required variantSelect /></div>
-          <div data-variant="OrderPercentage"><Field state={state} name="action.percent" label="Percent off" mono hint="e.g. 12.5" /></div>
-          <div data-variant="OrderFixedAmount"><MoneyField state={state} name="action.amount" label="Amount off" /></div>
+        <div data-row="action" class="space-y-4">
+          <OptionCards state={state} name="action.type" label="Type" options={ACTION_TYPES} help={ACTION_HELP} names={{ OrderPercentage: "Percent off", OrderFixedAmount: "Amount off" }} required variantSelect />
+          <div data-variant="OrderPercentage" class="max-w-xs"><Field state={state} name="action.percent" label="Percent off" mono hint="e.g. 12.5" /></div>
+          <div data-variant="OrderFixedAmount" class="max-w-sm"><MoneyField state={state} name="action.amount" label="Amount off" /></div>
         </div>
       </div>
     </div>
     <div class="grid grid-cols-2 gap-4">
       <MoneyField state={state} name="cap" label="Cap per order" hint="empty = unlimited" help={TERM.cap} />
-      <div class="col-span-full"><OptionCards state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} help={ROUNDING_HELP} empty={["", "Policy default", "Round as the pricing policy says."]} labelHelp={TERM.promotionRounding} /></div>
-      <Field state={state} name="group_id" label="Stacking group" options={groupIds} empty="— choose —" required />
       <Field state={state} name="priority" label="Priority" type="number" required help={TERM.promotionPriority} hint="higher applies first" />
+      <Field state={state} name="group_id" label="Stacking group" options={groupIds} empty="— choose —" required />
       <div class="self-center"><Field state={state} name="exclusive" label="Exclusive: applies alone" checkbox help={TERM.exclusive} /></div>
     </div>
+    <OptionCards state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} help={ROUNDING_HELP} empty={["", "Policy default", "Round as the pricing policy says."]} labelHelp={TERM.promotionRounding} />
   </section>
+
   <section class="card space-y-3">
-    <h2 class="card-title">Rules <span class="hint inline font-normal">all must hold; none = every cart</span></h2>
+    <h2 class="card-title">Who gets it, and when <span class="hint inline font-normal">every condition that is on must hold</span></h2>
+    <ConditionsEditor state={state} />
+  </section>
+
+  <section class="card space-y-3">
+    <h2 class="card-title">Advanced rules <span class="hint inline font-normal">{advanced.length ? "rules the conditions above cannot express; kept as they are" : "none; add one only for what the conditions above cannot say"}</span></h2>
     <div data-row-list>
       <div data-rows class="space-y-3">
-        {ruleIndices.map((i) => <RuleRow state={state} index={i} />)}
-        {ruleIndices.length === 0 && <p class="hint" data-empty-rules>No rules: every cart gets it.</p>}
+        {advanced.map((i) => <RuleRow state={state} index={i} />)}
       </div>
       <template data-row-template><RuleRow state={empty} index="__i__" /></template>
-      <button type="button" data-add-row hidden class="row-add">Add rule</button>
+      <button type="button" data-add-row hidden class="row-add">Add an advanced rule</button>
     </div>
   </section>
+
   <details class="card" open={!!state.fields.json}>
     <summary>Paste the promotion as JSON instead</summary>
     <Field state={state} name="json" label="Promotion JSON" textarea rows={8} hint="Sent unchanged; the form above is ignored while this is non-empty." />
@@ -64,5 +78,6 @@ const action = `?tab=rules&${String(actions.putPromotion).slice(1)}`;
 </div>
 <script>
   import { initRows } from "../../client/rows";
+  import "../../client/conditions";
   initRows();
 </script>

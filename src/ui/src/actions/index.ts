@@ -18,6 +18,7 @@ import { metadataFromForm } from "../model/metadata";
 import { promotionFromForm } from "../model/promotion";
 import { fold, run, runPlain, type ActionOutcome } from "./run";
 import { campaignDraftFromForm } from "../model/campaign";
+import { applyBuilder, builderErrors } from "../model/builder";
 import { call } from "../api/client";
 import { fieldsOf } from "../model/fields";
 import type { Budget, EvaluateRequest, Promotion } from "../api/types";
@@ -51,7 +52,11 @@ export const server = {
     handler: (fd: FormData) =>
       run(
         fd,
-        (fields) => (fields.json?.trim() ? (parseJson(fields.json) as Parsed<Promotion>) : promotionFromForm(fields)),
+        (fields) => {
+          if (fields.json?.trim()) return parseJson(fields.json) as Parsed<Promotion>;
+          const errors = builderErrors(fields);
+          return errors.length ? { ok: false, errors } : promotionFromForm(applyBuilder(fields));
+        },
         (body) =>
           api.PUT("/v1/promotions/{promotion_id}", {
             params: { path: { promotion_id: String((body as { promotion_id?: unknown }).promotion_id ?? fd.get("promotion_id") ?? "") } },

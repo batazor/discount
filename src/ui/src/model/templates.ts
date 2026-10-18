@@ -1,5 +1,9 @@
 // Starting points for the wizard (design.md, decision 4): field values, nothing more.
-import type { Fields } from "./fields";
+import type { Promotion, PromotionMetadata } from "../api/types";
+import { moneyToFields, type Fields } from "./fields";
+import { actionToFields } from "./promotion";
+import { builderFromRules, leftoverFields } from "./builder";
+import { metadataToFields } from "./metadata";
 
 export type Template = { id: string; title: string; description: string; fields: Fields; next?: { href: string; label: string } };
 
@@ -14,4 +18,26 @@ export const TEMPLATES: Template[] = [
 
 export function template(id: string | null | undefined): Template | null {
   return TEMPLATES.find((t) => t.id === id) ?? null;
+}
+
+/** Wizard fields copied from an existing campaign: everything but the id and the codes. */
+export function fromCampaign(p: Promotion, meta: PromotionMetadata | null): Fields {
+  const { fields, leftover } = builderFromRules(p.rules);
+  const m = meta ? metadataToFields(meta) : {};
+  return {
+    ...actionToFields(p.action, "action"),
+    ...moneyToFields(p.cap, "cap"),
+    rounding: p.rounding?.type ?? "",
+    exclusive: p.exclusive ? "on" : "",
+    priority: String(p.priority),
+    group_id: p.group_id,
+    ...fields,
+    ...leftoverFields(leftover),
+    "budget.currency": p.remaining_budget?.currency ?? "",
+    title: `${meta?.title ?? p.promotion_id} copy`,
+    description: m.description ?? "",
+    source: m.source ?? "",
+    labels: m.labels ?? "",
+    copied_from: p.promotion_id,
+  };
 }

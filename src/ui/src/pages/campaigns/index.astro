@@ -28,7 +28,7 @@ const rowText = (c: (typeof campaigns)[number]) =>
 ---
 <Layout title="Campaigns" description="Every active promotion with its budget, codes and status." unreachable={unreachableUrl(promotions, metadata, coupons)}>
   <Fragment slot="badge">{promotions.ok && <span class="badge badge-muted"><span data-filter-count>{campaigns.length}</span></span>}</Fragment>
-  <a slot="actions" href="/campaigns/new" class="btn btn-primary">New campaign</a>
+  <Fragment slot="actions"><a href="/campaigns/templates" class="btn btn-secondary">Templates</a><a href="/campaigns/new" class="btn btn-primary">New campaign</a></Fragment>
   <FormStatus state={state} okText="Archived." />
   {Astro.url.searchParams.get("archived") && <p role="status" class="alert alert-success mb-4">Archived <span class="mono">{Astro.url.searchParams.get("archived")}</span>.</p>}
   <div data-filter-root>

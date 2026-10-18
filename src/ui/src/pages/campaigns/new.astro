@@ -7,38 +7,53 @@ import TimestampField from "../../components/TimestampField.astro";
 import FormStatus from "../../components/FormStatus.astro";
 import OptionCards from "../../components/OptionCards.astro";
 import GroupCard from "../../components/GroupCard.astro";
-import Condition from "../../components/campaign/Condition.astro";
+import ConditionsEditor from "../../components/campaign/ConditionsEditor.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { ACTION_TYPES, ROUNDING_POLICIES } from "../../model/promotion";
 import { ACTION_HELP, ROUNDING_HELP, TERM } from "../../model/glossary";
-import { TEMPLATES, template } from "../../model/templates";
+import { TEMPLATES, template, fromCampaign } from "../../model/templates";
 import { summarize } from "../../model/summary";
+import { Form } from "../../model/fields";
+import ApiError from "../../components/ApiError.astro";
 
 const result = Astro.getActionResult(actions.createCampaign);
 if (result?.data?.kind === "ok") return Astro.redirect(`/campaigns/${encodeURIComponent(result.data.data.promotion_id)}?tab=${result.data.data.codes.length ? "codes" : "overview"}&created=1`);
 const [groups, promotions] = await Promise.all([call(() => api.GET("/v1/groups")), call(() => api.GET("/v1/promotions"))]);
 const groupIds = dataOr(groups, []).map((g) => g.group_id);
 const chosen = template(Astro.url.searchParams.get("template"));
+const fromId = Astro.url.searchParams.get("from")?.trim() || "";
+const [source, sourceMeta] = fromId
+  ? await Promise.all([
+      call(() => api.GET("/v1/promotions/{promotion_id}", { params: { path: { promotion_id: fromId } } })),
+      call(() => api.GET("/v1/promotions/{promotion_id}/metadata", { params: { path: { promotion_id: fromId } } })),
+    ])
+  : [null, null];
+const copied = source?.ok ? fromCampaign(source.data, sourceMeta?.ok ? sourceMeta.data : null) : {};
 const state = formState(result?.data, {
   "action.type": "OrderPercentage",
   priority: "0",
   group_id: groupIds.length === 1 ? groupIds[0]! : "",
   "codes.max_uses": "1",
   ...(chosen?.fields ?? {}),
+  ...copied,
 });
+const advanced = new Form(state.fields).rows("rules").map(String);
 const steps = [["kind", "Kind"], ["gives", "What it gives"], ["who", "Who and when"], ["money", "Budget and codes"], ["review", "Name and review"]] as const;
 const needsCode = (state.fields["b.needs_code"] ?? "") === "on";
 const summary = summarize(state.fields);
 ---
 <Layout title="New campaign" crumbs={[["Campaigns", "/campaigns"], ["New"]]} description={`Step by step; <a href="/campaigns/new/form" class="link">all fields at once</a> if you prefer.`} unreachable={unreachableUrl(groups, promotions)}>
   <div class="grid gap-6 lg:grid-cols-[minmax(0,46rem)_22rem]">
-    <form method="post" action={actions.createCampaign} class="space-y-5" data-wizard>
+    <form method="post" action={actions.createCampaign} class="space-y-5" data-wizard data-conditions>
       <input type="hidden" name="builder" value="1" />
 
       <section data-step="kind" class="card space-y-4">
         <h2 class="card-title">What kind of campaign</h2>
-        <p class="hint">A starting point; every field stays editable.</p>
+        {source && !source.ok && !source.unreachable && <ApiError status={source.status} body={source.body} traceId={source.traceId} />}
+        {source?.ok && <p class="alert alert-success">Starting from <span class="mono">{fromId}</span>: action, conditions, cap and details copied; pick a new id. Codes are not copied.</p>}
+        {state.fields.copied_from && <input type="hidden" name="copied_from" value={state.fields.copied_from} />}
+        <p class="hint">A starting point; every field stays editable. <a href="/campaigns/templates" class="link">All templates and existing campaigns</a>.</p>
         <div class="option-cards">
           <a href="/campaigns/new" class:list={["option-card no-underline", !chosen && "is-chosen"]}><span class="option-name font-sans">Blank</span><span class="option-desc">Start from nothing.</span></a>
           {TEMPLATES.map((t) => <a href={`/campaigns/new?template=${t.id}`} class:list={["option-card no-underline", chosen?.id === t.id && "is-chosen"]}><span class="option-name font-sans">{t.title}</span><span class="option-desc">{t.description}</span></a>)}
@@ -72,28 +87,10 @@ const summary = summarize(state.fields);
 
       <section data-step="who" class="card space-y-4">
         <h2 class="card-title">Who gets it, and when <span class="hint inline font-normal">every condition you switch on must hold</span></h2>
-        <div class="grid gap-3 md:grid-cols-2">
-          <Condition state={state} id="first_order" />
-          <Condition state={state} id="once" />
-          <Condition state={state} id="needs_code" />
-          <Condition state={state} id="allowlist" />
-          <Condition state={state} id="dates">
-            <div class="grid grid-cols-2 gap-2">
-              <TimestampField state={state} name="b.starts_at" label="From" />
-              <TimestampField state={state} name="b.ends_at" label="Until" />
-            </div>
-          </Condition>
-          <Condition state={state} id="min_total"><MoneyField state={state} name="b.min_total" label="At least" /></Condition>
-          <Condition state={state} id="tags"><Field state={state} name="b.tags_any" label="Any of these tags" hint="comma-separated, e.g. #ios, #app" /></Condition>
-          <Condition state={state} id="attr">
-            <div class="grid grid-cols-2 gap-2">
-              <Field state={state} name="b.attr.key" label="Attribute" placeholder="tier" />
-              <Field state={state} name="b.attr.values" label="Any of" placeholder="gold, silver" hint="comma-separated" />
-            </div>
-          </Condition>
-          <Condition state={state} id="max_total"><Field state={state} name="b.max_total.max" label="Maximum orders in total" type="number" /></Condition>
-        </div>
-        <p class="hint">Need something else, such as cart attributes or a range of a customer attribute? Create the campaign, then add it under Rules &amp; action.</p>
+        <ConditionsEditor state={state} />
+        {advanced.length > 0 && <p class="hint">{advanced.length} advanced rule{advanced.length === 1 ? "" : "s"} copied from <span class="mono">{state.fields.copied_from}</span> will be kept; edit them under Rules &amp; action after creating.</p>}
+        {advanced.map((i) => Object.entries(state.fields).filter(([k]) => k.startsWith(`rules.${i}.`)).map(([k, v]) => <input type="hidden" name={k} value={v} />))}
+        <p class="hint">Need something else? Create the campaign, then add an advanced rule under Rules &amp; action.</p>
       </section>
 
       <section data-step="money" class="card space-y-4">
@@ -150,6 +147,7 @@ const summary = summarize(state.fields);
   <script>
     import { initRows } from "../../client/rows";
     import "../../client/wizard";
+    import "../../client/conditions";
     initRows();
   </script>
 </Layout>

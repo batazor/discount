@@ -1,0 +1,55 @@
+---
+// The builder's conditions, shared by the wizard and the rules tab.
+import type { FormState } from "../../actions/run";
+import Condition from "./Condition.astro";
+import Field from "../Field.astro";
+import MoneyField from "../MoneyField.astro";
+import TimestampField from "../TimestampField.astro";
+import { describeConditions } from "../../model/summary";
+interface Props { state: FormState }
+const { state } = Astro.props;
+const sentence = describeConditions(state.fields) || "every cart";
+---
+<div class="grid gap-3 md:grid-cols-2">
+  <Condition state={state} id="first_order" />
+  <Condition state={state} id="once" />
+  <Condition state={state} id="needs_code" />
+  <Condition state={state} id="allowlist" />
+  <Condition state={state} id="dates">
+    <div class="grid grid-cols-2 gap-2">
+      <TimestampField state={state} name="b.starts_at" label="From" />
+      <TimestampField state={state} name="b.ends_at" label="Until" />
+    </div>
+  </Condition>
+  <Condition state={state} id="min_total"><MoneyField state={state} name="b.min_total" label="At least" /></Condition>
+  <Condition state={state} id="max_order"><MoneyField state={state} name="b.max_order" label="At most" /></Condition>
+  <Condition state={state} id="tags"><Field state={state} name="b.tags_any" label="Any of these tags" hint="comma-separated, e.g. #ios, #app" /></Condition>
+  <Condition state={state} id="cart_attr">
+    <div class="grid grid-cols-2 gap-2">
+      <Field state={state} name="b.cart_attr.key" label="Cart attribute" placeholder="hotel_kind" />
+      <Field state={state} name="b.cart_attr.values" label="Any of" placeholder="resort, villa" hint="comma-separated" />
+    </div>
+  </Condition>
+  <Condition state={state} id="cart_date">
+    <div class="grid grid-cols-3 gap-2">
+      <Field state={state} name="b.cart_date.key" label="Cart attribute" placeholder="checkin" />
+      <TimestampField state={state} name="b.cart_date.starts_at" label="From" />
+      <TimestampField state={state} name="b.cart_date.ends_at" label="Until" />
+    </div>
+  </Condition>
+  <Condition state={state} id="attr">
+    <div class="grid grid-cols-2 gap-2">
+      <Field state={state} name="b.attr.key" label="Attribute" placeholder="tier" />
+      <Field state={state} name="b.attr.values" label="Any of" placeholder="gold, silver" hint="comma-separated" />
+    </div>
+  </Condition>
+  <Condition state={state} id="attr_range">
+    <div class="grid grid-cols-3 gap-2">
+      <Field state={state} name="b.attr_range.key" label="Attribute" placeholder="app_orders" />
+      <Field state={state} name="b.attr_range.min" label="At least" type="number" hint="empty = none" />
+      <Field state={state} name="b.attr_range.max" label="At most" type="number" hint="empty = none" />
+    </div>
+  </Condition>
+  <Condition state={state} id="max_total"><Field state={state} name="b.max_total.max" label="Maximum orders in total" type="number" /></Condition>
+</div>
+<p class="text-[13px] mt-3"><span class="label inline">Who gets it:</span> <span data-conditions-text>{sentence}</span></p>

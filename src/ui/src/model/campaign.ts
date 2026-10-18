@@ -109,10 +109,10 @@ export const RULE_NAMES: Record<Promotion["rules"][number]["type"], string> = {
 
 // ---- creation form (one flow, design.md decision 3) ----
 import type { GenerateCouponsRequest, Money } from "../api/types";
-import { Form, type Fields, type Parsed } from "./fields";
+import { Form, type FieldError, type Fields, type Parsed } from "./fields";
 import { generateRequestFromForm } from "./catalogue";
 import { metadataFromForm } from "./metadata";
-import { applyBuilder } from "./builder";
+import { applyBuilder, builderErrors } from "./builder";
 import { promotionFromForm } from "./promotion";
 
 export type CampaignDraft = {
@@ -125,7 +125,7 @@ export type CampaignDraft = {
 /** The creation form: promotion fields, optional title (→ metadata), budget and codes. */
 export function campaignDraftFromForm(input: Fields): Parsed<CampaignDraft> {
   const fields = applyBuilder(input);
-  const errors = [];
+  const errors: FieldError[] = [...builderErrors(input)];
   const promotion = promotionFromForm(fields);
   if (!promotion.ok) errors.push(...promotion.errors);
   let metadata: PromotionMetadata | null = null;

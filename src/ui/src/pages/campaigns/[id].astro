@@ -47,6 +47,7 @@ const labels: Record<Tab, string> = { overview: "Overview", rules: "Rules & acti
     {campaign?.endingSoon && <span class="badge badge-warn">ending soon</span>}
   </Fragment>
   <Fragment slot="actions">
+    {campaign && <a href={`/campaigns/new?from=${encodeURIComponent(id)}`} class="btn btn-secondary">Duplicate</a>}
     {campaign && <a href={`/explain?campaign=${encodeURIComponent(id)}`} class="btn btn-secondary">Explain a cart</a>}
     {campaign && <DeleteButton action={actions.deletePromotion} id={id} label="Archive" consequence={CONSEQUENCE.archive} title={`Archive ${campaignTitle(campaign)}?`} />}
   </Fragment>

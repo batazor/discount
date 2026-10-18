@@ -29,6 +29,37 @@ function date(f: Fields, key: string, fmt: (ts: number) => string): string | nul
   return t === null || t === undefined ? null : fmt(t);
 }
 
+/** The conditions alone, as a phrase: `for first orders only, with a code`. */
+export function describeConditions(f: Fields, fmtDate: (ts: number) => string = utcDate): string {
+  const parts: string[] = [];
+  if (on(f, "b.first_order")) parts.push("for first orders only");
+  if (on(f, "b.once")) parts.push("once per customer");
+  if (on(f, "b.needs_code")) parts.push("with a code");
+  if (on(f, "b.allowlist")) parts.push("for allowlisted customers only");
+  if (on(f, "b.min_total") && on(f, "b.max_order")) parts.push(`for orders from ${money(f, "b.min_total") ?? "…"} up to ${money(f, "b.max_order") ?? "…"}`);
+  else if (on(f, "b.min_total")) parts.push(`for orders from ${money(f, "b.min_total") ?? "…"}`);
+  else if (on(f, "b.max_order")) parts.push(`for orders up to ${money(f, "b.max_order") ?? "…"}`);
+  if (on(f, "b.tags") && (f["b.tags_any"] ?? "").trim()) parts.push(`for carts tagged ${f["b.tags_any"]!.trim()}`);
+  if (on(f, "b.cart_attr") && (f["b.cart_attr.key"] ?? "").trim()) parts.push(`for carts whose ${f["b.cart_attr.key"]!.trim()} is ${(f["b.cart_attr.values"] ?? "").trim() || "…"}`);
+  if (on(f, "b.cart_date") && (f["b.cart_date.key"] ?? "").trim()) {
+    const s = date(f, "b.cart_date.starts_at", fmtDate), e = date(f, "b.cart_date.ends_at", fmtDate);
+    parts.push(`when the cart's ${f["b.cart_date.key"]!.trim()} is ${s && e ? `between ${s} and ${e}` : s ? `from ${s}` : e ? `before ${e}` : "…"}`);
+  }
+  if (on(f, "b.attr") && (f["b.attr.key"] ?? "").trim()) parts.push(`for customers whose ${f["b.attr.key"]!.trim()} is ${(f["b.attr.values"] ?? "").trim() || "…"}`);
+  if (on(f, "b.attr_range") && (f["b.attr_range.key"] ?? "").trim()) {
+    const k = f["b.attr_range.key"]!.trim(), mn = (f["b.attr_range.min"] ?? "").trim(), mx = (f["b.attr_range.max"] ?? "").trim();
+    parts.push(`for customers whose ${k} is ${mn && mx ? `between ${mn} and ${mx}` : mn ? `at least ${mn}` : mx ? `at most ${mx}` : "…"}`);
+  }
+  if (on(f, "b.dates")) {
+    const s = date(f, "b.starts_at", fmtDate), e = date(f, "b.ends_at", fmtDate);
+    if (s && e) parts.push(`from ${s} to ${e}`);
+    else if (s) parts.push(`from ${s}`);
+    else if (e) parts.push(`until ${e}`);
+  }
+  if (on(f, "b.max_total") && (f["b.max_total.max"] ?? "").trim()) parts.push(`up to ${f["b.max_total.max"]!.trim()} uses in total`);
+  return parts.join(", ");
+}
+
 export function summarize(f: Fields, fmtDate: (ts: number) => string = utcDate): string {
   const parts: string[] = [];
   // what it gives
@@ -38,22 +69,8 @@ export function summarize(f: Fields, fmtDate: (ts: number) => string = utcDate):
   } else {
     parts.push(`${money(f, "action.amount") ?? "… off the order"}${money(f, "action.amount") ? " off the order" : ""}`);
   }
-  // conditions
-  if (on(f, "b.first_order")) parts.push("for first orders only");
-  if (on(f, "b.once")) parts.push("once per customer");
-  if (on(f, "b.needs_code")) parts.push("with a code");
-  if (on(f, "b.allowlist")) parts.push("for allowlisted customers only");
-  if (on(f, "b.min_total")) parts.push(`for orders from ${money(f, "b.min_total") ?? "…"}`);
-  if (on(f, "b.tags") && (f["b.tags_any"] ?? "").trim()) parts.push(`for carts tagged ${f["b.tags_any"]!.trim()}`);
-  if (on(f, "b.attr") && (f["b.attr.key"] ?? "").trim()) parts.push(`for customers whose ${f["b.attr.key"]!.trim()} is ${(f["b.attr.values"] ?? "…").trim() || "…"}`);
-  if (on(f, "b.dates")) {
-    const s = date(f, "b.starts_at", fmtDate);
-    const e = date(f, "b.ends_at", fmtDate);
-    if (s && e) parts.push(`from ${s} to ${e}`);
-    else if (s) parts.push(`from ${s}`);
-    else if (e) parts.push(`until ${e}`);
-  }
-  if (on(f, "b.max_total") && (f["b.max_total.max"] ?? "").trim()) parts.push(`up to ${f["b.max_total.max"]!.trim()} uses in total`);
+  const conds = describeConditions(f, fmtDate);
+  if (conds) parts.push(conds);
   // bounds
   const cap = money(f, "cap");
   if (cap) parts.push(`at most ${cap} per order`);

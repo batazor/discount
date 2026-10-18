@@ -29,10 +29,6 @@ export function initWizard(root: ParentNode = document): void {
     const f = fieldsOf(new FormData(form));
     const text = summarize(f, localDate);
     for (const el of summaries) el.textContent = text;
-    for (const box of form.querySelectorAll<HTMLElement>("[data-cond]")) {
-      const input = form.querySelector<HTMLInputElement>(`input[name="b.${box.dataset.cond}"]`);
-      box.hidden = !(input?.checked ?? false);
-    }
     const needsCode = form.querySelector<HTMLInputElement>('input[name="b.needs_code"]')?.checked ?? false;
     for (const el of form.querySelectorAll<HTMLElement>("[data-needs-code-hint]")) el.hidden = needsCode;
   };
