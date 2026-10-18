@@ -1,0 +1,35 @@
+{
+  "name": "discount-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Operator console of the discount service: an Astro client of api/openapi.yaml",
+  "scripts": {
+    "generate": "openapi-typescript ../../api/openapi.yaml -o src/api/schema.d.ts",
+    "predev": "npm run generate",
+    "dev": "astro dev",
+    "prebuild": "npm run generate",
+    "build": "astro build",
+    "precheck": "npm run generate",
+    "check": "astro check",
+    "preview": "astro preview",
+    "pretest": "npm run generate",
+    "test": "vitest run",
+    "start": "node ./dist/server/entry.mjs"
+  },
+  "dependencies": {
+    "@astrojs/node": "^11.1.8",
+    "@tailwindcss/vite": "^4.3.3",
+    "astro": "^7.4.0",
+    "motion": "^14.3.0",
+    "openapi-fetch": "^0.17.0",
+    "tailwindcss": "^4.3.3",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.5"
+  }
+}

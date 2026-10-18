@@ -25,7 +25,7 @@ with theorems for its invariants (ADR 2):
 |---|-----------|--------|
 | 1 | Final price is in `[0, original]`, per order and per line | proved |
 | 2 | No discount exceeds its cap, budget or the order cap | proved |
-| 3 | Stacking is deterministic (list order never matters) | stated; checked by DRT, proof next |
+| 3 | Stacking is deterministic (list order never matters) | proved for permutations of promotions and groups; commutativity claimed only where true |
 | 4 | Exclusive promotions apply alone; first-match groups apply at most one | proved |
 | 5 | Allocation is conservative: per-line discounts sum to the order discount exactly | proved |
 | 6 | Re-applying the same promotions is idempotent | iteration 2 |

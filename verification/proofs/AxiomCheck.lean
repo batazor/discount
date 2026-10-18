@@ -25,3 +25,6 @@ open Discount
 #print axioms roundDiv_le
 #print axioms validate_ok
 #print axioms applyOne_inv
+#print axioms sortPromotions_perm
+#print axioms validate_perm
+#print axioms apply_perm_invariant

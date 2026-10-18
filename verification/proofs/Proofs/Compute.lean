@@ -18,18 +18,6 @@ theorem apply_ok {i : PricingInput} {r : PricingResult} (h : apply i = .ok r) :
 theorem getD_eq_getElem (l : List Int) (k : Nat) (hk : k < l.length) : l.getD k 0 = l[k] := by
   rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk]; rfl
 
-theorem eq_of_nodup_map {α β : Type} {l : List α} {f : α → β} (h : (l.map f).Nodup)
-    {a b : α} (ha : a ∈ l) (hb : b ∈ l) (hf : f a = f b) : a = b := by
-  induction l with
-  | nil => simp at ha
-  | cons x xs ih =>
-    rw [List.map_cons, List.nodup_cons] at h
-    rcases List.mem_cons.mp ha with rfl | ha' <;> rcases List.mem_cons.mp hb with rfl | hb'
-    · rfl
-    · exact absurd (hf ▸ List.mem_map_of_mem hb') h.1
-    · exact absurd (hf ▸ List.mem_map_of_mem ha') h.1
-    · exact ih h.2 ha' hb'
-
 theorem find?_eq_some_of_nodup {l : List Promotion} (h : (l.map (fun p => p.promotion_id)).Nodup)
     {q : Promotion} (hq : q ∈ l) :
     l.find? (fun p => p.promotion_id == q.promotion_id) = some q := by

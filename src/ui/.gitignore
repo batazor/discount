@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.astro/
+# Generated from ../../api/openapi.yaml by `npm run generate` (ADR 10); never edited by hand.
+src/api/schema.d.ts

@@ -3,8 +3,9 @@ import Discount.Apply.Step
 /-!
 # List lemmas used by the proofs
 
-Small facts about `List.sum` over `Int`, `getD`, `set` and `subLists` that core does not
-provide in the shape we need. All proofs are by induction; no Mathlib.
+Small facts about `List.sum` over `Int`, `getD`, `set` and `subLists`, and about `Nodup`,
+`Perm`, `Pairwise` and `find?`, that core does not provide in the shape we need. All proofs
+are by induction; no Mathlib.
 -/
 namespace Discount
 
@@ -177,5 +178,79 @@ theorem forall_mem_of_forall_getD (l : List Int) (P : Int → Prop)
   obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.mp hx
   have := h i hi
   rwa [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi] at this
+
+theorem eq_of_nodup_map {α β : Type} {l : List α} {f : α → β} (h : (l.map f).Nodup)
+    {a b : α} (ha : a ∈ l) (hb : b ∈ l) (hf : f a = f b) : a = b := by
+  induction l with
+  | nil => simp at ha
+  | cons x xs ih =>
+    rw [List.map_cons, List.nodup_cons] at h
+    rcases List.mem_cons.mp ha with rfl | ha' <;> rcases List.mem_cons.mp hb with rfl | hb'
+    · rfl
+    · exact absurd (hf ▸ List.mem_map_of_mem hb') h.1
+    · exact absurd (hf ▸ List.mem_map_of_mem ha') h.1
+    · exact ih h.2 ha' hb'
+
+/-! ## Nodup, permutations and sorted lists -/
+
+/-- Two permutations of each other, both sorted under an order that is antisymmetric on
+their elements, are equal. -/
+theorem eq_of_perm_of_pairwise {α : Type} (le : α → α → Bool) :
+    ∀ (l₁ l₂ : List α), l₁.Perm l₂ → l₁.Pairwise (fun a b => le a b = true) →
+      l₂.Pairwise (fun a b => le a b = true) →
+      (∀ a ∈ l₁, ∀ b ∈ l₁, le a b = true → le b a = true → a = b) → l₁ = l₂
+  | [], l₂, hp, _, _, _ => by
+      have := hp.length_eq
+      cases l₂ <;> simp_all
+  | _ :: _, [], hp, _, _, _ => by
+      have := hp.length_eq
+      simp at this
+  | a :: t₁, b :: t₂, hp, h₁, h₂, anti => by
+      have hab : a = b := by
+        by_cases hab : a = b
+        · exact hab
+        · have ha2 : a ∈ b :: t₂ := hp.mem_iff.mp (by simp)
+          have ha : a ∈ t₂ := by
+            rcases List.mem_cons.mp ha2 with h | h
+            · exact absurd h hab
+            · exact h
+          have hb1 : b ∈ a :: t₁ := hp.mem_iff.mpr (by simp)
+          have hb : b ∈ t₁ := by
+            rcases List.mem_cons.mp hb1 with h | h
+            · exact absurd h.symm hab
+            · exact h
+          have h1 := (List.pairwise_cons.mp h₁).1 b hb
+          have h2 := (List.pairwise_cons.mp h₂).1 a ha
+          exact anti a (by simp) b (by simp [hb]) h1 h2
+      subst hab
+      have ht := eq_of_perm_of_pairwise le t₁ t₂ hp.cons_inv (List.pairwise_cons.mp h₁).2
+        (List.pairwise_cons.mp h₂).2 (fun x hx y hy => anti x (by simp [hx]) y (by simp [hy]))
+      rw [ht]
+
+/-- `find?` by a key that is unique in the list does not depend on the order. -/
+theorem find?_key_eq_of_perm {α : Type} (key : α → String) {l₁ l₂ : List α} (hp : l₁.Perm l₂)
+    (hn : (l₁.map key).Nodup) (k : String) :
+    l₁.find? (fun a => key a == k) = l₂.find? (fun a => key a == k) := by
+  cases h1 : l₁.find? (fun a => key a == k) with
+  | none =>
+    rw [List.find?_eq_none] at h1
+    symm
+    rw [List.find?_eq_none]
+    intro x hx
+    exact h1 x (hp.mem_iff.mpr hx)
+  | some a =>
+    have ha : a ∈ l₁ := List.mem_of_find?_eq_some h1
+    have hpa := List.find?_some h1
+    cases h2 : l₂.find? (fun a => key a == k) with
+    | none =>
+      rw [List.find?_eq_none] at h2
+      exact absurd hpa (h2 a (hp.mem_iff.mp ha))
+    | some b =>
+      have hb : b ∈ l₁ := hp.mem_iff.mpr (List.mem_of_find?_eq_some h2)
+      have hpb := List.find?_some h2
+      have hk : key a = key b := by
+        simp at hpa hpb
+        rw [hpa, hpb]
+      rw [eq_of_nodup_map hn ha hb hk]
 
 end Discount

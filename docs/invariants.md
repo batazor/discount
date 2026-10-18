@@ -18,7 +18,7 @@ Notation: `S` is `result.original_subtotal`, `D` is `result.total_discount`,
 |---|-----------|--------|------------------------------------------------------------|
 | 1 | Bounds per order and per line | proved | `final_total_bounds`, `line_total_bounds` |
 | 2 | Caps are respected | proved | `discount_le_cap`, `discount_le_budget`, `total_discount_le_order_cap`, `total_discount_le_subtotal` |
-| 3 | Deterministic stacking | stated; permutation part is the next proof, commutativity is iteration 2 | `apply_perm_invariant` (planned) |
+| 3 | Deterministic stacking | permutation part proved; commutativity claimed only where true, proof is iteration 2 | `apply_perm_invariant`, `validate_perm`, `sortPromotions_perm` (`Determinism.lean`) |
 | 4 | Exclusive never combines; first-match groups apply at most one | proved | `exclusive_alone`, `first_match_at_most_one` |
 | 5 | Allocation is conservative | proved | `allocation_conserves`, `line_discount_sum`, `total_discount_eq_sum`; on `allocate` itself `allocate_sum`, `allocate_le`, `allocate_nonneg`, `allocate_length` |
 | 6 | Idempotence | stated, iteration 2 | `apply_idempotent` (planned) |
@@ -58,15 +58,32 @@ per-line bound is invariant 1.
 
 Two separate claims (ADR 4):
 
-**Permutation invariance (stated, proof next).** For any permutations `π`, `σ`,
-`apply (input with promotions := π input.promotions, groups := σ input.groups) = apply input`.
-The caller's list orders never matter because `sortPromotions` produces the total order
-`(group.priority DESC, group_id ASC, promotion.priority DESC, promotion_id ASC)` and ids
-are unique after validation. The `skipped` list is in that same total order. The proof
-needs two facts not yet in `verification/proofs/`: a sorted permutation of a sorted list under a total,
-antisymmetric order is equal to it, and `find?` by a unique key is permutation-invariant.
-Both are routine and planned before the DRT lands; the DRT itself exercises permutation
-invariance on every generated case.
+**Permutation invariance (proved: `apply_perm_invariant`).** For any permutations `π`, `σ`,
+if `apply input = ok result` then
+`apply (input with promotions := π, groups := σ) = ok result`, and `validate` accepts the
+permuted input (`validate_perm`). The caller's list orders never matter because
+`sortPromotions` produces the total order
+`(group.priority DESC, group_id ASC, promotion.priority DESC, promotion_id ASC)` and ids are
+unique after validation. The `skipped` list is in that same total order.
+
+The proof in `verification/proofs/Proofs/Invariants/Determinism.lean` has three parts:
+
+- `sortPromotions_perm`: `mergeSort` of two permutations of each other under a total,
+  transitive order is the same list when the order is antisymmetric on the elements
+  (`eq_of_perm_of_pairwise`); `sortLe` is shown total and transitive through its
+  propositional form `LexLe`, and antisymmetric up to `promotion_id`, which is unique
+  (`Valid.promotion_ids`).
+- The groups are read only through `find?` by `group_id`, which is unique after validation,
+  so `groupPriority` and `modeOf` do not depend on the order of `groups`
+  (`find?_key_eq_of_perm`).
+- `validate` is order-independent on the `ok` branch: each promotion's checks are an
+  index-free predicate (`promotionOk`), `checkPromotions = ok ↔ ∀ p ∈ ps, promotionOk p`,
+  and the duplicate checks are `Nodup`, which a permutation preserves. `compute` reads the
+  promotions only through `sortedOf` and the groups only through `modeOf` (`compute_congr`).
+
+On the `error` branch the two inputs are both rejected, possibly with different errors: the
+first failing promotion depends on the order (ADR 6 reports the first error). The DRT also
+exercises permutation invariance on every generated case.
 
 **Commutativity (claimed only where true, proved in iteration 2).**
 Swapping the *priorities* of two promotions changes the result in general. It does not
