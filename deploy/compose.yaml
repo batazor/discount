@@ -83,6 +83,7 @@ services:
       - "4321:4321"
     environment:
       DISCOUNT_API_URL: http://discount:8080
+      DISCOUNT_GRAFANA_URL: http://localhost:3000   # as reached from the operator's browser
     depends_on:
       discount:
         condition: service_healthy
