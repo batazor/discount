@@ -12,7 +12,9 @@ the customer (`coupon.customer_id` equals `customer_id`), used by the customer (
 confirmed redemption with that `customer_id` presented the code and applied the coupon's
 promotion), or saved by the customer, each once, ordered by `code`, as
 `CustomerCoupon { coupon, status, order_id, promotion }` with `promotion` =
-`{ promotion_id, action }` of the coupon's promotion.
+`{ promotion_id, action, metadata }` of the coupon's promotion (`metadata` is `null` when
+none is stored). With `?source=<s>` only entries whose promotion metadata has `source = s`
+are returned.
 
 #### Scenario: Unknown customer
 - **WHEN** nothing refers to customer `nobody`
@@ -30,6 +32,12 @@ promotion), or saved by the customer, each once, ordered by `code`, as
 #### Scenario: Another customer's binding
 - **WHEN** `GRANT-2` is bound to `c2`
 - **THEN** it is not in the list for `c1`
+
+#### Scenario: Metadata and source filter
+- **WHEN** `GRANT-1`'s promotion has metadata `{title: "Summer", source: "hotels"}` and
+  `SPRING`'s promotion has none
+- **THEN** the entry for `GRANT-1` carries that metadata, the entry for `SPRING` has
+  `metadata = null`, and `?source=hotels` returns `GRANT-1` only
 
 ### Requirement: Coupon status
 `status` SHALL be `applied` when the customer used the coupon (then `order_id` is the
