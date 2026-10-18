@@ -3,20 +3,27 @@
 
 mod common;
 
+use async_trait::async_trait;
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode};
 use common::*;
+use discount_application::ports::{Counters, PricingFn, RedemptionRepository, StorageError, Uses};
 use discount_application::ports::{Redemption, RedemptionError, RedemptionStatus, ReserveOutcome};
 use discount_domain::*;
 use discount_infrastructure::default_policy;
-use discount_infrastructure::http::{AppState, EvaluateRequest, evaluate_with_telemetry};
+use discount_infrastructure::http::{AppState, EvaluateRequest, evaluate_with_telemetry, router};
 use discount_infrastructure::telemetry::{self, Instruments};
 use opentelemetry::metrics::MeterProvider;
-use opentelemetry::trace::TracerProvider;
+use opentelemetry::trace::{SpanId, Status, TraceId, TracerProvider};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLoggerProvider};
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::SpanData;
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
 use std::sync::Arc;
+use tower::ServiceExt;
 use tracing_subscriber::layer::SubscriberExt;
 
 struct Harness {
@@ -309,4 +316,269 @@ fn redemption_counter_and_budget_gauge() {
         gauge_points(&h, telemetry::METRIC_BUDGET_REMAINING),
         vec![(s(&["currency=EUR", "promotion_id=P1"]), 700)]
     );
+}
+
+// ------------------------------------------------------- HTTP server spans
+
+/// Drive the router once under the harness subscriber; returns the response status and
+/// the exported spans.
+fn serve(h: &Harness, app: axum::Router, req: Request<Body>) -> (StatusCode, Vec<SpanData>) {
+    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+    let rt = runtime();
+    let mut status = StatusCode::IM_A_TEAPOT;
+    with_subscriber(h, || {
+        status = rt.block_on(app.oneshot(req)).unwrap().status();
+    });
+    (status, h.spans.get_finished_spans().unwrap())
+}
+
+fn request(method: Method, path: &str, body: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_owned()))
+        .unwrap()
+}
+
+fn evaluate_body() -> String {
+    serde_json::to_string(&EvaluateRequest {
+        cart: sample_cart(),
+        customer: CustomerContext::default(),
+    })
+    .unwrap()
+}
+
+fn server_span(spans: &[SpanData]) -> &SpanData {
+    spans
+        .iter()
+        .find(|sp| sp.span_kind == opentelemetry::trace::SpanKind::Server)
+        .expect("server span")
+}
+
+#[test]
+fn server_span_is_named_by_route_template() {
+    let h = harness();
+    let app = router(h.state.clone());
+    let (status, spans) = serve(
+        &h,
+        app,
+        request(Method::POST, "/v1/redemptions/order-42/confirm", ""),
+    );
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let sp = server_span(&spans);
+    assert_eq!(sp.name, "POST /v1/redemptions/{order_id}/confirm");
+    let a = |k: &str| attr(sp.attributes.iter(), k);
+    assert_eq!(
+        a("http.route").as_deref(),
+        Some("/v1/redemptions/{order_id}/confirm")
+    );
+    assert_eq!(
+        a("url.path").as_deref(),
+        Some("/v1/redemptions/order-42/confirm")
+    );
+    assert_eq!(a("http.response.status_code").as_deref(), Some("404"));
+    assert_eq!(sp.status, Status::Unset);
+}
+
+#[test]
+fn evaluate_keeps_its_name_and_child_span() {
+    let h = harness();
+    let app = router(h.state.clone());
+    let (status, spans) = serve(
+        &h,
+        app,
+        request(Method::POST, "/v1/evaluate", &evaluate_body()),
+    );
+    assert_eq!(status, StatusCode::OK);
+    let sp = server_span(&spans);
+    assert_eq!(sp.name, "POST /v1/evaluate");
+    assert_eq!(
+        attr(sp.attributes.iter(), "http.response.status_code").as_deref(),
+        Some("200")
+    );
+    let child = spans
+        .iter()
+        .find(|s| s.name == telemetry::SPAN_EVALUATE)
+        .expect("discount.evaluate");
+    assert_eq!(child.parent_span_id, sp.span_context.span_id());
+    assert_eq!(child.span_context.trace_id(), sp.span_context.trace_id());
+}
+
+#[test]
+fn unmatched_path_is_named_by_method_only() {
+    let h = harness();
+    let app = router(h.state.clone());
+    let (status, spans) = serve(&h, app, request(Method::GET, "/nope", ""));
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let sp = server_span(&spans);
+    assert_eq!(sp.name, "GET");
+    assert_eq!(attr(sp.attributes.iter(), "http.route"), None);
+}
+
+#[test]
+fn healthz_is_not_traced() {
+    let h = harness();
+    let app = router(h.state.clone());
+    let (status, spans) = serve(&h, app, request(Method::GET, "/healthz", ""));
+    assert_eq!(status, StatusCode::OK);
+    assert!(spans.is_empty(), "no span expected, got {spans:?}");
+}
+
+#[test]
+fn pricing_rejection_keeps_status_unset() {
+    let h = harness();
+    let app = router(h.state.clone());
+    let mut cart = sample_cart();
+    cart.currency = "eur".into();
+    let body = serde_json::to_string(&EvaluateRequest {
+        cart,
+        customer: CustomerContext::default(),
+    })
+    .unwrap();
+    let (status, spans) = serve(&h, app, request(Method::POST, "/v1/evaluate", &body));
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let sp = server_span(&spans);
+    assert_eq!(
+        attr(sp.attributes.iter(), "http.response.status_code").as_deref(),
+        Some("422")
+    );
+    assert_eq!(sp.status, Status::Unset);
+    let child = spans
+        .iter()
+        .find(|s| s.name == telemetry::SPAN_EVALUATE)
+        .unwrap();
+    assert_eq!(
+        attr(child.attributes.iter(), "discount.error_type").as_deref(),
+        Some("InvalidCurrency")
+    );
+}
+
+/// A redemption repository whose store is down.
+struct DownRepository;
+
+#[async_trait]
+impl RedemptionRepository for DownRepository {
+    async fn reserve(
+        &self,
+        _: &str,
+        _: Option<&str>,
+        _: &[String],
+        _: Timestamp,
+        _: &PricingFn<'_>,
+    ) -> Result<ReserveOutcome, RedemptionError> {
+        Err(RedemptionError::Storage(StorageError::Unavailable(
+            "down".into(),
+        )))
+    }
+    async fn uses_for_customer(&self, _: &str) -> Result<Uses, RedemptionError> {
+        Err(RedemptionError::Storage(StorageError::Unavailable(
+            "down".into(),
+        )))
+    }
+    async fn counters(&self, _: &[String]) -> Result<Counters, RedemptionError> {
+        Err(RedemptionError::Storage(StorageError::Unavailable(
+            "down".into(),
+        )))
+    }
+    async fn coupon_uses_of_customer(
+        &self,
+        _: &str,
+    ) -> Result<Vec<(String, String)>, RedemptionError> {
+        Err(RedemptionError::Storage(StorageError::Unavailable(
+            "down".into(),
+        )))
+    }
+    async fn transition(
+        &self,
+        _: &str,
+        _: RedemptionStatus,
+        _: Timestamp,
+    ) -> Result<Redemption, RedemptionError> {
+        Err(RedemptionError::Storage(StorageError::Unavailable(
+            "down".into(),
+        )))
+    }
+    async fn get(&self, _: &str) -> Result<Option<Redemption>, RedemptionError> {
+        Err(RedemptionError::Storage(StorageError::Unavailable(
+            "down".into(),
+        )))
+    }
+}
+
+#[test]
+fn storage_failure_sets_error_status() {
+    let h = harness();
+    let state = Arc::new(AppState {
+        redemptions: Arc::new(DownRepository),
+        catalog: h.state.catalog.clone(),
+        clock: h.state.clock.clone(),
+        events: h.state.events.clone(),
+        codes: h.state.codes.clone(),
+        instruments: h.state.instruments.clone(),
+    });
+    let app = router(state);
+    let (status, spans) = serve(&h, app, request(Method::GET, "/v1/redemptions/o1", ""));
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let sp = server_span(&spans);
+    assert_eq!(sp.name, "GET /v1/redemptions/{order_id}");
+    assert_eq!(
+        attr(sp.attributes.iter(), "http.response.status_code").as_deref(),
+        Some("503")
+    );
+    assert!(
+        matches!(sp.status, Status::Error { .. }),
+        "status {:?}",
+        sp.status
+    );
+}
+
+#[test]
+fn traceparent_is_honoured() {
+    let h = harness();
+    let app = router(h.state.clone());
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/evaluate")
+        .header("content-type", "application/json")
+        .header(
+            "traceparent",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        )
+        .body(Body::from(evaluate_body()))
+        .unwrap();
+    let (status, spans) = serve(&h, app, req);
+    assert_eq!(status, StatusCode::OK);
+    let sp = server_span(&spans);
+    assert_eq!(
+        sp.span_context.trace_id(),
+        TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").unwrap()
+    );
+    assert_eq!(
+        sp.parent_span_id,
+        SpanId::from_hex("00f067aa0ba902b7").unwrap()
+    );
+    let child = spans
+        .iter()
+        .find(|s| s.name == telemetry::SPAN_EVALUATE)
+        .unwrap();
+    assert_eq!(child.span_context.trace_id(), sp.span_context.trace_id());
+}
+
+#[test]
+fn malformed_traceparent_starts_a_fresh_trace() {
+    let h = harness();
+    let app = router(h.state.clone());
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/evaluate")
+        .header("content-type", "application/json")
+        .header("traceparent", "garbage")
+        .body(Body::from(evaluate_body()))
+        .unwrap();
+    let (status, spans) = serve(&h, app, req);
+    assert_eq!(status, StatusCode::OK);
+    let sp = server_span(&spans);
+    assert_eq!(sp.parent_span_id, SpanId::INVALID);
+    assert_ne!(sp.span_context.trace_id(), TraceId::INVALID);
 }

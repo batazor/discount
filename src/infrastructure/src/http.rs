@@ -6,13 +6,13 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, MatchedPath, Path, Request, State};
+use axum::extract::{FromRequest, MatchedPath, Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use discount_application::ports::{
     Clock, EventPublisher, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog,
-    RedemptionError, RedemptionRepository, ReserveOutcome, StorageError,
+    PromotionMetadata, RedemptionError, RedemptionRepository, ReserveOutcome, StorageError,
 };
 use discount_application::{
     CancelRedemption, CodeSource, ConfirmRedemption, CouponError, CustomerCouponError, Evaluate,
@@ -23,9 +23,9 @@ use discount_domain::{
     CartSnapshot, Coupon, CustomerContext, ExchangeRate, Money, PricingPolicy, PricingResult,
     Promotion, StackingGroup,
 };
-use serde::{Deserialize, Serialize};
 use opentelemetry::global;
 use opentelemetry::trace::TraceContextExt;
+use serde::{Deserialize, Serialize};
 use tower_http::trace::TraceLayer;
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -78,6 +78,13 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_group).put(put_group).delete(delete_group),
         )
         .route("/v1/promotions", get(list_promotions))
+        .route("/v1/promotion-metadata", get(list_promotion_metadata))
+        .route(
+            "/v1/promotions/{promotion_id}/metadata",
+            get(get_promotion_metadata)
+                .put(put_promotion_metadata)
+                .delete(delete_promotion_metadata),
+        )
         .route(
             "/v1/promotions/{promotion_id}",
             get(get_promotion)
@@ -197,7 +204,6 @@ impl opentelemetry::propagation::Extractor for HeaderExtractor<'_> {
         self.0.keys().map(|k| k.as_str()).collect()
     }
 }
-
 
 /// The OpenAPI document, embedded from `api/openapi.yaml` (the contract, ADR 10).
 pub const OPENAPI_YAML: &str = include_str!("../../../api/openapi.yaml");
@@ -464,9 +470,106 @@ async fn delete_group(
     }
 }
 
-async fn list_promotions(State(state): State<Arc<AppState>>) -> Response {
-    match state.catalog.list_promotions().await {
-        Ok(ps) => ok_json(&ps),
+/// `?source=` on the listings (spec `promotion-catalog`, "Metadata listing and source filter").
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceQuery {
+    pub source: Option<String>,
+}
+
+async fn list_promotions(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<SourceQuery>,
+) -> Response {
+    let ps = match state.catalog.list_promotions().await {
+        Ok(ps) => ps,
+        Err(e) => return storage_error(&e),
+    };
+    match q.source {
+        None => ok_json(&ps),
+        Some(src) => {
+            let md = match state.catalog.list_metadata().await {
+                Ok(md) => md,
+                Err(e) => return storage_error(&e),
+            };
+            let keep: std::collections::BTreeSet<&str> = md
+                .iter()
+                .filter(|(_, m)| m.source.as_deref() == Some(src.as_str()))
+                .map(|(pid, _)| pid.as_str())
+                .collect();
+            let filtered: Vec<&Promotion> = ps
+                .iter()
+                .filter(|p| keep.contains(p.promotion_id.as_str()))
+                .collect();
+            ok_json(&filtered)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetadataEntry {
+    pub promotion_id: String,
+    pub metadata: PromotionMetadata,
+}
+
+async fn list_promotion_metadata(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<SourceQuery>,
+) -> Response {
+    match state.catalog.list_metadata().await {
+        Ok(md) => {
+            let entries: Vec<MetadataEntry> = md
+                .into_iter()
+                .filter(|(_, m)| q.source.is_none() || m.source == q.source)
+                .map(|(promotion_id, metadata)| MetadataEntry {
+                    promotion_id,
+                    metadata,
+                })
+                .collect();
+            ok_json(&entries)
+        }
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn get_promotion_metadata(
+    State(state): State<Arc<AppState>>,
+    Path(promotion_id): Path<String>,
+) -> Response {
+    match state.catalog.get_metadata(&promotion_id).await {
+        Ok(Some(m)) => ok_json(&m),
+        Ok(None) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn put_promotion_metadata(
+    State(state): State<Arc<AppState>>,
+    Path(promotion_id): Path<String>,
+    StrictJson(metadata): StrictJson<PromotionMetadata>,
+) -> Response {
+    if let Err(msg) = metadata.check() {
+        return decode_error(msg);
+    }
+    match state
+        .catalog
+        .put_metadata(&promotion_id, metadata.clone())
+        .await
+    {
+        Ok(true) => ok_json(&metadata),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn delete_promotion_metadata(
+    State(state): State<Arc<AppState>>,
+    Path(promotion_id): Path<String>,
+) -> Response {
+    match state.catalog.delete_metadata(&promotion_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
         Err(e) => storage_error(&e),
     }
 }
@@ -732,8 +835,12 @@ fn list_use_case(state: &AppState) -> ListCustomerCoupons<'_> {
 async fn list_customer_coupons(
     State(state): State<Arc<AppState>>,
     Path(customer_id): Path<String>,
+    Query(q): Query<SourceQuery>,
 ) -> Response {
-    match list_use_case(&state).run(&customer_id).await {
+    match list_use_case(&state)
+        .run_filtered(&customer_id, q.source.as_deref())
+        .await
+    {
         Ok(cs) => ok_json(&cs),
         Err(e) => customer_coupon_error(e),
     }

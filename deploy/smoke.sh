@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Smoke check of the local observability chain: post the fixture carts to discount-server,
-# then verify through Grafana's data source proxies that the metric, a trace and a log
-# arrived. Exit non-zero on any failure.
+# Smoke check of the local stack: post the fixture carts to discount-server, check the
+# operator console answers, then verify through Grafana's data source proxies that the
+# metric, a trace and a log arrived. Exit non-zero on any failure.
 set -euo pipefail
 
 SERVICE=${SERVICE:-http://localhost:8080}
 GRAFANA=${GRAFANA:-http://localhost:3000}
+UI=${UI:-http://localhost:4321}
 DIR=$(cd "$(dirname "$0")" && pwd)
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok:   $*"; }
 
 curl -sf "$SERVICE/healthz" >/dev/null || fail "service not healthy at $SERVICE"
+STARTED=$(date +%s)
 
 # Seed the catalogue (idempotent PUTs): one group, a 10 % promotion with a budget, a
 # capped fixed-amount promotion. With Postgres the catalogue starts empty.
@@ -25,6 +27,11 @@ if [ "$B" = '{"remaining":null}' ]; then
 fi
 pass "catalogue seeded (g, P1 10% with budget, P2 fixed 500 capped at 300)"
 
+# Operator console: alive on its own, and its promotions page shows the seeded catalogue.
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$UI/healthz")" = "200" ] || fail "console not healthy at $UI"
+curl -s "$UI/promotions" | grep -q 'href="/promotions/P1"' || fail "console promotions page does not list P1"
+pass "console at $UI is up and lists P1"
+
 # Fixture carts: the sample cart (priced to 749) and an invalid one (lowercase currency).
 post() { curl -s -o /dev/null -w "%{http_code}" -H 'Content-Type: application/json' -X POST "$SERVICE/v1/evaluate" -d "$1"; }
 CUSTOMER='{"customer_id":"smoke","completed_orders":0,"uses":[]}'
@@ -35,6 +42,12 @@ for _ in 1 2 3 4 5; do
 done
 [ "$(post "$BAD")" = "422" ] || fail "invalid cart did not return 422"
 pass "posted 5 valid and 1 invalid evaluation"
+
+# One evaluation inside a caller's trace (W3C traceparent); the trace id must show up in
+# Tempo under that id, with the service's spans as children.
+TRACE_ID=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+[ "$(curl -s -o /dev/null -w "%{http_code}" -H 'Content-Type: application/json' -H "traceparent: 00-$TRACE_ID-00f067aa0ba902b7-01" -X POST "$SERVICE/v1/evaluate" -d "$CART")" = "200" ] || fail "evaluate with traceparent did not return 200"
+pass "posted one evaluation with traceparent $TRACE_ID"
 
 # Redemption round trip: reserve, idempotent repeat, confirm, cancel.
 ORDER="smoke-$(date +%s)"
@@ -126,7 +139,34 @@ loki_count() {
     | python3 -c 'import sys,json; d=json.load(sys.stdin); print(sum(len(s["values"]) for s in d["data"]["result"]))'
 }
 
+tempo_by_name() { # tempo_by_name <span name>: traces with a span of that exact name
+  local now start q
+  now=$(date +%s); start=$((now-900))
+  q=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote("{name=\"%s\"}" % sys.argv[1]))' "$1")
+  curl -s "$GRAFANA/api/datasources/proxy/uid/tempo/api/search?q=$q&start=$start&end=$now&limit=5" \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("traces",[])))'
+}
+
+tempo_propagated() { # the trace we started with traceparent, containing the evaluate span
+  curl -s "$GRAFANA/api/datasources/proxy/uid/tempo/api/traces/$TRACE_ID" \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); print(sum(1 for b in d.get("batches",[]) for ss in b["scopeSpans"] for s in ss["spans"] if s["name"]=="discount.evaluate"))'
+}
+
+tempo_healthz() { # must stay 0 since this run started: health checks are not traced
+  local now q
+  now=$(date +%s)
+  q=$(python3 -c 'import urllib.parse; print(urllib.parse.quote("{name=\"GET /healthz\"}"))')
+  # Tempo's start/end are block-granular for recent data; filter on the trace start too.
+  curl -s "$GRAFANA/api/datasources/proxy/uid/tempo/api/search?q=$q&start=$STARTED&end=$now&limit=100" \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); s=int(sys.argv[1])*10**9; print(sum(1 for t in d.get("traces",[]) if int(t["startTimeUnixNano"])>=s))' "$STARTED"
+}
+
 retry "Tempo traces for service.name=discount" tempo_count
+retry "Tempo span named POST /v1/redemptions/{order_id}/confirm" tempo_by_name "POST /v1/redemptions/{order_id}/confirm"
+retry "Tempo trace $TRACE_ID carries discount.evaluate" tempo_propagated
+H=$(tempo_healthz 2>/dev/null || echo 0)
+[ "${H:-0}" = "0" ] || fail "GET /healthz traces found since this run started: $H"
+pass "no GET /healthz traces"
 retry "Loki evaluation log lines for service_name=discount" loki_count
 
 echo "smoke passed"

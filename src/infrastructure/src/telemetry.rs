@@ -16,6 +16,7 @@ use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::layer::SubscriberExt;
@@ -56,13 +57,19 @@ pub const SPAN_ATTR_ORIGINAL_SUBTOTAL: &str = "discount.original_subtotal";
 pub const SPAN_ATTR_TOTAL_DISCOUNT: &str = "discount.total_discount";
 pub const SPAN_ATTR_ERROR_TYPE: &str = "discount.error_type";
 
+/// HTTP server span attributes (OpenTelemetry HTTP semantic conventions).
+pub const SPAN_ATTR_HTTP_ROUTE: &str = "http.route";
+pub const SPAN_ATTR_HTTP_STATUS: &str = "http.response.status_code";
+
 /// Bucket boundaries of `discount.share.bps` (basis points of the subtotal).
 pub const SHARE_BPS_BOUNDARIES: [f64; 11] = [
     0.0, 100.0, 250.0, 500.0, 1000.0, 1500.0, 2000.0, 3000.0, 5000.0, 7500.0, 10000.0,
 ];
 
 /// Every name a dashboard may rely on; `docs/ubiquitous-language.md` lists the same set.
-pub const VOCABULARY: [&str; 19] = [
+pub const VOCABULARY: [&str; 21] = [
+    SPAN_ATTR_HTTP_ROUTE,
+    SPAN_ATTR_HTTP_STATUS,
     METRIC_REDEMPTIONS,
     METRIC_BUDGET_REMAINING,
     ATTR_ACTION,
@@ -416,10 +423,12 @@ impl TelemetryGuard {
 }
 
 /// Build the OTLP pipelines for traces, metrics and logs and install the `tracing`
-/// subscriber (stdout + OpenTelemetry). An unreachable endpoint is not an error here:
-/// the batch exporters retry and log in the background.
+/// subscriber (stdout + OpenTelemetry) and the W3C Trace Context propagator. An
+/// unreachable endpoint is not an error here: the batch exporters retry and log in the
+/// background.
 pub fn init(config: &Config) -> Result<TelemetryGuard, Box<dyn std::error::Error>> {
     let res = resource(&config.environment);
+    global::set_text_map_propagator(TraceContextPropagator::new());
 
     let span_exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
