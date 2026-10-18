@@ -9,6 +9,7 @@ import { formState } from "../../actions/run";
 import When from "../../components/When.astro";
 import { CONSEQUENCE, REDEMPTION_STATUS_HELP } from "../../model/glossary";
 
+const access = Astro.locals.access;
 const orderId = Astro.params.order_id!;
 const confirmed = Astro.getActionResult(actions.confirmRedemption);
 const cancelled = Astro.getActionResult(actions.cancelRedemption);
@@ -19,7 +20,7 @@ const badge: Record<string, string> = { reserved: "badge-info", confirmed: "badg
 <Layout title={orderId} crumbs={[["Redemptions", "/redemptions"], [orderId]]} unreachable={unreachableUrl(current)}>
   <Fragment slot="badge">{current.ok && <span class={`badge ${badge[current.data.status]}`} data-tip={REDEMPTION_STATUS_HELP[current.data.status]}>{current.data.status}</span>}</Fragment>
   <Fragment slot="actions">
-    {current.ok && (
+    {current.ok && access.pricing && (
       <>
         <a href={`/explain?order=${encodeURIComponent(orderId)}`} class="btn btn-secondary">Explain this order</a>
         <form method="post" action={actions.confirmRedemption}>

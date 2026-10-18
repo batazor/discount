@@ -323,31 +323,6 @@ an entry in the console's exponent table SHALL use two decimals.
 - **THEN** the list shows that instant in the viewer's time zone and the tooltip carries
   the UTC time and `1760313600`
 
-### Requirement: Role switch
-The navigation SHALL offer two roles, `marketing` and `support`, remembered in a cookie.
-The role SHALL change the navigation order, the overview and the landing page, and
-SHALL NOT hide any screen.
-
-#### Scenario: Support lands on find
-- **WHEN** the role is switched to `support`
-- **THEN** the overview shows the find box first, the navigation leads with Find and
-  Explain, and campaign screens remain reachable
-
-### Requirement: Overview by role
-For `marketing` the overview SHALL show campaigns that are live, ending within seven days,
-the lowest remaining budgets, exhausted and scheduled, and, while the catalogue has no
-group or no campaign, a checklist leading to the missing step. For `support` it SHALL show
-the find box and the last lookups kept in the browser.
-
-#### Scenario: First run
-- **WHEN** the catalogue has no groups
-- **THEN** the marketing overview shows the checklist with "create a group" as the next
-  step and a link to it
-
-#### Scenario: Ending soon
-- **WHEN** a campaign's window ends in three days
-- **THEN** it is listed under "ending soon" with the end shown in local time
-
 ### Requirement: Find
 The console SHALL offer one search box that takes a customer id, an order id, a coupon
 code or a campaign id, looks each up with the documented `GET`, and shows what matched
@@ -582,3 +557,45 @@ console SHALL NOT offer tenant switching and SHALL say so next to `default`.
 #### Scenario: No sign-in
 - **WHEN** the console runs without an issuer
 - **THEN** the navigation names `local`
+
+### Requirement: Navigation follows scopes
+The navigation SHALL lead with the campaign screens when the token carries
+`discount:catalog.write` (or `discount:admin`) and with the support screens otherwise, and
+SHALL leave out screens whose scope the token lacks: campaigns, coupons and settings need
+`discount:catalog.read`, Explain and redemptions `discount:pricing`, customers
+`discount:customers`, Find either of the last two. Without sign-in every screen SHALL be
+offered.
+
+#### Scenario: Support account
+- **WHEN** `support` (pricing, customers, catalogue read) signs in
+- **THEN** the navigation leads with Find and Explain, lists campaigns and settings after,
+  and offers no role switch
+
+### Requirement: Overview
+The overview SHALL show the find box and recent lookups when the token can look customers
+or orders up, the campaign health sections (live, ending within seven days, lowest
+remaining budgets, exhausted, scheduled) when it can read the catalogue, and the first-run
+checklist when it can write the catalogue and the catalogue has no group or no campaign.
+
+#### Scenario: First run
+- **WHEN** the catalogue has no groups and the token can write it
+- **THEN** the overview shows the checklist with "create a group" as the next step
+
+#### Scenario: Ending soon
+- **WHEN** a campaign's window ends in three days
+- **THEN** it is listed under "ending soon" with the end shown in local time
+
+### Requirement: Actions follow scopes
+Without `discount:catalog.write` the console SHALL render catalogue forms read-only with a
+note and SHALL NOT show create, save, archive, delete or generate controls; without
+`discount:pricing` it SHALL NOT offer Explain, "try it" or the redemption transitions;
+without `discount:customers` it SHALL NOT offer the customer screens. A direct request
+without the scope SHALL still show the service's `403` verbatim.
+
+#### Scenario: Support sees the catalogue read-only
+- **WHEN** `support` opens a campaign's rules tab
+- **THEN** the fields are disabled, a read-only note is shown and there is no Save
+
+#### Scenario: Budget edited from the overview
+- **WHEN** `marketing` sets a campaign's budget on its overview tab
+- **THEN** the console sends the budget `PUT` and the remaining budget updates

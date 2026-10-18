@@ -4,12 +4,14 @@ import type { Campaign } from "../../model/campaign";
 import Field from "../Field.astro";
 import FormStatus from "../FormStatus.astro";
 import DeleteButton from "../DeleteButton.astro";
+import ReadOnly from "../ReadOnly.astro";
 import { formState } from "../../actions/run";
 import { metadataToFields } from "../../model/metadata";
 import { CONSEQUENCE, TERM } from "../../model/glossary";
 interface Props { campaign: Campaign; hasMeta: boolean }
 const { campaign: c, hasMeta } = Astro.props;
 const id = c.promotion.promotion_id;
+const access = Astro.locals.access;
 const put = Astro.getActionResult(actions.putPromotionMetadata);
 const removed = Astro.getActionResult(actions.deletePromotionMetadata);
 const state = formState(removed?.data?.kind === "ok" ? undefined : put?.data, c.metadata ? metadataToFields(c.metadata) : {});
@@ -19,6 +21,7 @@ const act = (a: string) => `?tab=details&${a.slice(1)}`;
 <form method="post" action={act(String(actions.putPromotionMetadata))} class="card max-w-2xl space-y-3">
   <h2 class="card-title">Title and labels</h2>
   <p class="hint">For people and listings; pricing never reads them.</p>
+  <ReadOnly allowed={access.write} what="the details">
   <input type="hidden" name="promotion_id" value={id} />
   <Field state={state} name="title" label="Title" required />
   <Field state={state} name="description" label="Description" textarea rows={3} />
@@ -26,8 +29,9 @@ const act = (a: string) => `?tab=details&${a.slice(1)}`;
   <Field state={state} name="labels" label="Labels" textarea rows={3} help={TERM.labels} hint="one key=value per line" />
   <FormStatus state={state} okText="Saved." />
   {removed?.data?.kind === "ok" && <p role="status" class="alert alert-success">Details removed.</p>}
-  <div class="flex items-center gap-3">
+  {access.write && <div class="flex items-center gap-3">
     <button type="submit" class="btn btn-primary">Save</button>
     {hasMeta && <DeleteButton action={act(String(actions.deletePromotionMetadata))} id={id} label="Remove details" consequence={CONSEQUENCE.removeMetadata} />}
-  </div>
+  </div>}
+  </ReadOnly>
 </form>

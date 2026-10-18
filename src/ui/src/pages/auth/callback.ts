@@ -1,11 +1,11 @@
 import type { APIRoute } from "astro";
 import { authEnabled, OIDC } from "../../auth/config";
-import { discover, exchangeCode, defaultRole } from "../../auth/oidc";
+import { discover, exchangeCode } from "../../auth/oidc";
 import { SESSION_KEY } from "../../auth/session";
 import { sessionFrom } from "../../middleware";
 
 // Authorization-code flow return leg (DISCOUNT_UI_OIDC_FLOW=code).
-export const GET: APIRoute = async ({ url, session, cookies, redirect }) => {
+export const GET: APIRoute = async ({ url, session, redirect }) => {
   if (!authEnabled) return redirect("/", 303);
   const pending = (await session?.get("pkce")) as { verifier: string; state: string; back: string } | undefined;
   await session?.delete("pkce");
@@ -16,6 +16,5 @@ export const GET: APIRoute = async ({ url, session, cookies, redirect }) => {
   if ("error" in t) return new Response(`Sign-in failed: ${t.error_description ?? t.error}`, { status: 400 });
   const s = sessionFrom(t);
   await session?.set(SESSION_KEY, s);
-  if (!cookies.has("discount_role")) cookies.set("discount_role", defaultRole(s.claims.scopes), { path: "/", sameSite: "lax", maxAge: 60 * 60 * 24 * 365 });
   return redirect(pending.back || "/", 303);
 };

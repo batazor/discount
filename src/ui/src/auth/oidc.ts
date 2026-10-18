@@ -100,8 +100,3 @@ export function claimsOf(payload: Record<string, unknown> | null, tenantClaim = 
     exp: typeof p.exp === "number" ? p.exp : null,
   };
 }
-
-/** The role a fresh session starts in, from its scopes. */
-export function defaultRole(scopes: string[]): "marketing" | "support" {
-  return scopes.includes("discount:catalog.write") || scopes.includes("discount:admin") ? "marketing" : "support";
-}

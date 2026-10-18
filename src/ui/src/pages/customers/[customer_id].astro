@@ -12,7 +12,8 @@ const source = Astro.url.searchParams.get("source")?.trim() || "";
 const list = await call(() =>
   api.GET("/v1/customers/{customer_id}/coupons", { params: { path: { customer_id: customerId }, query: source ? { source } : {} } }),
 );
-const badge: Record<string, string> = { active: "badge-ok", scheduled: "badge-info", expired: "badge-muted", applied: "badge-warn" };
+const badge: Record<string, string> = { active: "badge-ok", scheduled: "badge-info", expired: "badge-muted", applied: "badge-warn", paused: "badge-warn" };
+if (!Astro.locals.access.customers) return Astro.redirect("/");
 ---
 <Layout title={customerId} crumbs={[["Customers", "/customers"], [customerId]]} description="Bound, used and saved coupons with their cart-free status, as the service lists them." unreachable={unreachableUrl(list)}>
   {!list.ok && !list.unreachable && <ApiError status={list.status} body={list.body} traceId={list.traceId} />}

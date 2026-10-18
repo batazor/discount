@@ -14,6 +14,7 @@ import { api, call, unreachableUrl } from "../api/client";
 import type { EvaluateRequest } from "../api/types";
 import ApiError from "../components/ApiError.astro";
 
+if (!Astro.locals.access.pricing) return Astro.redirect("/");
 const result = Astro.getActionResult(actions.evaluate);
 const order = Astro.url.searchParams.get("order")?.trim() || "";
 const campaignHint = Astro.url.searchParams.get("campaign")?.trim() || "";

@@ -6,9 +6,20 @@ import Money from "../Money.astro";
 import When from "../When.astro";
 import Help from "../Help.astro";
 import TryIt from "./TryIt.astro";
+import { actions } from "astro:actions";
+import Field from "../Field.astro";
+import MoneyField from "../MoneyField.astro";
+import FormStatus from "../FormStatus.astro";
+import ReadOnly from "../ReadOnly.astro";
+import { formState } from "../../actions/run";
+import { moneyToFields } from "../../model/fields";
 interface Props { campaign: Campaign; allowlistCount: number; href: (t: "overview" | "rules" | "codes" | "audience" | "details") => string }
 const { campaign: c, allowlistCount, href } = Astro.props;
 const p = c.promotion;
+const access = Astro.locals.access;
+const budget = Astro.getActionResult(actions.putBudget);
+const budgetState = formState(budget?.data, { promotion_id: p.promotion_id, no_budget: p.remaining_budget === null ? "on" : "", ...moneyToFields(p.remaining_budget, "remaining") });
+budgetState.fields.promotion_id = p.promotion_id;
 const needsCode = p.rules.some((r) => r.type === "RequiresCoupon");
 const needsList = p.rules.some((r) => r.type === "RequiresAllowlist");
 const todo: [string, string][] = [];
@@ -35,9 +46,19 @@ if (c.exhaustedBy === "budget") todo.push(["Budget is spent: raise it or let it 
       <dt>Allowlisted</dt><dd>{allowlistCount}</dd>
     </dl>
   </section>
-  <TryIt campaign={c} />
+  {access.pricing && <TryIt campaign={c} />}
   </div>
   <aside class="space-y-4">
+    <form method="post" action={`?tab=overview&${String(actions.putBudget).slice(1)}`} class="card space-y-3">
+      <h2 class="card-title">Budget <Help text={TERM.budget} /></h2>
+      <ReadOnly allowed={access.write} what="the budget">
+        <input type="hidden" name="promotion_id" value={p.promotion_id} />
+        <Field state={budgetState} name="no_budget" label="No budget (unbounded)" checkbox />
+        <MoneyField state={budgetState} name="remaining" label="Remaining" />
+        <FormStatus state={budgetState} okText="Budget saved." />
+        {access.write && <button type="submit" class="btn btn-secondary">Save budget</button>}
+      </ReadOnly>
+    </form>
     {todo.length > 0 && (
       <section class="card">
         <h2 class="card-title">Worth a look</h2>

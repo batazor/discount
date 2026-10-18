@@ -6,6 +6,7 @@ import { TEMPLATES } from "../../model/templates";
 import { summarize } from "../../model/summary";
 import { assembleCampaigns, campaignTitle, describeAction } from "../../model/campaign";
 
+if (!Astro.locals.access.write) return Astro.redirect("/campaigns");
 const [promotions, metadata] = await Promise.all([call(() => api.GET("/v1/promotions")), call(() => api.GET("/v1/promotion-metadata"))]);
 const campaigns = assembleCampaigns(dataOr(promotions, []), dataOr(metadata, []), [], Math.floor(Date.now() / 1000));
 ---

@@ -5,9 +5,14 @@ import { defineMiddleware } from "astro:middleware";
 import { authEnabled, isPublicPath, OIDC } from "./auth/config";
 import { discover, refreshGrant, claimsOf, decodeJwt } from "./auth/oidc";
 import { bearer, SESSION_KEY, type AuthSession } from "./auth/session";
+import { accessOf, ALL } from "./model/access";
 
 export const onRequest = defineMiddleware(async (context, next) => {
-  if (!authEnabled) return bearer.run({ token: null }, () => next());
+  if (!authEnabled) {
+    context.locals.user = null;
+    context.locals.access = ALL;
+    return bearer.run({ token: null }, () => next());
+  }
   const path = context.url.pathname;
   let auth = (await context.session?.get(SESSION_KEY)) as AuthSession | undefined;
   const now = Math.floor(Date.now() / 1000);
@@ -17,6 +22,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
     else await context.session?.delete(SESSION_KEY);
   }
   context.locals.user = auth?.claims ?? null;
+  context.locals.access = accessOf(context.locals.user, true);
   if (!auth && !isPublicPath(path)) {
     const back = encodeURIComponent(path + context.url.search);
     return context.redirect(`/login?back=${back}`, 303);

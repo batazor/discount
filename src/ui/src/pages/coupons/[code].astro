@@ -1,5 +1,6 @@
 ---
 import { actions } from "astro:actions";
+import ReadOnly from "../../components/ReadOnly.astro";
 import Layout from "../../layouts/Layout.astro";
 import Field from "../../components/Field.astro";
 import TimestampField from "../../components/TimestampField.astro";
@@ -23,12 +24,14 @@ const [current, promotions] = await Promise.all([
 ]);
 const state = formState(result?.data, current?.ok ? couponToFields(current.data) : {});
 const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
+const access = Astro.locals.access;
 ---
 <Layout title={isNew ? "New coupon" : code} crumbs={[["Coupons", "/coupons"], [isNew ? "New" : code]]} unreachable={unreachableUrl(current ?? promotions, promotions)}>
   <Fragment slot="badge">{current?.ok && (current.data.customer_id ? <span class="badge badge-info">bound to {current.data.customer_id}</span> : <span class="badge badge-muted">public</span>)}</Fragment>
-  <Fragment slot="actions">{!isNew && current?.ok && <DeleteButton action={actions.deleteCoupon} id={code} consequence={CONSEQUENCE.deleteCoupon} />}</Fragment>
+  <Fragment slot="actions">{!isNew && current?.ok && access.write && <DeleteButton action={actions.deleteCoupon} id={code} consequence={CONSEQUENCE.deleteCoupon} />}</Fragment>
   {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} traceId={current.traceId} />}
   <form method="post" action={actions.putCoupon} class="max-w-3xl space-y-5">
+  <ReadOnly allowed={access.write}>
     <section class="card grid grid-cols-2 gap-4">
       <Field state={state} name="code" label="Code" required readonly={!isNew} />
       <Field state={state} name="promotion_id" label="Promotion" options={promotionIds} empty="— choose —" required />
@@ -45,9 +48,10 @@ const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
       )}
     </section>
     <FormStatus state={state} />
-    <div class="form-actions">
+    {access.write && <div class="form-actions">
       <button type="submit" class="btn btn-primary">{isNew ? "Create coupon" : "Save coupon"}</button>
       <a href="/coupons" class="btn btn-ghost">Back to coupons</a>
-    </div>
+    </div>}
+  </ReadOnly>
   </form>
 </Layout>

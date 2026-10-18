@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authorizeUrl, claimsOf, decodeJwt, defaultRole } from "./oidc";
+import { authorizeUrl, claimsOf, decodeJwt } from "./oidc";
 
 const payload = { sub: "u1", preferred_username: "marketing", tenant_id: "hotels", realm_access: { roles: ["discount:catalog.write", "offline_access"] }, exp: 1760227200 };
 const token = `eyJhbGciOiJSUzI1NiJ9.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.sig`;
@@ -13,11 +13,6 @@ describe("oidc helpers", () => {
     expect(claimsOf(decodeJwt(token))).toEqual({ sub: "u1", name: "marketing", tenant: "hotels", scopes: ["discount:catalog.write"], exp: 1760227200 });
     expect(claimsOf({ scope: "discount:pricing openid" }).scopes).toEqual(["discount:pricing"]);
     expect(claimsOf(null).name).toBe("signed in");
-  });
-  it("role defaults from scopes", () => {
-    expect(defaultRole(["discount:catalog.write"])).toBe("marketing");
-    expect(defaultRole(["discount:admin"])).toBe("marketing");
-    expect(defaultRole(["discount:pricing", "discount:customers"])).toBe("support");
   });
   it("builds the authorization URL with PKCE", () => {
     const u = new URL(authorizeUrl({ token_endpoint: "t", authorization_endpoint: "https://idp/auth" }, { clientId: "c", scopes: "openid" }, "http://localhost:4321/auth/callback", "ch", "st"));

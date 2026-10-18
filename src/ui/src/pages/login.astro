@@ -4,7 +4,6 @@ import { authEnabled, OIDC } from "../auth/config";
 import { discover, passwordGrant, pkce, authorizeUrl } from "../auth/oidc";
 import { SESSION_KEY } from "../auth/session";
 import { sessionFrom } from "../middleware";
-import { defaultRole } from "../auth/oidc";
 
 if (!authEnabled) return Astro.redirect("/");
 const back = (() => { const b = Astro.url.searchParams.get("back") ?? "/"; return b.startsWith("/") && !b.startsWith("//") ? b : "/"; })();
@@ -36,7 +35,6 @@ if (Astro.request.method === "POST") {
     else {
       const session = sessionFrom(t);
       await Astro.session?.set(SESSION_KEY, session);
-      if (!Astro.cookies.has("discount_role")) Astro.cookies.set("discount_role", defaultRole(session.claims.scopes), { path: "/", sameSite: "lax", maxAge: 60 * 60 * 24 * 365 });
       return Astro.redirect(back, 303);
     }
   } catch (e) {

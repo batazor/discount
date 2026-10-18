@@ -1,0 +1,8 @@
+---
+// A catalogue form for someone who may look but not change (spec: Actions follow scopes).
+// Wraps the form body in a disabled fieldset so the layout stays and nothing submits.
+interface Props { allowed: boolean; what?: string }
+const { allowed, what = "the catalogue" } = Astro.props;
+---
+{!allowed && <p class="alert alert-warn mb-3">Read-only: your account can view {what} but not change it.</p>}
+<fieldset disabled={!allowed} class="contents"><slot /></fieldset>

@@ -3,7 +3,7 @@ import "../styles/global.css";
 import { ClientRouter } from "astro:transitions";
 import Unreachable from "../components/Unreachable.astro";
 import ConfirmDialog from "../components/ConfirmDialog.astro";
-import { navigation, roleFrom, ROLE_HELP, ROLES } from "../model/role";
+import { navigation } from "../model/access";
 import { authEnabled } from "../auth/config";
 import { tenantLabel } from "../model/tenant";
 
@@ -12,13 +12,12 @@ interface Props { title: string; unreachable?: string | null; description?: stri
 const { title, unreachable = null, description, crumbs = [] } = Astro.props;
 
 const user = Astro.locals.user ?? null;
-const role = roleFrom(Astro.cookies.get("discount_role")?.value);
+const access = Astro.locals.access;
 const tenant = tenantLabel(user, authEnabled);
-const groups = navigation(role);
+const groups = navigation(access);
 const path = Astro.url.pathname;
 const active = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
 const flat: [string, string][] = [["/", "Overview"], ...groups.flatMap(([, l]) => l)];
-const back = encodeURIComponent(path + Astro.url.search);
 ---
 <!doctype html>
 <html lang="en" class="h-full">
@@ -47,10 +46,7 @@ const back = encodeURIComponent(path + Astro.url.search);
           <span class="text-[15px] font-semibold tracking-tight">discount</span>
         </a>
         <div class="mb-2 px-2.5 text-[12px]" style="color: var(--color-ink-2)">Tenant <span class={`badge ${tenant.fallback ? "badge-warn" : "badge-info"}`} data-tip={tenant.note ?? undefined}>{tenant.name}</span></div>
-        <div class="role-switch" role="group" aria-label="Role">
-          {ROLES.map((r) => <a href={`/role?set=${r}&back=${back}`} class="role-option" aria-current={r === role ? "true" : undefined} data-tip={ROLE_HELP[r]}>{r}</a>)}
-        </div>
-        <a href="/" class="nav-link mt-3" aria-current={active("/") ? "page" : undefined}>Overview</a>
+        <a href="/" class="nav-link" aria-current={active("/") ? "page" : undefined}>Overview</a>
         {groups.map(([group, links]) => (
           <>
             <div class="nav-group">{group}</div>

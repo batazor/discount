@@ -6,6 +6,8 @@ import { api, call, dataOr, unreachableUrl } from "../api/client";
 import { assembleCampaigns, campaignTitle } from "../model/campaign";
 import { REDEMPTION_STATUS_HELP, COUPON_STATUS_HELP } from "../model/glossary";
 
+const access = Astro.locals.access;
+if (!access.customers && !access.pricing) return Astro.redirect("/");
 const q = Astro.url.searchParams.get("q")?.trim() ?? "";
 const [redemption, customer, coupon, promotion, meta] = q
   ? await Promise.all([

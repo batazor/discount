@@ -6,110 +6,97 @@ import Money from "../components/Money.astro";
 import When from "../components/When.astro";
 import { api, call, unreachableUrl, dataOr } from "../api/client";
 import { assembleCampaigns, campaignTitle, describeAction, type Campaign } from "../model/campaign";
-import { roleFrom } from "../model/role";
 import { tenantLabel } from "../model/tenant";
 import { authEnabled } from "../auth/config";
 
-const role = roleFrom(Astro.cookies.get("discount_role")?.value);
+const access = Astro.locals.access;
 const tenant = tenantLabel(Astro.locals.user ?? null, authEnabled);
-const [groups, promotions, metadata, coupons] = await Promise.all([
-  call(() => api.GET("/v1/groups")),
-  call(() => api.GET("/v1/promotions")),
-  call(() => api.GET("/v1/promotion-metadata")),
-  call(() => api.GET("/v1/coupons")),
-]);
-const unreachable = unreachableUrl(groups, promotions, metadata, coupons);
+const [groups, promotions, metadata, coupons] = access.read
+  ? await Promise.all([call(() => api.GET("/v1/groups")), call(() => api.GET("/v1/promotions")), call(() => api.GET("/v1/promotion-metadata")), call(() => api.GET("/v1/coupons"))])
+  : [null, null, null, null];
+const unreachable = groups ? unreachableUrl(groups, promotions!, metadata!, coupons!) : null;
 const now = Math.floor(Date.now() / 1000);
-const campaigns = assembleCampaigns(dataOr(promotions, []), dataOr(metadata, []), dataOr(coupons, []), now);
+const campaigns = groups ? assembleCampaigns(dataOr(promotions!, []), dataOr(metadata!, []), dataOr(coupons!, []), now) : [];
 const by = (s: Campaign["status"]) => campaigns.filter((c) => c.status === s);
 const live = by("live");
 const endingSoon = live.filter((c) => c.endingSoon).sort((a, b) => (a.endsAt ?? 0) - (b.endsAt ?? 0));
 const lowBudget = live.filter((c) => c.promotion.remaining_budget).sort((a, b) => a.promotion.remaining_budget!.amount - b.promotion.remaining_budget!.amount).slice(0, 5);
 const checklist: [string, boolean, string, string][] = [
   ["Pricing policy", true, "set, with defaults", "/settings/policy"],
-  ["A stacking group", dataOr(groups, []).length > 0, "every campaign belongs to one", "/settings/groups/new"],
+  ["A stacking group", dataOr(groups ?? { ok: false, unreachable: true, url: "", traceId: "" } as never, []).length > 0, "every campaign belongs to one", "/settings/groups/new"],
   ["A campaign", campaigns.length > 0, "the first promotion", "/campaigns/new"],
 ];
-const firstRun = groups.ok && promotions.ok && checklist.some(([, done]) => !done);
+const firstRun = access.write && groups?.ok && promotions?.ok && checklist.some(([, done]) => !done);
+const canFind = access.customers || access.pricing;
+const link = (c: Campaign) => `/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`;
 ---
-<Layout title={`Overview · ${tenant.name}`} description={role === "support" ? `Find who or what you are asked about in <b>${tenant.name}</b>, then explain it.` : `How the campaigns of <b>${tenant.name}</b> are doing right now.`} unreachable={unreachable}>
-  {role === "support" && (
-    <div class="space-y-6">
+<Layout title={`Overview · ${tenant.name}`} description={`What is going on in <b>${tenant.name}</b>.`} unreachable={unreachable}>
+  <div class="space-y-6">
+    {canFind && (
       <section class="card">
         <h2 class="card-title">Find</h2>
-        <FindBox autofocus />
+        <FindBox autofocus={!access.write} />
         <p class="hint mt-2">A customer id shows their coupons; an order id shows the redemption and lets you explain it; a code or a campaign id opens it.</p>
+        <div class="mt-3" data-recent-lookups hidden><div class="label">Recent lookups</div><ul class="flex flex-wrap gap-2" data-recent-list></ul></div>
       </section>
-      <section class="card" data-recent-lookups hidden>
-        <h2 class="card-title">Recent lookups</h2>
-        <ul class="flex flex-wrap gap-2" data-recent-list></ul>
+    )}
+    {firstRun && (
+      <section class="card">
+        <h2 class="card-title">Getting started</h2>
+        <ol class="space-y-2 text-[13px]">
+          {checklist.map(([label, done, note, href]) => (
+            <li class="flex items-center gap-3">
+              <span class={`badge ${done ? "badge-ok" : "badge-warn"}`}>{done ? "done" : "next"}</span>
+              {done ? <span>{label}</span> : <a href={href} class="link">{label}</a>}
+              <span class="hint">{note}</span>
+            </li>
+          ))}
+        </ol>
       </section>
-      <div class="grid gap-4 md:grid-cols-3">
-        <a href="/explain" class="kpi"><span class="kpi-value text-[18px]">Explain a cart</span><span class="kpi-label">Price a cart and see why each campaign applied or did not</span></a>
-        <a href="/campaigns" class="kpi"><span class="kpi-value">{live.length}</span><span class="kpi-label">live campaigns</span></a>
-        <a href="/coupons" class="kpi"><span class="kpi-value">{dataOr(coupons, []).length}</span><span class="kpi-label">stored codes</span></a>
-      </div>
-    </div>
-  )}
-  {role === "marketing" && (
-    <div class="space-y-6">
-      {firstRun && (
-        <section class="card">
-          <h2 class="card-title">Getting started</h2>
-          <ol class="space-y-2 text-[13px]">
-            {checklist.map(([label, done, note, href]) => (
-              <li class="flex items-center gap-3">
-                <span class={`badge ${done ? "badge-ok" : "badge-warn"}`}>{done ? "done" : "next"}</span>
-                {done ? <span>{label}</span> : <a href={href} class="link">{label}</a>}
-                <span class="hint">{note}</span>
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
-      {!unreachable && (
+    )}
+    {access.read && !unreachable && (
+      <>
         <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
           {(["live", "scheduled", "exhausted", "ended"] as const).map((s) => (
             <a href="/campaigns" class="kpi"><span class="kpi-value">{by(s).length}</span><span class="kpi-label">{s}</span></a>
           ))}
         </div>
-      )}
-      <div class="grid gap-4 lg:grid-cols-2">
+        <div class="grid gap-4 lg:grid-cols-2">
+          <section class="card">
+            <h2 class="card-title">Ending soon <span class="hint inline font-normal">within seven days</span></h2>
+            {endingSoon.length === 0 ? <p class="hint">Nothing ends this week.</p> : (
+              <ul class="space-y-2 text-[13px]">{endingSoon.map((c) => <li class="flex items-center justify-between gap-3"><a href={link(c)} class="link">{campaignTitle(c)}</a><span>until <When ts={c.endsAt} /></span></li>)}</ul>
+            )}
+          </section>
+          <section class="card">
+            <h2 class="card-title">Lowest remaining budgets</h2>
+            {lowBudget.length === 0 ? <p class="hint">No live campaign has a budget.</p> : (
+              <ul class="space-y-2 text-[13px]">{lowBudget.map((c) => <li class="flex items-center justify-between gap-3"><a href={link(c)} class="link">{campaignTitle(c)}</a><Money m={c.promotion.remaining_budget} /></li>)}</ul>
+            )}
+          </section>
+          <section class="card">
+            <h2 class="card-title">Exhausted</h2>
+            {by("exhausted").length === 0 ? <p class="hint">None.</p> : (
+              <ul class="space-y-2 text-[13px]">{by("exhausted").map((c) => <li class="flex items-center justify-between gap-3"><a href={link(c)} class="link">{campaignTitle(c)}</a><span class="hint">{c.exhaustedBy === "budget" ? "budget spent" : "total uses reached"}</span></li>)}</ul>
+            )}
+          </section>
+          <section class="card">
+            <h2 class="card-title">Scheduled</h2>
+            {by("scheduled").length === 0 ? <p class="hint">None.</p> : (
+              <ul class="space-y-2 text-[13px]">{by("scheduled").map((c) => <li class="flex items-center justify-between gap-3"><a href={link(c)} class="link">{campaignTitle(c)}</a><span>from <When ts={c.startsAt} /></span></li>)}</ul>
+            )}
+          </section>
+        </div>
         <section class="card">
-          <h2 class="card-title">Ending soon <span class="hint inline font-normal">within seven days</span></h2>
-          {endingSoon.length === 0 ? <p class="hint">Nothing ends this week.</p> : (
-            <ul class="space-y-2 text-[13px]">{endingSoon.map((c) => <li class="flex items-center justify-between gap-3"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><span>until <When ts={c.endsAt} /></span></li>)}</ul>
+          <h2 class="card-title">Live now <StatusBadge status="live" /></h2>
+          {live.length === 0 ? <p class="hint">No live campaign.{access.write && <> <a href="/campaigns/new" class="link">Create one</a>.</>}</p> : (
+            <ul class="divide-y" style="border-color: var(--color-line)">{live.map((c) => <li class="flex items-center justify-between gap-3 py-2 text-[13px]"><a href={link(c)} class="link">{campaignTitle(c)}</a><span class="mono" style="color: var(--color-ink-2)">{describeAction(c.promotion.action)}</span></li>)}</ul>
           )}
         </section>
-        <section class="card">
-          <h2 class="card-title">Lowest remaining budgets</h2>
-          {lowBudget.length === 0 ? <p class="hint">No live campaign has a budget.</p> : (
-            <ul class="space-y-2 text-[13px]">{lowBudget.map((c) => <li class="flex items-center justify-between gap-3"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><Money m={c.promotion.remaining_budget} /></li>)}</ul>
-          )}
-        </section>
-        <section class="card">
-          <h2 class="card-title">Exhausted</h2>
-          {by("exhausted").length === 0 ? <p class="hint">None.</p> : (
-            <ul class="space-y-2 text-[13px]">{by("exhausted").map((c) => <li class="flex items-center justify-between gap-3"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><span class="hint">{c.exhaustedBy === "budget" ? "budget spent" : "total uses reached"}</span></li>)}</ul>
-          )}
-        </section>
-        <section class="card">
-          <h2 class="card-title">Scheduled</h2>
-          {by("scheduled").length === 0 ? <p class="hint">None.</p> : (
-            <ul class="space-y-2 text-[13px]">{by("scheduled").map((c) => <li class="flex items-center justify-between gap-3"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><span>from <When ts={c.startsAt} /></span></li>)}</ul>
-          )}
-        </section>
-      </div>
-      <section class="card">
-        <h2 class="card-title">Live now <StatusBadge status="live" /></h2>
-        {live.length === 0 ? <p class="hint">No live campaign. <a href="/campaigns/new" class="link">Create one</a>.</p> : (
-          <ul class="divide-y" style="border-color: var(--color-line)">{live.map((c) => <li class="flex items-center justify-between gap-3 py-2 text-[13px]"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><span class="mono" style="color: var(--color-ink-2)">{describeAction(c.promotion.action)}</span></li>)}</ul>
-        )}
-      </section>
-    </div>
-  )}
+      </>
+    )}
+  </div>
   <script>
-    // Recent lookups live only in this browser (support overview).
     const box = document.querySelector<HTMLElement>("[data-recent-lookups]");
     const list = document.querySelector<HTMLElement>("[data-recent-list]");
     try {

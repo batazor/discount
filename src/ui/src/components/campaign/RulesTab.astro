@@ -9,6 +9,7 @@ import RuleRow from "../RuleRow.astro";
 import OptionCards from "../OptionCards.astro";
 import GroupCard from "../GroupCard.astro";
 import ConditionsEditor from "./ConditionsEditor.astro";
+import ReadOnly from "../ReadOnly.astro";
 import { formState } from "../../actions/run";
 import { ACTION_TYPES, promotionToFields, ROUNDING_POLICIES } from "../../model/promotion";
 import { ACTION_HELP, ROUNDING_HELP, TERM } from "../../model/glossary";
@@ -18,6 +19,7 @@ import { describeConditions } from "../../model/summary";
 interface Props { campaign: Campaign; groupIds: string[]; groups: StackingGroup[]; promotions: Promotion[] }
 const { campaign: c, groupIds, groups, promotions } = Astro.props;
 const put = Astro.getActionResult(actions.putPromotion);
+const access = Astro.locals.access;
 // Initial fields: the promotion without raw rules, the builder's conditions, and the rules
 // the builder cannot express as advanced rows.
 const base = Object.fromEntries(Object.entries(promotionToFields(c.promotion)).filter(([k]) => !k.startsWith("rules.")));
@@ -29,6 +31,7 @@ const action = `?tab=rules&${String(actions.putPromotion).slice(1)}`;
 ---
 <div class="grid gap-6 lg:grid-cols-[minmax(0,48rem)_20rem]">
 <form method="post" action={action} class="space-y-5" data-conditions>
+  <ReadOnly allowed={access.write}>
   <input type="hidden" name="builder" value="1" />
   <section class="card space-y-4">
     <h2 class="card-title">Action</h2>
@@ -72,7 +75,8 @@ const action = `?tab=rules&${String(actions.putPromotion).slice(1)}`;
     <Field state={state} name="json" label="Promotion JSON" textarea rows={8} hint="Sent unchanged; the form above is ignored while this is non-empty." />
   </details>
   <FormStatus state={state} />
-  <div class="form-actions"><button type="submit" class="btn btn-primary">Save</button></div>
+  {access.write && <div class="form-actions"><button type="submit" class="btn btn-primary">Save</button></div>}
+  </ReadOnly>
 </form>
 <GroupCard groups={groups} promotions={promotions} selected={state.fields.group_id ?? ""} current={c.promotion.promotion_id} />
 </div>

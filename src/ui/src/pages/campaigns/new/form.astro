@@ -13,6 +13,7 @@ import { Form } from "../../../model/fields";
 import GroupCard from "../../../components/GroupCard.astro";
 import OptionCards from "../../../components/OptionCards.astro";
 
+if (!Astro.locals.access.write) return Astro.redirect("/campaigns");
 const result = Astro.getActionResult(actions.createCampaign);
 if (result?.data?.kind === "ok") return Astro.redirect(`/campaigns/${encodeURIComponent(result.data.data.promotion_id)}?tab=${result.data.data.codes.length ? "codes" : "overview"}&created=1`);
 const [groups, promotions] = await Promise.all([call(() => api.GET("/v1/groups")), call(() => api.GET("/v1/promotions"))]);
