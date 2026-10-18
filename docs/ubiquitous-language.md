@@ -407,6 +407,12 @@ the contract the Grafana dashboards depend on (OpenSpec change `otel-grafana-obs
 `src/infrastructure/src/telemetry.rs` keeps the same list as constants; a test checks the two agree.
 
 - Resource: `service.name` = `discount`, `service.version`, `deployment.environment`.
+- HTTP server span, named `<METHOD> <route template>` (`POST /v1/evaluate`,
+  `POST /v1/redemptions/{order_id}/confirm`; the method alone for an unmatched path), with
+  attributes `http.route` (the template), `url.path`, `http.request.method` and
+  `http.response.status_code`; a `5xx` response sets the span status to `Error`, `4xx`
+  (including `422` pricing rejections) leaves it unset. `GET /healthz` is not traced. An
+  incoming W3C `traceparent` makes the server span a child of the caller's span.
 - Span `discount.evaluate` (child of the HTTP server span) with attributes
   `discount.currency`, `discount.lines`, `discount.promotions`, `discount.applied`,
   `discount.skipped`, `discount.original_subtotal`, `discount.total_discount` and, on error,
