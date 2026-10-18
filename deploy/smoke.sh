@@ -187,5 +187,9 @@ retry "span metrics for POST /v1/evaluate" spanmetrics_count
 R=$(curl -s "$GRAFANA/api/v1/provisioning/alert-rules" | python3 -c 'import sys,json; print(sum(1 for r in json.load(sys.stdin) if r["uid"].startswith("discount-")))' 2>/dev/null || echo 0)
 [ "${R:-0}" -ge 5 ] || fail "expected at least 5 provisioned discount-* alert rules, found $R"
 pass "provisioned alert rules: $R"
+SINK=${SINK:-http://localhost:9095}
+curl -sf "$SINK/" | python3 -c 'import sys,json; assert isinstance(json.load(sys.stdin), list)' 2>/dev/null || fail "alert sink at $SINK does not answer GET / with a JSON list"
+curl -s "$GRAFANA/api/v1/provisioning/contact-points" | python3 -c 'import sys,json; assert any(c["name"]=="discount-sink" for c in json.load(sys.stdin))' 2>/dev/null || fail "contact point discount-sink is not provisioned"
+pass "alert sink up and contact point discount-sink provisioned"
 
 echo "smoke passed"

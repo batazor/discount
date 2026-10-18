@@ -27,12 +27,28 @@ services:
       - ./grafana/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards/discount:ro
       - ./grafana/provisioning/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/discount.yaml:ro
       - ./grafana/alerting/discount.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/discount.yaml:ro
+      - ./grafana/alerting/notifications.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/notifications.yaml:ro
       - lgtm-data:/data
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
       interval: 10s
       timeout: 5s
       retries: 12
+
+  # Receives Grafana's alert webhooks (contact point discount-sink); GET :9095/ lists them.
+  alert-sink:
+    image: python:3-alpine
+    container_name: discount-alert-sink
+    command: ["python3", "/sink.py", "8080"]
+    volumes:
+      - ./alert-sink/sink.py:/sink.py:ro
+    ports:
+      - "9095:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
 
   postgres:
     image: postgres:16-alpine
