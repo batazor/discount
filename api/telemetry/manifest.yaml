@@ -1,0 +1,11 @@
+# Telemetry contract of the discount service as an OpenTelemetry Weaver registry (ADR 12).
+# The signals, attributes and units declared in discount.yaml are the names the Grafana
+# dashboards and alert rules depend on; `cargo xtask weaver check` validates the registry and
+# `cargo xtask live-check` checks what a running service actually emits against it.
+file_format: definition_manifest/2.0
+name: discount
+description: Semantic conventions of the discount and promotion service.
+schema_url: https://github.com/batazor/discount/schemas/telemetry/0.1.0
+dependencies:
+  - schema_url: https://opentelemetry.io/schemas/1.44.0
+    registry_path: https://github.com/open-telemetry/semantic-conventions.git@v1.44.0[model]

@@ -1,0 +1,653 @@
+# Every name the service emits over OpenTelemetry (ubiquitous language, "Telemetry
+# vocabulary"). `src/infrastructure/src/telemetry.rs` keeps the same names as constants and
+# a test checks that each one appears here. Attribute keys without the `discount.`
+# namespace are the metric labels the dashboards already query by; a rename is a contract
+# change and goes through ADR 12.
+file_format: definition/2
+
+attributes:
+  # ----- discount.evaluate span -----
+  - key: discount.currency
+    type: string
+    brief: ISO 4217 code of the cart currency.
+    stability: stable
+    examples: ["EUR", "USD", "JPY"]
+  - key: discount.lines
+    type: int
+    brief: Number of lines in the cart.
+    stability: stable
+    examples: [2]
+  - key: discount.promotions
+    type: int
+    brief: Number of promotions offered to the evaluation (applied plus skipped).
+    stability: stable
+    examples: [3]
+  - key: discount.applied
+    type: int
+    brief: Number of promotions that applied.
+    stability: stable
+    examples: [2]
+  - key: discount.skipped
+    type: int
+    brief: Number of promotions that were skipped.
+    stability: stable
+    examples: [1]
+  - key: discount.original_subtotal
+    type: int
+    brief: Subtotal of the cart before discounts, in minor units of `discount.currency`.
+    stability: stable
+    examples: [4499]
+  - key: discount.total_discount
+    type: int
+    brief: Total discount granted, in minor units of `discount.currency`.
+    stability: stable
+    examples: [749]
+  - key: discount.error_type
+    type:
+      members:
+        - id: invalid_currency
+          value: InvalidCurrency
+          brief: The currency code is not ISO 4217 upper case.
+          stability: stable
+        - id: mixed_currencies
+          value: MixedCurrencies
+          brief: Lines carry different currencies.
+          stability: stable
+        - id: currency_mismatch
+          value: CurrencyMismatch
+          brief: A promotion amount is in another currency than the cart.
+          stability: stable
+        - id: amount_out_of_range
+          value: AmountOutOfRange
+          brief: An amount is outside the bounded range.
+          stability: stable
+        - id: invalid_basis_points
+          value: InvalidBasisPoints
+          brief: A percentage is outside 0..10000 basis points.
+          stability: stable
+        - id: invalid_quantity
+          value: InvalidQuantity
+          brief: A line quantity is not positive.
+          stability: stable
+        - id: duplicate_line_id
+          value: DuplicateLineId
+          brief: Two lines share a line id.
+          stability: stable
+        - id: duplicate_group_id
+          value: DuplicateGroupId
+          brief: Two stacking groups share an id.
+          stability: stable
+        - id: duplicate_promotion_id
+          value: DuplicatePromotionId
+          brief: Two promotions share an id.
+          stability: stable
+        - id: unknown_group
+          value: UnknownGroup
+          brief: A promotion names a stacking group that does not exist.
+          stability: stable
+        - id: duplicate_coupon_code
+          value: DuplicateCouponCode
+          brief: Two coupons share a code.
+          stability: stable
+        - id: invalid_customer_context
+          value: InvalidCustomerContext
+          brief: The customer context is inconsistent.
+          stability: stable
+        - id: invalid_exchange_rate
+          value: InvalidExchangeRate
+          brief: An exchange rate is not positive.
+          stability: stable
+        - id: duplicate_exchange_rate
+          value: DuplicateExchangeRate
+          brief: Two exchange rates cover the same currency pair.
+          stability: stable
+        - id: invalid_rule
+          value: InvalidRule
+          brief: An eligibility rule is malformed.
+          stability: stable
+        - id: invalid_coupon
+          value: InvalidCoupon
+          brief: A coupon is malformed.
+          stability: stable
+        - id: invalid_promotion
+          value: InvalidPromotion
+          brief: A promotion is malformed.
+          stability: stable
+        - id: overflow
+          value: Overflow
+          brief: Integer arithmetic overflowed.
+          stability: stable
+        - id: repository
+          value: Repository
+          brief: The catalogue or redemption store failed (not a pricing error).
+          stability: stable
+    brief: Why an evaluation was rejected, as the `PricingError` variant name.
+    note: Set only when the evaluation failed. `Repository` is a storage failure, not a `PricingError`.
+    stability: stable
+
+  # ----- metric labels (ubiquitous language verbatim; not namespaced on purpose) -----
+  - key: outcome
+    type:
+      members:
+        - id: ok
+          value: ok
+          brief: The operation succeeded.
+          stability: stable
+        - id: error
+          value: error
+          brief: The operation failed; for redemptions a storage failure only.
+          stability: stable
+        - id: idempotent
+          value: idempotent
+          brief: A repeated reserve returned the stored redemption.
+          stability: stable
+        - id: rejected
+          value: rejected
+          brief: The caller's request was refused; `reason` says why.
+          stability: stable
+    brief: Outcome of an evaluation or a redemption action.
+    note: Evaluations use `ok` and `error`; redemptions use all four.
+    stability: stable
+  - key: error_type
+    type:
+      members:
+        - id: invalid_currency
+          value: InvalidCurrency
+          brief: The currency code is not ISO 4217 upper case.
+          stability: stable
+        - id: mixed_currencies
+          value: MixedCurrencies
+          brief: Lines carry different currencies.
+          stability: stable
+        - id: currency_mismatch
+          value: CurrencyMismatch
+          brief: A promotion amount is in another currency than the cart.
+          stability: stable
+        - id: amount_out_of_range
+          value: AmountOutOfRange
+          brief: An amount is outside the bounded range.
+          stability: stable
+        - id: invalid_basis_points
+          value: InvalidBasisPoints
+          brief: A percentage is outside 0..10000 basis points.
+          stability: stable
+        - id: invalid_quantity
+          value: InvalidQuantity
+          brief: A line quantity is not positive.
+          stability: stable
+        - id: duplicate_line_id
+          value: DuplicateLineId
+          brief: Two lines share a line id.
+          stability: stable
+        - id: duplicate_group_id
+          value: DuplicateGroupId
+          brief: Two stacking groups share an id.
+          stability: stable
+        - id: duplicate_promotion_id
+          value: DuplicatePromotionId
+          brief: Two promotions share an id.
+          stability: stable
+        - id: unknown_group
+          value: UnknownGroup
+          brief: A promotion names a stacking group that does not exist.
+          stability: stable
+        - id: duplicate_coupon_code
+          value: DuplicateCouponCode
+          brief: Two coupons share a code.
+          stability: stable
+        - id: invalid_customer_context
+          value: InvalidCustomerContext
+          brief: The customer context is inconsistent.
+          stability: stable
+        - id: invalid_exchange_rate
+          value: InvalidExchangeRate
+          brief: An exchange rate is not positive.
+          stability: stable
+        - id: duplicate_exchange_rate
+          value: DuplicateExchangeRate
+          brief: Two exchange rates cover the same currency pair.
+          stability: stable
+        - id: invalid_rule
+          value: InvalidRule
+          brief: An eligibility rule is malformed.
+          stability: stable
+        - id: invalid_coupon
+          value: InvalidCoupon
+          brief: A coupon is malformed.
+          stability: stable
+        - id: invalid_promotion
+          value: InvalidPromotion
+          brief: A promotion is malformed.
+          stability: stable
+        - id: overflow
+          value: Overflow
+          brief: Integer arithmetic overflowed.
+          stability: stable
+        - id: repository
+          value: Repository
+          brief: The catalogue or redemption store failed (not a pricing error).
+          stability: stable
+    brief: Why an evaluation was rejected, as the `PricingError` variant name (metric label form of `discount.error_type`).
+    stability: stable
+  - key: promotion_id
+    type: string
+    brief: Identifier of the promotion.
+    note: One series per promotion; the catalogue bounds the cardinality.
+    stability: stable
+    examples: ["P1", "summer-10"]
+  - key: clamped_by
+    type:
+      members:
+        - id: none
+          value: none
+          brief: The promotion granted its full effect.
+          stability: stable
+        - id: cap
+          value: Cap
+          brief: Clamped by the promotion's own cap.
+          stability: stable
+        - id: budget
+          value: Budget
+          brief: Clamped by the promotion's remaining budget.
+          stability: stable
+        - id: order_cap
+          value: OrderCap
+          brief: Clamped by the order-level cap.
+          stability: stable
+        - id: running
+          value: Running
+          brief: Clamped by the running total (price cannot go below zero).
+          stability: stable
+    brief: What limited an applied promotion's discount.
+    stability: stable
+  - key: reason
+    type:
+      members:
+        - id: not_eligible
+          value: NotEligible
+          brief: A rule did not hold (skipped promotion).
+          stability: stable
+        - id: exclusive_applied
+          value: ExclusiveApplied
+          brief: An exclusive promotion took the order (skipped promotion).
+          stability: stable
+        - id: first_match_taken
+          value: FirstMatchTaken
+          brief: Another promotion won the first-match group (skipped promotion).
+          stability: stable
+        - id: not_found
+          value: NotFound
+          brief: No redemption with that order id (rejected redemption).
+          stability: stable
+        - id: invalid_transition
+          value: InvalidTransition
+          brief: The redemption is not in a state that allows the action (rejected redemption).
+          stability: stable
+        - id: pricing
+          value: Pricing
+          brief: Pricing the order failed (rejected redemption).
+          stability: stable
+    brief: Why a promotion was skipped (`discount.skipped`) or a redemption action was rejected (`discount.redemptions`).
+    note: >
+      `discount.skipped` uses `NotEligible`, `ExclusiveApplied` and `FirstMatchTaken`;
+      `discount.redemptions` uses `NotFound`, `InvalidTransition` and `Pricing`.
+    stability: stable
+  - key: currency
+    type: string
+    brief: ISO 4217 code of the amounts on the series.
+    stability: stable
+    examples: ["EUR"]
+  - key: action
+    type:
+      members:
+        - id: reserve
+          value: reserve
+          brief: Price and reserve a redemption for an order.
+          stability: stable
+        - id: confirm
+          value: confirm
+          brief: Confirm a reserved redemption.
+          stability: stable
+        - id: cancel
+          value: cancel
+          brief: Cancel a reserved or confirmed redemption.
+          stability: stable
+    brief: The redemption action.
+    stability: stable
+
+  # ----- fields of the evaluation log record (tracing event fields) -----
+  - key: total_discount
+    type: int
+    brief: Total discount granted, in minor units (log record form of `discount.total_discount`).
+    stability: stable
+    examples: [749]
+  - key: original_subtotal
+    type: int
+    brief: Subtotal before discounts, in minor units (log record form of `discount.original_subtotal`).
+    stability: stable
+    examples: [4499]
+  - key: applied
+    type: int
+    brief: Number of promotions that applied (log record form of `discount.applied`).
+    stability: stable
+    examples: [2]
+  - key: skipped
+    type: int
+    brief: Number of promotions that were skipped (log record form of `discount.skipped`).
+    stability: stable
+    examples: [1]
+  - key: error
+    type: string
+    brief: Debug rendering of a storage error.
+    stability: stable
+    examples: ["Storage(PoolTimedOut)"]
+
+  # ----- added by the tracing bridges, not by the service -----
+  - key: target
+    type: string
+    brief: The `tracing` target (Rust module path) of the span or log record.
+    note: Put on every span by tracing-opentelemetry; not part of the contract.
+    stability: development
+    examples: ["discount_infrastructure::http"]
+  - key: level
+    type: string
+    brief: The `tracing` level of the span or log record.
+    note: Put on every span and log record by the tracing bridges; not part of the contract.
+    stability: development
+    examples: ["INFO"]
+  - key: busy_ns
+    type: int
+    brief: Nanoseconds the span was entered.
+    note: Put on every span by tracing-opentelemetry; not part of the contract.
+    stability: development
+    examples: [12345]
+  - key: idle_ns
+    type: int
+    brief: Nanoseconds the span was open but not entered.
+    note: Put on every span by tracing-opentelemetry; not part of the contract.
+    stability: development
+    examples: [12345]
+  - key: code.module.name
+    type: string
+    brief: Rust module that created the span.
+    note: Put on every span by tracing-opentelemetry; not part of the contract.
+    stability: development
+    examples: ["discount_infrastructure::http"]
+  - key: code.filename
+    type: string
+    brief: File name (without directory) that created the log record.
+    note: Put on every log record by opentelemetry-appender-tracing; not part of the contract.
+    stability: development
+    examples: ["telemetry.rs"]
+
+attribute_groups:
+  - id: discount.tracing_bridge
+    visibility: public
+    brief: >
+      Attributes the tracing bridges add to every span (tracing-opentelemetry) and log
+      record (opentelemetry-appender-tracing). Permitted everywhere, never required, and
+      not part of the contract; `.weaver.toml` drops findings on them.
+    stability: development
+    attributes:
+      - ref: code.file.path
+      - ref: code.line.number
+      - ref: code.filepath
+        note: Deprecated upstream; still emitted by opentelemetry-appender-tracing 0.33.
+      - ref: code.lineno
+        note: Deprecated upstream; still emitted by opentelemetry-appender-tracing 0.33.
+      - ref: code.namespace
+        note: Deprecated upstream; still emitted by opentelemetry-appender-tracing 0.33.
+      - ref: code.module.name
+      - ref: code.filename
+      - ref: thread.id
+      - ref: thread.name
+      - ref: target
+      - ref: level
+      - ref: busy_ns
+      - ref: idle_ns
+
+  - id: discount.resource
+    visibility: public
+    brief: Resource attributes on every signal of the service.
+    stability: stable
+    attributes:
+      - ref: service.name
+        requirement_level: required
+        note: Always `discount`.
+        examples: ["discount"]
+      - ref: service.version
+        requirement_level: required
+        note: The crate version.
+      - ref: deployment.environment
+        requirement_level: required
+        note: >
+          From `DISCOUNT_ENV`, default `local`. Upstream renamed this attribute to
+          `deployment.environment.name`; the service still emits the old key because the
+          Grafana dashboards and alert rules label by `deployment_environment`.
+      - ref: telemetry.sdk.name
+        requirement_level: recommended
+        note: Set by the OpenTelemetry Rust SDK.
+      - ref: telemetry.sdk.language
+        requirement_level: recommended
+        note: Set by the OpenTelemetry Rust SDK.
+      - ref: telemetry.sdk.version
+        requirement_level: recommended
+        note: Set by the OpenTelemetry Rust SDK.
+
+spans:
+  - type: discount.http.server.request
+    name:
+      note: >
+        `<METHOD> <route template>` (`POST /v1/evaluate`,
+        `POST /v1/redemptions/{order_id}/confirm`); the method alone for an unmatched path.
+    kind: server
+    brief: One HTTP request served by the service. `GET /healthz` is not traced.
+    note: >
+      A `5xx` response sets the span status to `Error`; `2xx` and `4xx` (including `422`
+      pricing rejections) leave it unset. An incoming W3C `traceparent` makes this span a
+      child of the caller's span.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: http.request.method
+        requirement_level: required
+      - ref: http.route
+        requirement_level:
+          conditionally_required: When the request matched a route.
+      - ref: url.path
+        requirement_level: required
+      - ref: http.response.status_code
+        requirement_level: required
+
+  - type: discount.evaluate
+    name:
+      note: The constant `discount.evaluate`.
+    kind: internal
+    brief: One pricing of a cart, child of the server span (`POST /v1/evaluate` or `POST /v1/redeem`).
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: discount.currency
+        requirement_level: required
+      - ref: discount.lines
+        requirement_level: required
+      - ref: discount.promotions
+        requirement_level:
+          conditionally_required: When the evaluation succeeded.
+      - ref: discount.applied
+        requirement_level:
+          conditionally_required: When the evaluation succeeded.
+      - ref: discount.skipped
+        requirement_level:
+          conditionally_required: When the evaluation succeeded.
+      - ref: discount.original_subtotal
+        requirement_level:
+          conditionally_required: When the evaluation succeeded.
+      - ref: discount.total_discount
+        requirement_level:
+          conditionally_required: When the evaluation succeeded.
+      - ref: discount.error_type
+        requirement_level:
+          conditionally_required: When the evaluation failed.
+
+  - type: discount.db.operation
+    name:
+      note: "`db.<repository method>` (`db.reserve`, `db.get_policy`), one per Postgres repository call."
+    kind: client
+    brief: One call of the Postgres store. The in-memory store emits none.
+    note: A storage failure sets the span status to `Error`.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: db.system.name
+        requirement_level: required
+        note: Always `postgresql`.
+      - ref: db.operation.name
+        requirement_level: required
+        note: The repository method name, the same as the span name without the `db.` prefix.
+        examples: ["reserve", "get_policy", "list_promotions"]
+
+metrics:
+  - name: discount.evaluations
+    instrument: counter
+    unit: "{evaluation}"
+    brief: Evaluations by outcome.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: outcome
+        requirement_level: required
+        note: "`ok` or `error`."
+      - ref: error_type
+        requirement_level:
+          conditionally_required: When `outcome` is `error`.
+
+  - name: discount.evaluate.duration
+    instrument: histogram
+    unit: s
+    brief: Duration of the Evaluate use case.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: outcome
+        requirement_level: required
+        note: "`ok` or `error`."
+
+  - name: discount.applied
+    instrument: counter
+    unit: "{promotion}"
+    brief: Applied promotions by id and clamp reason.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: promotion_id
+        requirement_level: required
+      - ref: clamped_by
+        requirement_level: required
+
+  - name: discount.applied.amount
+    instrument: counter
+    unit: "{minor_unit}"
+    brief: Discount granted per promotion, in minor units.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: promotion_id
+        requirement_level: required
+      - ref: currency
+        requirement_level: required
+
+  - name: discount.skipped
+    instrument: counter
+    unit: "{promotion}"
+    brief: Skipped promotions by id and reason.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: promotion_id
+        requirement_level: required
+      - ref: reason
+        requirement_level: required
+        note: "`NotEligible`, `ExclusiveApplied` or `FirstMatchTaken`."
+
+  - name: discount.amount
+    instrument: histogram
+    unit: "{minor_unit}"
+    brief: Total discount per successful evaluation.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: currency
+        requirement_level: required
+
+  - name: discount.share.bps
+    instrument: histogram
+    unit: bps
+    brief: Total discount as basis points of the original subtotal, for carts with a positive subtotal.
+    note: >
+      Explicit buckets `0, 100, 250, 500, 1000, 1500, 2000, 3000, 5000, 7500, 10000`.
+      The unit `bps` is deliberate: Prometheus already exposes the series as
+      `discount_share_bps_bucket` and the dashboards query that name.
+    stability: stable
+    requirement_level: recommended
+
+  - name: discount.redemptions
+    instrument: counter
+    unit: "{redemption}"
+    brief: Redemption actions by outcome.
+    note: "`error` is a storage failure only; everything the caller caused is `rejected` with a `reason`."
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: action
+        requirement_level: required
+      - ref: outcome
+        requirement_level: required
+      - ref: reason
+        requirement_level:
+          conditionally_required: When `outcome` is `rejected`.
+        note: "`NotFound`, `InvalidTransition` or `Pricing`."
+
+  - name: discount.budget.remaining
+    instrument: gauge
+    unit: "{minor_unit}"
+    brief: Remaining budget per promotion, refreshed from the catalogue at least every 15 seconds.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: promotion_id
+        requirement_level: required
+      - ref: currency
+        requirement_level: required
+
+events:
+  - name: discount.evaluation
+    brief: The one log record per evaluation, correlated with the `discount.evaluate` span.
+    note: >
+      `INFO` on success, `WARN` on a pricing error, `ERROR` on a storage failure. Log
+      records without an event name (start-up, budget refresh) are operational and not
+      part of the contract.
+    stability: stable
+    requirement_level: recommended
+    attributes:
+      - ref: outcome
+        requirement_level: required
+        note: "`ok` or `error`."
+      - ref: total_discount
+        requirement_level:
+          conditionally_required: When `outcome` is `ok`.
+      - ref: original_subtotal
+        requirement_level:
+          conditionally_required: When `outcome` is `ok`.
+      - ref: applied
+        requirement_level:
+          conditionally_required: When `outcome` is `ok`.
+      - ref: skipped
+        requirement_level:
+          conditionally_required: When `outcome` is `ok`.
+      - ref: error_type
+        requirement_level:
+          conditionally_required: When `outcome` is `error`.
+      - ref: error
+        requirement_level:
+          conditionally_required: When the evaluation failed on storage.

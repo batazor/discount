@@ -198,3 +198,28 @@ numbers and what they mean for thresholds and sampling are in
 The metric and attribute names are listed under "Telemetry vocabulary" in
 [docs/ubiquitous-language.md](docs/ubiquitous-language.md). Instrumentation lives in
 `src/infrastructure/` only; `src/domain/` stays telemetry-free.
+
+### Telemetry contract: the Weaver registry
+
+Like the HTTP API, the telemetry has a machine-readable contract (ADR 12):
+[api/telemetry/](api/telemetry/) is an [OpenTelemetry Weaver](https://github.com/open-telemetry/weaver)
+registry that declares every span, metric, event and attribute the service emits, with
+types, units, enum members and requirement levels, on top of the upstream semantic
+conventions. `cargo test` fails when a name in `telemetry.rs` is missing from it. Weaver
+runs from its Docker image (nothing to install):
+
+```bash
+cargo xtask weaver check
+```
+
+The live check starts Weaver's OTLP listener, runs `discount-server` against it with the
+smoke traffic and fails on anything the registry does not declare (`DATABASE_URL` makes
+it use Postgres, so the `db.*` spans are checked too):
+
+```bash
+cargo xtask live-check
+```
+
+Matchers (which span definition a span name belongs to) and the few filtered findings,
+each with its reason, are in [.weaver.toml](.weaver.toml). Change a signal in the
+registry first, then in the code, then in the dashboards.

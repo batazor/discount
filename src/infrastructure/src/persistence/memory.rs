@@ -827,7 +827,7 @@ mod tests {
 
     #[tokio::test]
     async fn fixture_file_prices_sample_cart() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../deploy/promotions.json");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/promotions.json");
         let fixture = CatalogFixture::from_json_file(path).expect("fixture loads");
         assert_eq!(fixture.groups.len(), 1);
         assert_eq!(fixture.promotions.len(), 3);

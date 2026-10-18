@@ -38,7 +38,7 @@ impl std::error::Error for ConfigError {}
 
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:8080";
 pub const DEFAULT_OTLP_ENDPOINT: &str = "http://localhost:4317";
-pub const DEFAULT_PROMOTIONS: &str = "deploy/promotions.json";
+pub const DEFAULT_PROMOTIONS: &str = "ops/promotions.json";
 pub const DEFAULT_ENV: &str = "local";
 
 impl Config {
@@ -90,7 +90,7 @@ mod tests {
         assert_eq!(c.listen, "0.0.0.0:8080");
         assert_eq!(c.otlp_endpoint, "http://localhost:4317");
         assert_eq!(c.database_url, None);
-        assert_eq!(c.promotions_path, "deploy/promotions.json");
+        assert_eq!(c.promotions_path, "ops/promotions.json");
         assert_eq!(c.environment, "local");
         assert_eq!(c.policy.rounding, RoundingPolicy::Down);
         assert_eq!(c.policy.stacking, StackingPolicy::Sequential);

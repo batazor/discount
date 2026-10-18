@@ -624,7 +624,7 @@ fn postgres_calls_produce_db_spans() {
     assert_eq!(db.span_kind, opentelemetry::trace::SpanKind::Client);
     assert_eq!(db.parent_span_id, sp.span_context.span_id());
     assert_eq!(
-        attr(db.attributes.iter(), "db.system").as_deref(),
+        attr(db.attributes.iter(), "db.system.name").as_deref(),
         Some("postgresql")
     );
     assert_eq!(

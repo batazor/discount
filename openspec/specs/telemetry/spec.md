@@ -52,9 +52,9 @@ Attribute values SHALL reuse the ubiquitous-language names verbatim.
   by 1 and no `discount.applied` sample was recorded
 
 ### Requirement: Logs correlated with traces
-The service SHALL emit one structured log record per evaluation at `INFO` (success) or
-`WARN` (pricing error) containing the outcome and `total_discount`, exported over OTLP logs
-with the active trace and span ids attached.
+The service SHALL emit one structured log record per evaluation, the event
+`discount.evaluation`, at `INFO` (success) or `WARN` (pricing error) containing the outcome
+and `total_discount`, exported over OTLP logs with the active trace and span ids attached.
 
 #### Scenario: Log carries trace id
 - **WHEN** an evaluation completes
@@ -160,14 +160,14 @@ resource identity are unchanged.
 ### Requirement: Database spans
 Every call into the Postgres repositories SHALL produce a span named `db.<method>` (the
 repository method, for example `db.reserve`, `db.get_promotion`) of kind `client`, child of
-the current span, with attributes `db.system` = `postgresql` and `db.operation.name` =
+the current span, with attributes `db.system.name` = `postgresql` and `db.operation.name` =
 `<method>`. A call that fails with a storage error SHALL set the span status to `Error`. The
 in-memory store SHALL produce no such spans.
 
 #### Scenario: Redemption trace shows the transaction
 - **WHEN** `POST /v1/redeem` reserves an order against Postgres
 - **THEN** its trace contains `db.reserve` under the server span with
-  `db.system=postgresql` and `db.operation.name=reserve`
+  `db.system.name=postgresql` and `db.operation.name=reserve`
 
 #### Scenario: Catalogue read
 - **WHEN** `GET /v1/policy` is served against Postgres
@@ -187,3 +187,28 @@ console's call outcome SHALL expose that trace id so a page can show it next to 
 - **WHEN** the service answers `422`
 - **THEN** the console's outcome carries `status` `422`, the verbatim body and the
   `traceId` it sent
+
+### Requirement: The telemetry vocabulary is a Weaver registry
+Every signal, attribute, unit and enum member the service emits SHALL be declared in the
+OpenTelemetry Weaver registry `api/telemetry/` (ADR 12). `cargo xtask weaver check` SHALL pass,
+a test SHALL fail when a name in `telemetry.rs` is missing from the registry, and
+`cargo xtask live-check` (a running service exporting to Weaver) SHALL report no violation.
+
+#### Scenario: A metric is renamed in code only
+- **WHEN** `METRIC_APPLIED` in `telemetry.rs` is changed to `discount.granted`
+- **THEN** `cargo test -p discount-infrastructure` fails naming the missing registry entry
+
+#### Scenario: An undeclared attribute is emitted
+- **WHEN** the service starts recording `discount.customer_id` on `discount.evaluate`
+- **THEN** `cargo xtask live-check` exits non-zero with a `missing_attribute` violation for it
+
+#### Scenario: Registry and service agree
+- **WHEN** `cargo xtask live-check` runs against the current service
+- **THEN** it exits 0; remaining findings are at most `improvement` (un-namespaced metric
+  labels, the deprecated `deployment.environment`), never `violation`
+
+#### Scenario: Bridge attributes and operational logs are outside the contract
+- **WHEN** the tracing bridges add `code.*`, `thread.*`, `target`, `busy_ns`, `idle_ns` or
+  `level`, or the service logs a record without an event name (start-up, budget refresh)
+- **THEN** `cargo xtask live-check` reports nothing for them; the filters and their reasons are
+  in `.weaver.toml`
