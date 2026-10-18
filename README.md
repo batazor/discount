@@ -184,6 +184,17 @@ overview, promotions, validation errors) and check that signals arrive end to en
 deploy/smoke.sh
 ```
 
+Put the stack under load (k6 from the `grafana/k6` image on the compose network; nothing
+installed on the host; thresholds mirror the alert rules and fail the run):
+
+```bash
+deploy/load/run.sh
+```
+
+`RATE` and `DURATION` change the profile (defaults 50 req/s, 2 min). The measured
+numbers and what they mean for thresholds and sampling are in
+[docs/load-profile.md](docs/load-profile.md).
+
 The metric and attribute names are listed under "Telemetry vocabulary" in
 [docs/ubiquitous-language.md](docs/ubiquitous-language.md). Instrumentation lives in
 `src/infrastructure/` only; `src/domain/` stays telemetry-free.
