@@ -7,6 +7,6 @@ import Field from "./Field.astro";
 interface Props { state: FormState; name: string; label: string }
 const { state, name, label } = Astro.props;
 const ts = parseTimestamp(state.fields[name] ?? "");
-const hint = ts === null ? "empty = none" : ts === undefined ? "" : `sends ${ts}`;
+const hint = ts === null ? "UTC; empty = none" : ts === undefined ? "UTC" : `UTC; sends ${ts}`;
 ---
-<Field state={state} name={name} label={`${label} (UTC)`} type="datetime-local" hint={`${hint}; a raw integer is accepted too`} />
+<Field state={state} name={name} label={label} type="datetime-local" hint={hint} />

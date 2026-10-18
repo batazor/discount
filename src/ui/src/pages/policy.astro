@@ -13,19 +13,18 @@ const result = Astro.getActionResult(actions.putPolicy);
 const current = await call(() => api.GET("/v1/policy"));
 const state = formState(result?.data, current.ok ? policyToFields(current.data) : {});
 ---
-<Layout title="Policy" unreachable={unreachableUrl(current)}>
-  <p class="lede mb-5">
-    How every cart is priced: rounding, how promotions stack, and the most an order may be discounted.
-  </p>
-  <form method="post" action={actions.putPolicy} class="max-w-lg space-y-4">
-    <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} required />
-    <Field state={state} name="stacking" label="Stacking" options={STACKING_POLICIES} required />
-    <fieldset class="card space-y-3">
-      <legend class="card-legend">Order cap (both empty = unconstrained)</legend>
-      <MoneyField state={state} name="order_cap.amount" label="Amount" />
-      <Field state={state} name="order_cap.bps" label="Basis points (0–10000)" type="number" />
-    </fieldset>
+<Layout title="Pricing policy" description="How every cart is priced: rounding, how promotions stack, and the most an order may be discounted." unreachable={unreachableUrl(current)}>
+  <form method="post" action={actions.putPolicy} class="max-w-xl space-y-5">
+    <section class="card space-y-4">
+      <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} required hint="how a percentage discount is rounded to minor units" />
+      <Field state={state} name="stacking" label="Stacking" options={STACKING_POLICIES} required hint="Sequential: each promotion sees the already discounted subtotal. Additive: all see the original." />
+    </section>
+    <section class="card space-y-4">
+      <h2 class="card-title">Order cap <span class="hint inline font-normal">both empty = unconstrained</span></h2>
+      <MoneyField state={state} name="order_cap.amount" label="At most this amount" />
+      <Field state={state} name="order_cap.bps" label="At most this share, in basis points" type="number" hint="5000 = 50 % of the subtotal" />
+    </section>
     <FormStatus state={state} />
-    <button type="submit" class="btn btn-primary">Save policy</button>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Save policy</button></div>
   </form>
 </Layout>

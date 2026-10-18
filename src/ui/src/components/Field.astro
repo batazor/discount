@@ -1,16 +1,19 @@
 ---
 // One labelled input bound to a flat form field (model/fields.ts): value from `state.fields`,
-// error from `state.errors`.
+// error from `state.errors`. Identifiers, codes, numbers, timestamps and JSON are monospace;
+// free text (titles, descriptions, attribute values) is not.
 import type { FormState } from "../actions/run";
 interface Props {
   state: FormState; name: string; label: string;
   type?: "text" | "number" | "datetime-local"; placeholder?: string; hint?: string;
   readonly?: boolean; required?: boolean; options?: readonly string[]; empty?: string;
-  textarea?: boolean; checkbox?: boolean; variantSelect?: boolean;
+  textarea?: boolean; checkbox?: boolean; variantSelect?: boolean; mono?: boolean; rows?: number;
 }
-const { state, name, label, type = "text", placeholder, hint, readonly = false, required = false, options, empty, textarea = false, checkbox = false, variantSelect = false } = Astro.props;
+const { state, name, label, type = "text", placeholder, hint, readonly = false, required = false, options, empty, textarea = false, checkbox = false, variantSelect = false, rows = 4 } = Astro.props;
+const mono = Astro.props.mono ?? (type !== "text" || /(_id$|^id$|^code$|currency$|^from$|^to$|^prefix$|labels$|tags$|coupon_codes$|^json$|^source$|\.key$)/.test(name));
 const value = state.fields[name] ?? "";
 const error = state.errors.find((e) => e.field === name)?.message;
+const cls = mono ? "input mono" : "input";
 ---
 <label class="block">
   {checkbox ? (
@@ -24,9 +27,9 @@ const error = state.errors.find((e) => e.field === name)?.message;
           {options.map((o) => <option value={o} selected={o === value}>{o}</option>)}
         </select>
       ) : textarea ? (
-        <textarea name={name} rows="5" class="input" placeholder={placeholder}>{value}</textarea>
+        <textarea name={name} rows={rows} class={cls} placeholder={placeholder}>{value}</textarea>
       ) : (
-        <input type={type} name={name} value={value} class="input" placeholder={placeholder} readonly={readonly} inputmode={type === "number" ? "numeric" : undefined} />
+        <input type={type} name={name} value={value} class={cls} placeholder={placeholder} readonly={readonly} inputmode={type === "number" ? "numeric" : undefined} />
       )}
     </>
   )}

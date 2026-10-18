@@ -5,7 +5,7 @@ import Field from "./Field.astro";
 interface Props { state: FormState; name: string; label: string; hint?: string }
 const { state, name, label, hint } = Astro.props;
 ---
-<fieldset class="grid grid-cols-[1fr_6rem] gap-2">
-  <Field state={state} name={`${name}.amount`} label={`${label} (minor units)`} type="number" hint={hint} />
+<fieldset class="grid grid-cols-[1fr_5.5rem] gap-2">
+  <Field state={state} name={`${name}.amount`} label={label} type="number" hint={hint ?? "minor units, e.g. 500 = 5.00"} />
   <Field state={state} name={`${name}.currency`} label="Currency" placeholder="EUR" />
 </fieldset>

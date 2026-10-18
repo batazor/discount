@@ -32,6 +32,7 @@ function addRow(list: HTMLElement): void {
   if (!row) return;
   row.dataset.row = String(i);
   list.querySelector("[data-rows]")?.appendChild(row);
+  list.querySelector("[data-empty-rules]")?.remove();
   showVariant(row);
   for (const btn of row.querySelectorAll<HTMLElement>("[data-remove-row]")) btn.hidden = false;
   if (!reduced()) animate(row, { opacity: [0, 1], y: [-6, 0] }, { duration: 0.18 });

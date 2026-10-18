@@ -9,25 +9,26 @@ import { formState } from "../../actions/run";
 const deleted = Astro.getActionResult(actions.deleteGroup);
 const groups = await call(() => api.GET("/v1/groups"));
 const state = formState(deleted?.data, {});
+const rows = dataOr(groups, []);
 ---
-<Layout title="Stacking groups" unreachable={unreachableUrl(groups)}>
-  <div class="toolbar">
-    <p class="lede">Groups order promotions and decide how many of a group apply.</p>
-    <a href="/groups/new" class="btn btn-primary">New group</a>
-  </div>
+<Layout title="Stacking groups" description="Groups order promotions and decide whether all of a group apply or only the first match." unreachable={unreachableUrl(groups)}>
+  <Fragment slot="badge">{groups.ok && <span class="badge badge-muted">{rows.length}</span>}</Fragment>
+  <a slot="actions" href="/groups/new" class="btn btn-primary">New group</a>
   <FormStatus state={state} okText="Deleted." />
-  <div class="table-card"><table class="table">
-    <thead><tr><th>group_id</th><th>priority</th><th>mode</th><th></th></tr></thead>
-    <tbody>
-      {dataOr(groups, []).map((g) => (
-        <tr>
-          <td class="mono"><a href={`/groups/${encodeURIComponent(g.group_id)}`} class="link">{g.group_id}</a></td>
-          <td class="mono">{g.priority}</td>
-          <td class="mono">{g.mode.type}</td>
-          <td class="text-right"><DeleteButton action={actions.deleteGroup} id={g.group_id} /></td>
-        </tr>
-      ))}
-      {groups.ok && groups.data.length === 0 && <tr><td colspan="4" class="empty">No groups.</td></tr>}
-    </tbody>
-  </table></div>
+  <div class="table-card max-w-3xl">
+    <table class="table">
+      <thead><tr><th>Group</th><th class="num">Priority</th><th>Mode</th><th></th></tr></thead>
+      <tbody>
+        {rows.map((g) => (
+          <tr>
+            <td><a href={`/groups/${encodeURIComponent(g.group_id)}`} class="link mono">{g.group_id}</a></td>
+            <td class="num mono">{g.priority}</td>
+            <td><span class={`badge ${g.mode.type === "Stackable" ? "badge-ok" : "badge-info"}`}>{g.mode.type}</span></td>
+            <td class="actions"><DeleteButton action={actions.deleteGroup} id={g.group_id} size="xs" /></td>
+          </tr>
+        ))}
+        {groups.ok && rows.length === 0 && <tr><td colspan="4" class="empty">No groups yet. <a href="/groups/new" class="link">Create the first one</a>.</td></tr>}
+      </tbody>
+    </table>
+  </div>
 </Layout>

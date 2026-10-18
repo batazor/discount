@@ -6,13 +6,13 @@ import MoneyField from "../../components/MoneyField.astro";
 import FormStatus from "../../components/FormStatus.astro";
 import ApiError from "../../components/ApiError.astro";
 import RuleRow from "../../components/RuleRow.astro";
+import DeleteButton from "../../components/DeleteButton.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { ACTION_TYPES, promotionToFields, ROUNDING_POLICIES } from "../../model/promotion";
 import { fmtMoney } from "../../model/evaluate";
 import { Form } from "../../model/fields";
 import { metadataToFields } from "../../model/metadata";
-import DeleteButton from "../../components/DeleteButton.astro";
 
 const id = Astro.params.id!;
 const isNew = id === "new";
@@ -27,10 +27,6 @@ const [current, groups, meta] = await Promise.all([
   call(() => api.GET("/v1/groups")),
   isNew ? Promise.resolve(null) : call(() => api.GET("/v1/promotions/{promotion_id}/metadata", { params: { path: { promotion_id: id } } })),
 ]);
-// A 404 on the metadata GET is the empty state (spec: no metadata yet), not an error.
-const metaState = formState(metaDel?.data?.kind === "ok" ? undefined : metaPut?.data, meta?.ok ? metadataToFields(meta.data) : { promotion_id: id });
-metaState.fields.promotion_id = id;
-const hasMeta = !!meta?.ok;
 const state = formState(put?.data, current?.ok ? promotionToFields(current.data) : { "action.type": "OrderPercentage" });
 const budgetState = formState(budget?.data, {
   promotion_id: id,
@@ -38,57 +34,74 @@ const budgetState = formState(budget?.data, {
   "remaining.amount": current?.ok && current.data.remaining_budget ? String(current.data.remaining_budget.amount) : "",
   "remaining.currency": current?.ok && current.data.remaining_budget ? current.data.remaining_budget.currency : "",
 });
+// A 404 on the metadata GET is the empty state (spec: no metadata yet), not an error.
+const metaState = formState(metaDel?.data?.kind === "ok" ? undefined : metaPut?.data, meta?.ok ? metadataToFields(meta.data) : { promotion_id: id });
+metaState.fields.promotion_id = id;
+const hasMeta = !!meta?.ok;
 const ruleIndices = new Form(state.fields).rows("rules").map(String);
 const groupIds = dataOr(groups, []).map((g) => g.group_id);
 const empty = formState(undefined, {});
+const title = isNew ? "New promotion" : meta?.ok ? meta.data.title : id;
 ---
-<Layout title={isNew ? "New promotion" : (meta?.ok ? `${meta.data.title} · ${id}` : `Promotion ${id}`)} unreachable={unreachableUrl(current ?? groups, groups)}>
+<Layout title={title} crumbs={[["Promotions", "/promotions"], [isNew ? "New" : id]]} unreachable={unreachableUrl(current ?? groups, groups)}>
+  <Fragment slot="badge">
+    {current?.ok && <span class="badge badge-muted">{id}</span>}
+    {current?.ok && current.data.exclusive && <span class="badge badge-warn">exclusive</span>}
+    {meta?.ok && meta.data.source && <span class="badge badge-info">{meta.data.source}</span>}
+  </Fragment>
+  <Fragment slot="actions">
+    {!isNew && current?.ok && <DeleteButton action={actions.deletePromotion} id={id} label="Archive" />}
+  </Fragment>
   {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
-  <div class="grid gap-8 lg:grid-cols-[minmax(0,40rem)_minmax(0,20rem)]">
-    <form method="post" action={actions.putPromotion} class="space-y-4">
-      <div class="grid grid-cols-2 gap-3">
-        <Field state={state} name="promotion_id" label="promotion_id" required readonly={!isNew} />
-        <Field state={state} name="group_id" label="group_id" options={groupIds} empty={groupIds.length ? "— choose —" : "no groups yet"} required />
-        <Field state={state} name="priority" label="priority (lower applies first)" type="number" required />
-        <Field state={state} name="rounding" label="rounding (empty = policy default)" options={ROUNDING_POLICIES} empty="— policy —" />
-        <MoneyField state={state} name="cap" label="cap (empty = none)" />
-        <div class="pt-5"><Field state={state} name="exclusive" label="exclusive: applies alone" checkbox /></div>
-      </div>
+  <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+    <form method="post" action={actions.putPromotion} class="space-y-5">
+      <section class="card space-y-4">
+        <h2 class="card-title">Promotion</h2>
+        <div class="grid grid-cols-2 gap-4">
+          <Field state={state} name="promotion_id" label="Promotion id" required readonly={!isNew} />
+          <Field state={state} name="group_id" label="Stacking group" options={groupIds} empty={groupIds.length ? "— choose —" : "no groups yet"} required />
+          <Field state={state} name="priority" label="Priority" type="number" required hint="lower applies first" />
+          <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} empty="— policy default —" />
+          <MoneyField state={state} name="cap" label="Cap per order" hint="empty = none" />
+          <div class="self-center"><Field state={state} name="exclusive" label="Exclusive: applies alone, nothing stacks with it" checkbox /></div>
+        </div>
+      </section>
 
-      <fieldset class="card space-y-3">
-        <legend class="card-legend">Action</legend>
+      <section class="card space-y-3">
+        <h2 class="card-title">Action</h2>
         <div data-row-list>
           <div data-rows>
-            <div data-row="action" class="space-y-2">
-              <Field state={state} name="action.type" label="type" options={ACTION_TYPES} required variantSelect />
-              <div data-variant="OrderPercentage"><Field state={state} name="action.bps" label="bps (0–10000; 1000 = 10 %)" type="number" /></div>
-              <div data-variant="OrderFixedAmount"><MoneyField state={state} name="action.amount" label="amount" /></div>
+            <div data-row="action" class="grid grid-cols-2 gap-4">
+              <Field state={state} name="action.type" label="Type" options={ACTION_TYPES} required variantSelect />
+              <div data-variant="OrderPercentage"><Field state={state} name="action.bps" label="Percentage, in basis points" type="number" hint="1000 = 10 %" /></div>
+              <div data-variant="OrderFixedAmount"><MoneyField state={state} name="action.amount" label="Fixed amount" /></div>
             </div>
           </div>
         </div>
-      </fieldset>
+      </section>
 
-      <fieldset class="card space-y-3">
-        <legend class="card-legend">Rules (all must hold)</legend>
+      <section class="card space-y-3">
+        <h2 class="card-title">Rules <span class="hint inline font-normal">all must hold</span></h2>
         <div data-row-list>
-          <div data-rows class="space-y-2">
+          <div data-rows class="space-y-3">
             {ruleIndices.map((i) => <RuleRow state={state} index={i} />)}
+            {ruleIndices.length === 0 && <p class="hint" data-empty-rules>No rules: the promotion applies to every cart.</p>}
           </div>
           <template data-row-template><RuleRow state={empty} index="__i__" /></template>
           <button type="button" data-add-row hidden class="row-add">Add rule</button>
           <noscript><p class="hint mt-2">Adding rules needs scripts; paste JSON below instead.</p></noscript>
         </div>
-      </fieldset>
+      </section>
 
       <details class="card" open={!!state.fields.json}>
         <summary>Paste the promotion as JSON instead</summary>
         <p class="hint my-2">Sent unchanged; the form above is ignored while this is non-empty.</p>
-        <Field state={state} name="json" label="Promotion JSON" textarea placeholder='{"promotion_id": "P9", ...}' />
+        <Field state={state} name="json" label="Promotion JSON" textarea rows={8} placeholder='{"promotion_id": "P9", ...}' />
       </details>
 
       <FormStatus state={state} />
-      <div class="flex gap-3">
-        <button type="submit" class="btn btn-primary">{isNew ? "Create" : "Save"}</button>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">{isNew ? "Create promotion" : "Save promotion"}</button>
         <a href="/promotions" class="btn btn-ghost">Back to promotions</a>
       </div>
     </form>
@@ -96,34 +109,33 @@ const empty = formState(undefined, {});
     {!isNew && (
       <aside class="space-y-4">
         <section class="card">
-          <h2 class="card-title">Derived by the service</h2>
+          <h2 class="card-title">Counted by the service</h2>
           <dl class="dl">
-            <dt>uses_total</dt><dd>{current?.ok ? current.data.uses_total : "—"}</dd>
-            <dt>remaining_budget</dt><dd>{current?.ok ? fmtMoney(current.data.remaining_budget) : "—"}</dd>
+            <dt>Uses in total</dt><dd>{current?.ok ? current.data.uses_total : "—"}</dd>
+            <dt>Remaining budget</dt><dd>{current?.ok ? fmtMoney(current.data.remaining_budget) : "—"}</dd>
           </dl>
-          <p class="hint mt-2">Counted by the service; not editable.</p>
         </section>
         <form method="post" action={actions.putBudget} class="card space-y-3">
           <h2 class="card-title">Budget</h2>
           <p class="hint">How much this promotion may still grant in total. Saved separately from the promotion.</p>
           <input type="hidden" name="promotion_id" value={id} />
           <Field state={budgetState} name="no_budget" label="No budget (unbounded)" checkbox />
-          <MoneyField state={budgetState} name="remaining" label="remaining" />
+          <MoneyField state={budgetState} name="remaining" label="Remaining" />
           <FormStatus state={budgetState} okText="Budget saved." />
-          <button type="submit" class="btn btn-primary">Save budget</button>
+          <button type="submit" class="btn btn-secondary">Save budget</button>
         </form>
         <form method="post" action={actions.putPromotionMetadata} class="card space-y-3">
           <h2 class="card-title">Metadata</h2>
           <p class="hint">Title, description, source and labels for people and listings. Pricing never reads them.</p>
           <input type="hidden" name="promotion_id" value={id} />
-          <Field state={metaState} name="title" label="title" required />
-          <Field state={metaState} name="description" label="description" textarea />
-          <Field state={metaState} name="source" label="source (partition, e.g. hotels; empty = none)" placeholder="hotels" />
-          <Field state={metaState} name="labels" label="labels, one key=value per line" textarea placeholder={"channel=app\nissuer=ops"} />
+          <Field state={metaState} name="title" label="Title" required />
+          <Field state={metaState} name="description" label="Description" textarea rows={3} />
+          <Field state={metaState} name="source" label="Source" placeholder="hotels" hint="partition for listings; empty = none" />
+          <Field state={metaState} name="labels" label="Labels" textarea rows={3} hint="one key=value per line" placeholder={"channel=app\nissuer=ops"} />
           <FormStatus state={metaState} okText="Metadata saved." />
           {metaDel?.data?.kind === "ok" && <p role="status" class="alert alert-success">Metadata removed.</p>}
           <div class="flex items-center gap-3">
-            <button type="submit" class="btn btn-primary">Save metadata</button>
+            <button type="submit" class="btn btn-secondary">Save metadata</button>
             {hasMeta && <DeleteButton action={actions.deletePromotionMetadata} id={id} label="Remove metadata" />}
           </div>
         </form>

@@ -14,17 +14,17 @@ const badge: Record<string, string> = { active: "badge-ok", scheduled: "badge-in
 const actionText = (a: { type: string; bps?: number; amount?: { amount: number; currency: string } }) =>
   a.type === "OrderPercentage" ? `${a.bps} bps` : fmtMoney(a.amount);
 ---
-<Layout title={`Customer ${customerId}`} description="Bound, used and saved coupons with their cart-free status, as the service lists them." unreachable={unreachableUrl(list)}>
+<Layout title={customerId} crumbs={[["Customers", "/customers"], [customerId]]} description="Bound, used and saved coupons with their cart-free status, as the service lists them." unreachable={unreachableUrl(list)}>
   {!list.ok && !list.unreachable && <ApiError status={list.status} body={list.body} />}
   <form method="get" class="mb-4 flex items-end gap-2">
-    <label class="block"><span class="label">source</span><input type="text" name="source" value={source} placeholder="hotels" class="input w-44" /></label>
+    <label class="block"><span class="label">Source</span><input type="text" name="source" value={source} placeholder="hotels" class="input mono w-44" /></label>
     <button type="submit" class="btn btn-secondary">Filter</button>
     {source && <a href={`/customers/${encodeURIComponent(customerId)}`} class="btn btn-ghost">Clear</a>}
   </form>
   {list.ok && (
     <div class="table-card">
       <table class="table">
-        <thead><tr><th>code</th><th>status</th><th>order</th><th>promotion</th><th>ends_at</th><th>uses / max</th></tr></thead>
+        <thead><tr><th>Code</th><th>Status</th><th>Order</th><th>Promotion</th><th>Valid until</th><th class="num">Uses</th></tr></thead>
         <tbody>
           {list.data.map((c) => (
             <tr>
@@ -32,8 +32,8 @@ const actionText = (a: { type: string; bps?: number; amount?: { amount: number; 
               <td><span class={`badge ${badge[c.status]}`}>{c.status}</span></td>
               <td class="mono">{c.order_id ? <a href={`/redemptions/${encodeURIComponent(c.order_id)}`} class="link">{c.order_id}</a> : "—"}</td>
               <td>{c.promotion ? <><a href={`/promotions/${encodeURIComponent(c.promotion.promotion_id)}`} class="link mono">{c.promotion.promotion_id}</a>{c.promotion.metadata && <span class="ml-1.5" style="color: var(--color-ink-2)">{c.promotion.metadata.title}</span>}<div class="mono text-[12px]" style="color: var(--color-ink-3)">{c.promotion.action.type} {actionText(c.promotion.action)}</div></> : <span class="badge badge-muted">gone</span>}</td>
-              <td class="mono text-xs">{formatTimestamp(c.coupon.ends_at)}</td>
-              <td class="mono">{c.coupon.uses} / {c.coupon.max_uses ?? "∞"}</td>
+              <td class="mono text-[12px]">{c.coupon.ends_at === null ? <span style="color: var(--color-ink-3)">—</span> : formatTimestamp(c.coupon.ends_at)}</td>
+              <td class="num mono">{c.coupon.uses} / {c.coupon.max_uses ?? "∞"}</td>
             </tr>
           ))}
           {list.data.length === 0 && <tr><td colspan="6" class="empty">{source ? `No coupons with source "${source}" for this customer.` : "No coupons for this customer."}</td></tr>}

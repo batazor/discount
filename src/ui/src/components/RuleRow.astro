@@ -11,35 +11,35 @@ interface Props { state: FormState; index: string }
 const { state, index } = Astro.props;
 const p = `rules.${index}`;
 ---
-<div data-row={index} class="card space-y-3">
+<div data-row={index} class="subcard space-y-3">
   <div class="flex items-end gap-2">
-    <div class="flex-1"><Field state={state} name={`${p}.type`} label={`Rule #${index}`} options={RULE_TYPES} empty="— none —" variantSelect /></div>
+    <div class="flex-1"><Field state={state} name={`${p}.type`} label={`Rule ${Number.isNaN(Number(index)) ? "" : `#${Number(index) + 1}`}`} options={RULE_TYPES} empty="— choose a rule —" variantSelect /></div>
     <button type="button" data-remove-row hidden class="row-remove">Remove</button>
   </div>
-  <div data-variant="DateWindow" class="grid grid-cols-2 gap-2">
-    <TimestampField state={state} name={`${p}.starts_at`} label="starts_at" />
-    <TimestampField state={state} name={`${p}.ends_at`} label="ends_at" />
+  <div data-variant="DateWindow" class="grid grid-cols-2 gap-3">
+    <TimestampField state={state} name={`${p}.starts_at`} label="Starts" />
+    <TimestampField state={state} name={`${p}.ends_at`} label="Ends" />
   </div>
-  <div data-variant="OrderTotalRange" class="grid grid-cols-2 gap-2">
-    <MoneyField state={state} name={`${p}.min`} label="min" />
-    <MoneyField state={state} name={`${p}.max`} label="max" />
+  <div data-variant="OrderTotalRange" class="grid grid-cols-2 gap-3">
+    <MoneyField state={state} name={`${p}.min`} label="Minimum order total" />
+    <MoneyField state={state} name={`${p}.max`} label="Maximum order total" />
   </div>
-  <div data-variant="TagsMatch" class="grid grid-cols-3 gap-2">
-    <Field state={state} name={`${p}.all`} label="all (comma-separated)" />
-    <Field state={state} name={`${p}.any`} label="any" />
-    <Field state={state} name={`${p}.none`} label="none" />
+  <div data-variant="TagsMatch" class="grid grid-cols-3 gap-3">
+    <Field state={state} name={`${p}.all`} label="All of" hint="comma-separated" />
+    <Field state={state} name={`${p}.any`} label="Any of" hint="comma-separated" />
+    <Field state={state} name={`${p}.none`} label="None of" hint="comma-separated" />
   </div>
-  <div data-variant="AttributeIn" class="grid grid-cols-2 gap-2">
-    <Field state={state} name={`${p}.key`} label="key" />
-    <Field state={state} name={`${p}.values`} label="values (comma-separated)" />
+  <div data-variant="AttributeIn" class="grid grid-cols-2 gap-3">
+    <Field state={state} name={`${p}.key`} label="Attribute" />
+    <Field state={state} name={`${p}.values`} label="Allowed values" hint="comma-separated" />
   </div>
-  <div data-variant="AttributeDateWindow" class="grid grid-cols-3 gap-2">
-    <Field state={state} name={`${p}.key`} label="key" />
-    <TimestampField state={state} name={`${p}.starts_at`} label="starts_at" />
-    <TimestampField state={state} name={`${p}.ends_at`} label="ends_at" />
+  <div data-variant="AttributeDateWindow" class="grid grid-cols-3 gap-3">
+    <Field state={state} name={`${p}.key`} label="Attribute (a date)" />
+    <TimestampField state={state} name={`${p}.starts_at`} label="Starts" />
+    <TimestampField state={state} name={`${p}.ends_at`} label="Ends" />
   </div>
-  {(["MaxCompletedOrders", "MaxUsesPerCustomer", "MaxUsesTotal"] as const).map((t) => (
-    <div data-variant={t}><Field state={state} name={`${p}.max`} label="max" type="number" /></div>
-  ))}
+  <div data-variant="MaxCompletedOrders"><Field state={state} name={`${p}.max`} label="Maximum completed orders" type="number" hint="0 = first order only" /></div>
+  <div data-variant="MaxUsesPerCustomer"><Field state={state} name={`${p}.max`} label="Maximum uses per customer" type="number" /></div>
+  <div data-variant="MaxUsesTotal"><Field state={state} name={`${p}.max`} label="Maximum uses in total" type="number" /></div>
   <div data-variant="RequiresCoupon" class="hint">Applies only when a stored coupon for this promotion is presented.</div>
 </div>

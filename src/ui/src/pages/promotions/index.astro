@@ -16,34 +16,50 @@ const [promotions, metadata] = await Promise.all([
 ]);
 const titles = new Map(dataOr(metadata, []).map((e) => [e.promotion_id, e.metadata]));
 const state = formState(deleted?.data, {});
+const rows = dataOr(promotions, []);
 const actionText = (p: { action: { type: string; bps?: number; amount?: { amount: number; currency: string } } }) =>
-  p.action.type === "OrderPercentage" ? `${p.action.bps} bps` : fmtMoney(p.action.amount);
+  p.action.type === "OrderPercentage" ? `${(p.action.bps ?? 0) / 100} %` : fmtMoney(p.action.amount);
 ---
-<Layout title="Promotions" unreachable={unreachableUrl(promotions)}>
-  <div class="toolbar">
-    <p class="lede">Non-archived promotions with their remaining budget and derived <code class="mono">uses_total</code>.</p>
-    <a href="/promotions/new" class="btn btn-primary">New promotion</a>
-  </div>
+<Layout title="Promotions" description="Active promotions with their rules, remaining budget and use counts." unreachable={unreachableUrl(promotions, metadata)}>
+  <Fragment slot="badge">{promotions.ok && <span class="badge badge-muted">{rows.length}</span>}</Fragment>
+  <a slot="actions" href="/promotions/new" class="btn btn-primary">New promotion</a>
   <FormStatus state={state} okText="Archived." />
-  <div class="table-card"><table class="table">
-    <thead>
-      <tr><th>promotion_id</th><th>group</th><th>priority</th><th>exclusive</th><th>action</th><th>rules</th><th>uses_total</th><th>remaining_budget</th><th></th></tr>
-    </thead>
-    <tbody>
-      {dataOr(promotions, []).map((p) => (
-        <tr>
-          <td><a href={`/promotions/${encodeURIComponent(p.promotion_id)}`} class="link mono">{p.promotion_id}</a>{titles.get(p.promotion_id) && <div class="text-[12px]" style="color: var(--color-ink-2)">{titles.get(p.promotion_id)!.title}{titles.get(p.promotion_id)!.source && <span class="badge badge-muted ml-1.5">{titles.get(p.promotion_id)!.source}</span>}</div>}</td>
-          <td class="mono">{p.group_id}</td>
-          <td class="mono">{p.priority}</td>
-          <td class="mono">{p.exclusive ? "yes" : "no"}</td>
-          <td class="mono">{p.action.type} {actionText(p)}</td>
-          <td class="mono">{p.rules.map((r) => r.type).join(", ") || "—"}</td>
-          <td class="mono">{p.uses_total}</td>
-          <td class="mono">{fmtMoney(p.remaining_budget)}</td>
-          <td class="text-right"><DeleteButton action={actions.deletePromotion} id={p.promotion_id} label="Archive" /></td>
-        </tr>
-      ))}
-      {promotions.ok && promotions.data.length === 0 && <tr><td colspan="9" class="empty">{source ? `No promotions with source "${source}".` : "No promotions."}</td></tr>}
-    </tbody>
-  </table></div>
+  <div class="toolbar">
+    <form method="get" class="flex items-end gap-2">
+      <label class="block"><span class="label">Source</span><input type="text" name="source" value={source} placeholder="hotels" class="input mono w-44" /></label>
+      <button type="submit" class="btn btn-secondary">Filter</button>
+      {source && <a href="/promotions" class="btn btn-ghost">Clear</a>}
+    </form>
+  </div>
+  <div class="table-card">
+    <table class="table">
+      <thead>
+        <tr><th>Promotion</th><th>Group</th><th class="num">Priority</th><th>Action</th><th>Rules</th><th class="num">Uses</th><th class="num">Remaining budget</th><th></th></tr>
+      </thead>
+      <tbody>
+        {rows.map((p) => (
+          <tr>
+            <td>
+              <div class="flex items-center gap-2">
+                <a href={`/promotions/${encodeURIComponent(p.promotion_id)}`} class="link mono">{p.promotion_id}</a>
+                {p.exclusive && <span class="badge badge-warn">exclusive</span>}
+                {titles.get(p.promotion_id)?.source && <span class="badge badge-info">{titles.get(p.promotion_id)!.source}</span>}
+              </div>
+              {titles.get(p.promotion_id) && <div class="text-[12.5px]" style="color: var(--color-ink-2)">{titles.get(p.promotion_id)!.title}</div>}
+            </td>
+            <td class="mono">{p.group_id}</td>
+            <td class="num mono">{p.priority}</td>
+            <td><span class="mono">{actionText(p)}</span> <span class="text-[12px]" style="color: var(--color-ink-3)">{p.action.type === "OrderPercentage" ? "of the order" : "off the order"}</span></td>
+            <td>{p.rules.length === 0 ? <span style="color: var(--color-ink-3)">any cart</span> : <span class="mono text-[12px]">{p.rules.map((r) => r.type).join(", ")}</span>}</td>
+            <td class="num mono">{p.uses_total}</td>
+            <td class="num mono">{p.remaining_budget ? fmtMoney(p.remaining_budget) : <span style="color: var(--color-ink-3)">unbounded</span>}</td>
+            <td class="actions"><DeleteButton action={actions.deletePromotion} id={p.promotion_id} label="Archive" size="xs" /></td>
+          </tr>
+        ))}
+        {promotions.ok && rows.length === 0 && (
+          <tr><td colspan="8" class="empty">{source ? `No promotions with source "${source}".` : <>No promotions yet. <a href="/promotions/new" class="link">Create the first one</a>.</>}</td></tr>
+        )}
+      </tbody>
+    </table>
+  </div>
 </Layout>

@@ -2,7 +2,6 @@
 import { actions } from "astro:actions";
 import Layout from "../layouts/Layout.astro";
 import Field from "../components/Field.astro";
-import MoneyField from "../components/MoneyField.astro";
 import FormStatus from "../components/FormStatus.astro";
 import ResultPanel from "../components/ResultPanel.astro";
 import { formState } from "../actions/run";
@@ -19,106 +18,104 @@ const empty = formState(undefined, {});
 const lines = f.rows("lines").map(String);
 const attrs = f.rows("attributes").map(String);
 const uses = f.rows("uses").map(String);
-const box = "card space-y-3";
 ---
-<Layout title="Evaluate" unreachable={result?.data?.kind === "unreachable" ? result.data.url : null}>
-  <p class="lede mb-5">
-    Price a cart and see why each promotion applied or did not. Nothing is stored.
-  </p>
+<Layout title="Evaluate" description="Price a cart and see why each promotion applied or did not. Nothing is stored." unreachable={result?.data?.kind === "unreachable" ? result.data.url : null}>
   <div class="grid gap-6 xl:grid-cols-2">
-    <form method="post" action={actions.evaluate} class="space-y-4">
-      <fieldset class={box}>
-        <legend class="card-legend">Cart</legend>
-        <div class="grid grid-cols-3 gap-2">
-          <Field state={state} name="cart.currency" label="currency" required />
-          <Field state={state} name="cart.tags" label="tags (comma-separated)" />
-          <Field state={state} name="cart.coupon_codes" label="coupon_codes (comma-separated)" />
+    <form method="post" action={actions.evaluate} class="space-y-5">
+      <section class="card space-y-4">
+        <h2 class="card-title">Cart</h2>
+        <div class="grid grid-cols-3 gap-3">
+          <Field state={state} name="cart.currency" label="Currency" required />
+          <Field state={state} name="cart.tags" label="Tags" hint="comma-separated" />
+          <Field state={state} name="cart.coupon_codes" label="Coupon codes" hint="comma-separated" />
         </div>
         <div data-row-list>
-          <p class="hint">Lines</p>
-          <div data-rows class="space-y-1">
+          <p class="label">Lines</p>
+          <div data-rows class="space-y-2">
             {lines.map((i) => (
-              <div data-row={i} class="grid grid-cols-[1fr_1fr_6rem_5rem_auto] items-end gap-2">
-                <Field state={state} name={`lines.${i}.line_id`} label="line_id" />
-                <Field state={state} name={`lines.${i}.unit_price.amount`} label="unit_price (minor units)" type="number" />
-                <Field state={state} name={`lines.${i}.unit_price.currency`} label="currency" />
-                <Field state={state} name={`lines.${i}.quantity`} label="qty" type="number" />
+              <div data-row={i} class="grid grid-cols-[1fr_1fr_5.5rem_4.5rem_auto] items-end gap-2">
+                <Field state={state} name={`lines.${i}.line_id`} label="Line id" />
+                <Field state={state} name={`lines.${i}.unit_price.amount`} label="Unit price (minor units)" type="number" />
+                <Field state={state} name={`lines.${i}.unit_price.currency`} label="Currency" />
+                <Field state={state} name={`lines.${i}.quantity`} label="Qty" type="number" />
                 <button type="button" data-remove-row hidden class="row-remove">×</button>
               </div>
             ))}
           </div>
           <template data-row-template>
-            <div data-row="__i__" class="grid grid-cols-[1fr_1fr_6rem_5rem_auto] items-end gap-2">
-              <Field state={empty} name="lines.__i__.line_id" label="line_id" />
-              <Field state={empty} name="lines.__i__.unit_price.amount" label="unit_price (minor units)" type="number" />
-              <Field state={empty} name="lines.__i__.unit_price.currency" label="currency" />
-              <Field state={empty} name="lines.__i__.quantity" label="qty" type="number" />
+            <div data-row="__i__" class="grid grid-cols-[1fr_1fr_5.5rem_4.5rem_auto] items-end gap-2">
+              <Field state={empty} name="lines.__i__.line_id" label="Line id" />
+              <Field state={empty} name="lines.__i__.unit_price.amount" label="Unit price (minor units)" type="number" />
+              <Field state={empty} name="lines.__i__.unit_price.currency" label="Currency" />
+              <Field state={empty} name="lines.__i__.quantity" label="Qty" type="number" />
               <button type="button" data-remove-row hidden class="row-remove">×</button>
             </div>
           </template>
           <button type="button" data-add-row hidden class="row-add">Add line</button>
         </div>
         <div data-row-list>
-          <p class="hint">Attributes</p>
-          <div data-rows class="space-y-1">
+          <p class="label">Attributes</p>
+          <div data-rows class="space-y-2">
             {attrs.map((i) => (
               <div data-row={i} class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
-                <Field state={state} name={`attributes.${i}.key`} label="key" />
-                <Field state={state} name={`attributes.${i}.value`} label="value" />
+                <Field state={state} name={`attributes.${i}.key`} label="Key" />
+                <Field state={state} name={`attributes.${i}.value`} label="Value" />
                 <button type="button" data-remove-row hidden class="row-remove">×</button>
               </div>
             ))}
+            {attrs.length === 0 && <p class="hint">None.</p>}
           </div>
           <template data-row-template>
             <div data-row="__i__" class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
-              <Field state={empty} name="attributes.__i__.key" label="key" />
-              <Field state={empty} name="attributes.__i__.value" label="value" />
+              <Field state={empty} name="attributes.__i__.key" label="Key" />
+              <Field state={empty} name="attributes.__i__.value" label="Value" />
               <button type="button" data-remove-row hidden class="row-remove">×</button>
             </div>
           </template>
           <button type="button" data-add-row hidden class="row-add">Add attribute</button>
         </div>
-      </fieldset>
+      </section>
 
-      <fieldset class={box}>
-        <legend class="card-legend">Customer</legend>
-        <div class="grid grid-cols-2 gap-2">
-          <Field state={state} name="customer.customer_id" label="customer_id (empty = anonymous)" hint="The service adds this customer's stored uses" />
-          <Field state={state} name="customer.completed_orders" label="completed_orders" type="number" required />
+      <section class="card space-y-4">
+        <h2 class="card-title">Customer</h2>
+        <div class="grid grid-cols-2 gap-3">
+          <Field state={state} name="customer.customer_id" label="Customer id" hint="empty = anonymous; the service adds this customer's stored uses" />
+          <Field state={state} name="customer.completed_orders" label="Completed orders" type="number" required />
         </div>
         <div data-row-list>
-          <p class="hint">Extra uses supplied by the caller</p>
-          <div data-rows class="space-y-1">
+          <p class="label">Extra uses supplied by the caller</p>
+          <div data-rows class="space-y-2">
             {uses.map((i) => (
               <div data-row={i} class="grid grid-cols-[1fr_6rem_auto] items-end gap-2">
-                <Field state={state} name={`uses.${i}.promotion_id`} label="promotion_id" />
-                <Field state={state} name={`uses.${i}.count`} label="count" type="number" />
+                <Field state={state} name={`uses.${i}.promotion_id`} label="Promotion id" />
+                <Field state={state} name={`uses.${i}.count`} label="Count" type="number" />
                 <button type="button" data-remove-row hidden class="row-remove">×</button>
               </div>
             ))}
+            {uses.length === 0 && <p class="hint">None.</p>}
           </div>
           <template data-row-template>
             <div data-row="__i__" class="grid grid-cols-[1fr_6rem_auto] items-end gap-2">
-              <Field state={empty} name="uses.__i__.promotion_id" label="promotion_id" />
-              <Field state={empty} name="uses.__i__.count" label="count" type="number" />
+              <Field state={empty} name="uses.__i__.promotion_id" label="Promotion id" />
+              <Field state={empty} name="uses.__i__.count" label="Count" type="number" />
               <button type="button" data-remove-row hidden class="row-remove">×</button>
             </div>
           </template>
           <button type="button" data-add-row hidden class="row-add">Add use</button>
         </div>
-      </fieldset>
+      </section>
 
-      <details class={box} open={!!state.fields.json}>
-        <summary>Paste an EvaluateRequest as JSON instead</summary>
-        <Field state={state} name="json" label="EvaluateRequest JSON" textarea placeholder='{"cart": {...}, "customer": {...}}' hint="Sent unchanged; the form above is ignored while this is non-empty." />
+      <details class="card" open={!!state.fields.json}>
+        <summary>Paste the request as JSON instead</summary>
+        <Field state={state} name="json" label="Request JSON" textarea rows={8} placeholder='{"cart": {...}, "customer": {...}}' hint="Sent unchanged; the form above is ignored while this is non-empty." />
       </details>
 
       <FormStatus state={state} okText="Priced. Nothing was stored." />
-      <button type="submit" class="btn btn-primary">Evaluate</button>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Evaluate</button></div>
     </form>
 
     <div>
-      {priced ? <ResultPanel result={priced} /> : <div class="card flex min-h-40 items-center justify-center" style="color: var(--color-ink-3)">The PricingResult appears here after an evaluation.</div>}
+      {priced ? <ResultPanel result={priced} /> : <div class="card flex min-h-40 items-center justify-center" style="color: var(--color-ink-3)">The result appears here after an evaluation.</div>}
     </div>
   </div>
   <script>

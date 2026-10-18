@@ -3,10 +3,9 @@ import Layout from "../../layouts/Layout.astro";
 const q = Astro.url.searchParams.get("customer_id")?.trim();
 if (q) return Astro.redirect(`/customers/${encodeURIComponent(q)}`);
 ---
-<Layout title="Customers">
-  <p class="lede mb-5">A customer's coupons with their status, as the service lists them.</p>
+<Layout title="Customers" description="A customer's coupons with their status, as the service lists them.">
   <form method="get" class="flex max-w-md gap-2">
-    <input type="text" name="customer_id" placeholder="customer_id" required class="input flex-1" />
+    <input type="text" name="customer_id" placeholder="customer_id" required class="input mono flex-1" />
     <button type="submit" class="btn btn-primary">Open</button>
   </form>
 </Layout>

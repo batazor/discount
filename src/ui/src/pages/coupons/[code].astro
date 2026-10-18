@@ -5,6 +5,7 @@ import Field from "../../components/Field.astro";
 import TimestampField from "../../components/TimestampField.astro";
 import FormStatus from "../../components/FormStatus.astro";
 import ApiError from "../../components/ApiError.astro";
+import DeleteButton from "../../components/DeleteButton.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { couponToFields } from "../../model/catalogue";
@@ -21,25 +22,29 @@ const [current, promotions] = await Promise.all([
 const state = formState(result?.data, current?.ok ? couponToFields(current.data) : {});
 const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
 ---
-<Layout title={isNew ? "New coupon" : `Coupon ${code}`} unreachable={unreachableUrl(current ?? promotions, promotions)}>
+<Layout title={isNew ? "New coupon" : code} crumbs={[["Coupons", "/coupons"], [isNew ? "New" : code]]} unreachable={unreachableUrl(current ?? promotions, promotions)}>
+  <Fragment slot="badge">{current?.ok && (current.data.customer_id ? <span class="badge badge-info">bound to {current.data.customer_id}</span> : <span class="badge badge-muted">public</span>)}</Fragment>
+  <Fragment slot="actions">{!isNew && current?.ok && <DeleteButton action={actions.deleteCoupon} id={code} />}</Fragment>
   {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
-  <form method="post" action={actions.putCoupon} class="mt-4 grid max-w-2xl grid-cols-2 gap-3">
-    <Field state={state} name="code" label="code" required readonly={!isNew} />
-    <Field state={state} name="promotion_id" label="promotion_id" options={promotionIds} empty="— choose —" required />
-    <TimestampField state={state} name="starts_at" label="starts_at" />
-    <TimestampField state={state} name="ends_at" label="ends_at" />
-    <Field state={state} name="customer_id" label="customer_id (empty = public)" />
-    <Field state={state} name="max_uses" label="max_uses (empty = unlimited, 1 = single use)" type="number" />
-    {!isNew && (
-      <label class="block">
-        <span class="label">uses (derived by the service)</span>
-        <input type="text" name="uses" value={current?.ok ? String(current.data.uses) : ""} readonly class="input" />
-        <span class="hint">Counted from redemptions; ignored on save.</span>
-      </label>
-    )}
-    <div class="col-span-full"><FormStatus state={state} /></div>
-    <div class="col-span-full flex gap-3">
-      <button type="submit" class="btn btn-primary">{isNew ? "Create" : "Save"}</button>
+  <form method="post" action={actions.putCoupon} class="max-w-3xl space-y-5">
+    <section class="card grid grid-cols-2 gap-4">
+      <Field state={state} name="code" label="Code" required readonly={!isNew} />
+      <Field state={state} name="promotion_id" label="Promotion" options={promotionIds} empty="— choose —" required />
+      <TimestampField state={state} name="starts_at" label="Valid from" />
+      <TimestampField state={state} name="ends_at" label="Valid until" />
+      <Field state={state} name="customer_id" label="Bound to customer" hint="empty = public, anyone may present it" />
+      <Field state={state} name="max_uses" label="Maximum uses" type="number" hint="empty = unlimited, 1 = single use" />
+      {!isNew && (
+        <label class="block">
+          <span class="label">Uses so far</span>
+          <input type="text" name="uses" value={current?.ok ? String(current.data.uses) : ""} readonly class="input mono" />
+          <span class="hint">Counted by the service from redemptions; not editable.</span>
+        </label>
+      )}
+    </section>
+    <FormStatus state={state} />
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{isNew ? "Create coupon" : "Save coupon"}</button>
       <a href="/coupons" class="btn btn-ghost">Back to coupons</a>
     </div>
   </form>

@@ -1,9 +1,9 @@
 ---
-interface Props { action: string; id: string; label?: string; extra?: Record<string, string> }
-const { action, id, label = "Delete", extra = {} } = Astro.props;
+interface Props { action: string; id: string; label?: string; extra?: Record<string, string>; size?: "xs" | "md" }
+const { action, id, label = "Delete", extra = {}, size = "md" } = Astro.props;
 ---
 <form method="post" action={action} class="inline" onsubmit={`return confirm('${label} ${id.replace(/'/g, "")}?')`}>
   <input type="hidden" name="id" value={id} />
   {Object.entries(extra).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
-  <button type="submit" class="link-danger">{label}</button>
+  <button type="submit" class={size === "xs" ? "btn-xs danger" : "btn btn-secondary"} style={size === "md" ? "color: var(--color-danger)" : undefined}>{label}</button>
 </form>
