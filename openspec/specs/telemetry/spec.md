@@ -144,3 +144,34 @@ resource identity are unchanged.
 #### Scenario: No traceparent
 - **WHEN** a request arrives without trace headers
 - **THEN** the server span is a root span of a freshly generated trace id
+
+### Requirement: Database spans
+Every call into the Postgres repositories SHALL produce a span named `db.<method>` (the
+repository method, for example `db.reserve`, `db.get_promotion`) of kind `client`, child of
+the current span, with attributes `db.system` = `postgresql` and `db.operation.name` =
+`<method>`. A call that fails with a storage error SHALL set the span status to `Error`. The
+in-memory store SHALL produce no such spans.
+
+#### Scenario: Redemption trace shows the transaction
+- **WHEN** `POST /v1/redeem` reserves an order against Postgres
+- **THEN** its trace contains `db.reserve` under the server span with
+  `db.system=postgresql` and `db.operation.name=reserve`
+
+#### Scenario: Catalogue read
+- **WHEN** `GET /v1/policy` is served against Postgres
+- **THEN** the trace contains `db.get_policy` of kind `client`
+
+### Requirement: Console calls carry trace context
+Every request the operator console sends to the service SHALL carry a W3C `traceparent`
+header `00-<trace-id>-<parent-id>-01` with a trace id generated per request, and the
+console's call outcome SHALL expose that trace id so a page can show it next to an error.
+
+#### Scenario: Action request in Tempo
+- **WHEN** the console posts an evaluation and the service exports its spans
+- **THEN** Tempo has a trace with the console's trace id whose server span's parent id is
+  the console's parent id
+
+#### Scenario: Trace id on an error outcome
+- **WHEN** the service answers `422`
+- **THEN** the console's outcome carries `status` `422`, the verbatim body and the
+  `traceId` it sent

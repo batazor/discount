@@ -169,4 +169,10 @@ H=$(tempo_healthz 2>/dev/null || echo 0)
 pass "no GET /healthz traces"
 retry "Loki evaluation log lines for service_name=discount" loki_count
 
+spanmetrics_count() { # Tempo's metrics generator has seen the evaluate server span
+  curl -s "$GRAFANA/api/datasources/proxy/uid/prometheus/api/v1/query?query=sum(traces_spanmetrics_calls_total%7Bservice%3D%22discount%22%2Cspan_name%3D%22POST%20%2Fv1%2Fevaluate%22%7D)" \
+    | python3 -c 'import sys,json; r=json.load(sys.stdin)["data"]["result"]; print(len(r))'
+}
+retry "span metrics for POST /v1/evaluate" spanmetrics_count
+
 echo "smoke passed"

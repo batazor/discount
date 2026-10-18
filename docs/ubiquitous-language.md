@@ -413,6 +413,9 @@ the contract the Grafana dashboards depend on (OpenSpec change `otel-grafana-obs
   `http.response.status_code`; a `5xx` response sets the span status to `Error`, `4xx`
   (including `422` pricing rejections) leaves it unset. `GET /healthz` is not traced. An
   incoming W3C `traceparent` makes the server span a child of the caller's span.
+- Spans `db.<method>` (kind `client`, one per Postgres repository call such as
+  `db.reserve`, `db.get_policy`) with `db.system` = `postgresql` and `db.operation.name` =
+  `<method>`; a storage failure sets the status to `Error`. The in-memory store emits none.
 - Span `discount.evaluate` (child of the HTTP server span) with attributes
   `discount.currency`, `discount.lines`, `discount.promotions`, `discount.applied`,
   `discount.skipped`, `discount.original_subtotal`, `discount.total_discount` and, on error,

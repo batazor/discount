@@ -61,13 +61,21 @@ pub const SPAN_ATTR_ERROR_TYPE: &str = "discount.error_type";
 pub const SPAN_ATTR_HTTP_ROUTE: &str = "http.route";
 pub const SPAN_ATTR_HTTP_STATUS: &str = "http.response.status_code";
 
+/// Database spans: `db.<repository method>` on the Postgres store (`persistence/postgres.rs`).
+pub const SPAN_DB_PREFIX: &str = "db.";
+pub const SPAN_ATTR_DB_SYSTEM: &str = "db.system";
+pub const SPAN_ATTR_DB_OPERATION: &str = "db.operation.name";
+
 /// Bucket boundaries of `discount.share.bps` (basis points of the subtotal).
 pub const SHARE_BPS_BOUNDARIES: [f64; 11] = [
     0.0, 100.0, 250.0, 500.0, 1000.0, 1500.0, 2000.0, 3000.0, 5000.0, 7500.0, 10000.0,
 ];
 
 /// Every name a dashboard may rely on; `docs/ubiquitous-language.md` lists the same set.
-pub const VOCABULARY: [&str; 21] = [
+pub const VOCABULARY: [&str; 24] = [
+    SPAN_DB_PREFIX,
+    SPAN_ATTR_DB_SYSTEM,
+    SPAN_ATTR_DB_OPERATION,
     SPAN_ATTR_HTTP_ROUTE,
     SPAN_ATTR_HTTP_STATUS,
     METRIC_REDEMPTIONS,
@@ -500,6 +508,33 @@ mod vocabulary_tests {
                 section.contains(name),
                 "ubiquitous-language.md lacks telemetry name `{name}`"
             );
+        }
+    }
+
+    /// Every repository method of the Postgres store carries the `db.<method>` span
+    /// (spec `telemetry`, "Database spans").
+    #[test]
+    fn every_postgres_method_is_instrumented() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/postgres.rs"
+        ))
+        .unwrap();
+        let impls = src
+            .split("impl PromotionCatalog for PgStore")
+            .nth(1)
+            .expect("trait impls");
+        let mut previous = "";
+        for line in impls.lines() {
+            if let Some(rest) = line.trim_start().strip_prefix("async fn ") {
+                let name = rest.split('(').next().unwrap();
+                let expected = format!("#[tracing::instrument(name = \"db.{name}\"");
+                assert!(
+                    previous.trim_start().starts_with(&expected),
+                    "postgres.rs: `{name}` lacks `{expected}`"
+                );
+            }
+            previous = line;
         }
     }
 }

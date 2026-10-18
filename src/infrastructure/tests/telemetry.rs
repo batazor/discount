@@ -10,9 +10,9 @@ use common::*;
 use discount_application::ports::{Counters, PricingFn, RedemptionRepository, StorageError, Uses};
 use discount_application::ports::{Redemption, RedemptionError, RedemptionStatus, ReserveOutcome};
 use discount_domain::*;
-use discount_infrastructure::default_policy;
 use discount_infrastructure::http::{AppState, EvaluateRequest, evaluate_with_telemetry, router};
 use discount_infrastructure::telemetry::{self, Instruments};
+use discount_infrastructure::{PgStore, default_policy};
 use opentelemetry::metrics::MeterProvider;
 use opentelemetry::trace::{SpanId, Status, TraceId, TracerProvider};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
@@ -323,8 +323,17 @@ fn redemption_counter_and_budget_gauge() {
 /// Drive the router once under the harness subscriber; returns the response status and
 /// the exported spans.
 fn serve(h: &Harness, app: axum::Router, req: Request<Body>) -> (StatusCode, Vec<SpanData>) {
+    serve_on(&runtime(), h, app, req)
+}
+
+/// `serve` on a caller-owned runtime (a Postgres pool must outlive one request).
+fn serve_on(
+    rt: &tokio::runtime::Runtime,
+    h: &Harness,
+    app: axum::Router,
+    req: Request<Body>,
+) -> (StatusCode, Vec<SpanData>) {
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
-    let rt = runtime();
     let mut status = StatusCode::IM_A_TEAPOT;
     with_subscriber(h, || {
         status = rt.block_on(app.oneshot(req)).unwrap().status();
@@ -581,4 +590,88 @@ fn malformed_traceparent_starts_a_fresh_trace() {
     let sp = server_span(&spans);
     assert_eq!(sp.parent_span_id, SpanId::INVALID);
     assert_ne!(sp.span_context.trace_id(), TraceId::INVALID);
+}
+
+// ------------------------------------------------------------ database spans
+
+/// `PgStore` on `DATABASE_URL` (wiped), or `None` with a notice when it is not set.
+fn pg_state(rt: &tokio::runtime::Runtime, h: &Harness) -> Option<Arc<AppState>> {
+    let url = match std::env::var("DATABASE_URL") {
+        Ok(u) => u,
+        Err(_) => {
+            eprintln!("DATABASE_URL not set: Postgres span scenario skipped");
+            return None;
+        }
+    };
+    let store = rt.block_on(async {
+        let s = PgStore::connect(&url, &default_policy()).await.unwrap();
+        s.reset_for_tests(&default_policy()).await.unwrap();
+        s
+    });
+    let store = Arc::new(store);
+    Some(Arc::new(AppState {
+        catalog: store.clone(),
+        redemptions: store,
+        clock: h.state.clock.clone(),
+        events: h.state.events.clone(),
+        codes: h.state.codes.clone(),
+        instruments: h.state.instruments.clone(),
+    }))
+}
+
+#[test]
+fn postgres_calls_produce_db_spans() {
+    let h = harness();
+    let rt = runtime();
+    let Some(state) = pg_state(&rt, &h) else {
+        return;
+    };
+    let app = router(state.clone());
+    let (status, spans) = serve_on(&rt, &h, app, request(Method::GET, "/v1/policy", ""));
+    assert_eq!(status, StatusCode::OK);
+    let sp = server_span(&spans);
+    let db = spans
+        .iter()
+        .find(|s| s.name == "db.get_policy")
+        .expect("db.get_policy span");
+    assert_eq!(db.span_kind, opentelemetry::trace::SpanKind::Client);
+    assert_eq!(db.parent_span_id, sp.span_context.span_id());
+    assert_eq!(
+        attr(db.attributes.iter(), "db.system").as_deref(),
+        Some("postgresql")
+    );
+    assert_eq!(
+        attr(db.attributes.iter(), "db.operation.name").as_deref(),
+        Some("get_policy")
+    );
+    assert_eq!(db.status, Status::Unset);
+
+    h.spans.reset();
+    let app = router(state);
+    let body = serde_json::json!({
+        "order_id": "span-1",
+        "cart": sample_cart(),
+        "customer": CustomerContext::default(),
+    })
+    .to_string();
+    let (status, spans) = serve_on(&rt, &h, app, request(Method::POST, "/v1/redeem", &body));
+    assert_eq!(status, StatusCode::OK);
+    let sp = server_span(&spans);
+    assert_eq!(sp.name, "POST /v1/redeem");
+    // The reservation prices inside `discount.evaluate`, so the db span hangs under it.
+    let eval = spans
+        .iter()
+        .find(|s| s.name == telemetry::SPAN_EVALUATE)
+        .unwrap();
+    assert_eq!(eval.parent_span_id, sp.span_context.span_id());
+    let db = spans
+        .iter()
+        .find(|s| s.name == "db.reserve")
+        .expect("db.reserve span");
+    assert_eq!(db.parent_span_id, eval.span_context.span_id());
+    assert_eq!(db.span_context.trace_id(), sp.span_context.trace_id());
+    assert_eq!(
+        attr(db.attributes.iter(), "db.operation.name").as_deref(),
+        Some("reserve")
+    );
 }
