@@ -33,7 +33,7 @@ schema: spec-driven
 
 context: |
   Spec-driven project: docs/ubiquitous-language.md is the single vocabulary, verification/spec/ (Lean 4)
-  is the source of truth for the pricing engine, src/domain/ (Rust) mirrors it function by
+  is the source of truth for the pricing engine, verification/proofs/ holds the theorems about it, src/domain/ (Rust) mirrors it function by
   function and verification/drt/ compares them. Only the pricing engine is in the verified scope;
   src/applicationlication/, src/infrastructure/ and observability get ordinary tests.
   A new domain concept enters docs/ubiquitous-language.md first, then verification/spec/, then src/domain/.

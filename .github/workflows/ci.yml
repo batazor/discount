@@ -35,14 +35,20 @@ jobs:
           lake-package-directory: verification/spec
           use-mathlib-cache: false
 
-      - name: No sorry in the specification
+      - name: Build the Lean proofs
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: verification/proofs
+          use-mathlib-cache: false
+
+      - name: No sorry in the specification or the proofs
         run: |
-          if grep -rn --include='*.lean' -w sorry verification/spec/Discount verification/spec/Main.lean; then
+          if grep -rn --include='*.lean' -w sorry verification/spec/Discount verification/spec/Main.lean verification/proofs/Proofs; then
             echo "sorry found in merged Lean code"; exit 1
           fi
 
       - name: Theorems depend on no sorryAx
-        working-directory: verification/spec
+        working-directory: verification/proofs
         run: |
           lake env lean AxiomCheck.lean | tee axioms.txt
           if grep -q sorryAx axioms.txt; then echo "sorryAx in axioms"; exit 1; fi

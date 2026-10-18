@@ -1,0 +1,77 @@
+import Discount.Rounding
+import Discount.Allocate
+
+/-!
+# One step of the fold (ADR 4, ADR 5, ADR 9)
+
+`applyOne` turns the running state and one promotion into the next state: raw discount,
+clamp (with its `ClampReason`), largest-remainder allocation, bookkeeping.
+-/
+namespace Discount
+
+/-- Intermediate state of the fold. -/
+structure Step where
+  lineRunning : List Int
+  orderCapRemaining : Option Int
+  applied : List AppliedPromotion
+  deriving Repr
+
+def effectiveRounding (policy : PricingPolicy) (p : Promotion) : RoundingPolicy :=
+  match p.rounding with
+  | some r => r
+  | none => policy.rounding
+
+def rawDiscount (policy : PricingPolicy) (original running : Int) (p : Promotion) : Int :=
+  let base := match policy.stacking with
+    | .Sequential => running
+    | .Additive => original
+  match p.action with
+  | .OrderPercentage bps => roundDiv (effectiveRounding policy p) (base * bps) BPS_SCALE
+  | .OrderFixedAmount m => m.amount
+
+/-- `min(raw, cap, remaining_budget, remaining_order_cap, running)` and the first bound in
+that order whose value equals the result (`none` if the raw discount was not reduced). -/
+def clampDiscount (raw : Int) (cap budget orderCapRem : Option Int) (running : Int) :
+    Int × Option ClampReason :=
+  let d1 := match cap with | some c => min raw c | none => raw
+  let d2 := match budget with | some b => min d1 b | none => d1
+  let d3 := match orderCapRem with | some o => min d2 o | none => d2
+  let d := min d3 running
+  let reason : Option ClampReason :=
+    if d = raw then none
+    else if cap = some d then some .Cap
+    else if budget = some d then some .Budget
+    else if orderCapRem = some d then some .OrderCap
+    else some .Running
+  (d, reason)
+
+def orderCapInitial (policy : PricingPolicy) (S : Int) : Option Int :=
+  match policy.order_cap.amount, policy.order_cap.bps with
+  | none, none => none
+  | some m, none => some m.amount
+  | none, some b => some (roundDiv policy.rounding (S * b) BPS_SCALE)
+  | some m, some b => some (min m.amount (roundDiv policy.rounding (S * b) BPS_SCALE))
+
+/-- Pointwise subtraction, `a - b`, over lists of equal length. -/
+def subLists : List Int → List Int → List Int
+  | a :: as, b :: bs => (a - b) :: subLists as bs
+  | _, _ => []
+
+def applyOne (i : PricingInput) (original : Int) (st : Step) (p : Promotion) : Step :=
+  let running := st.lineRunning.sum
+  let raw := rawDiscount i.policy original running p
+  let dr := clampDiscount raw (p.cap.map (·.amount)) (p.remaining_budget.map (·.amount))
+    st.orderCapRemaining running
+  let d := dr.1
+  let alloc := allocate d st.lineRunning
+  let cur := i.cart.currency
+  { lineRunning := subLists st.lineRunning alloc
+    orderCapRemaining := st.orderCapRemaining.map (fun o => o - d)
+    applied := st.applied ++ [{
+      promotion_id := p.promotion_id
+      discount := ⟨d, cur⟩
+      clamped_by := dr.2
+      allocation := List.zipWith (fun (l : CartLine) (a : Int) =>
+        ({ line_id := l.line_id, amount := ⟨a, cur⟩ } : LineAllocation)) i.cart.lines alloc }] }
+
+end Discount

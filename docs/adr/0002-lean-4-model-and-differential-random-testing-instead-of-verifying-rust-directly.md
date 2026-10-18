@@ -36,9 +36,11 @@ Options considered:
 
 ## Decision
 
-1. The Lean 4 model is the primary artifact. Domain types, the `apply` function and the
-   invariant theorems live in `verification/spec/` as a `lake` project. The model is compiled into a
-   CLI reference: JSON on stdin, JSON on stdout.
+1. The Lean 4 model is the primary artifact. Domain types and the `apply` function live in
+   `verification/spec/` as a `lake` project, one module per concept of the ubiquitous
+   language; the invariant theorems live in `verification/proofs/`, a second `lake` package
+   that depends on it, one module per invariant of `docs/invariants.md`. The model is
+   compiled into a CLI reference: JSON on stdin, JSON on stdout.
 2. The Rust `core` crate mirrors the Lean model structurally: same type names, same
    function decomposition, same order of operations (ADR 8).
 3. Differential random testing (DRT) in `verification/drt/` generates carts, promotions and `now` with

@@ -1,9 +1,9 @@
-import Discount.Apply
+import Discount.Apply.Step
 
 /-!
 # List lemmas used by the proofs
 
-Small facts about `List.sum` over `Int`, `getD`, `set` and `subListsists` that core does not
+Small facts about `List.sum` over `Int`, `getD`, `set` and `subLists` that core does not
 provide in the shape we need. All proofs are by induction; no Mathlib.
 -/
 namespace Discount

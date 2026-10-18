@@ -1,0 +1,9 @@
+name = "proofs"
+defaultTargets = ["Proofs"]
+
+[[require]]
+name = "discount"
+path = "../spec"
+
+[[lean_lib]]
+name = "Proofs"

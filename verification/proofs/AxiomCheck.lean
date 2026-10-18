@@ -1,8 +1,8 @@
-import Discount
+import Proofs
 
 /-!
 Prints the axioms every exported theorem depends on. CI fails if `sorryAx` appears
-(ADR 2: no `sorry` in merged Lean code). Run with `lake env lean AxiomCheck.lean`.
+(ADR 2: no `sorry` in merged Lean code). Run with `lake env lean AxiomCheck.lean` in `verification/proofs`.
 -/
 open Discount
 

@@ -46,31 +46,36 @@ contract: [docs/ubiquitous-language.md](docs/ubiquitous-language.md). Decisions:
 src/domain/            Rust: pure domain, std + serde only, structural mirror of the Lean model
 src/applicationlication/             use cases (Evaluate, Redeem, Confirm, Cancel) and ports
 src/infrastructure/        axum HTTP, Postgres (sqlx), in-memory store, OpenTelemetry
-verification/spec/   Lean 4 (lake): model, theorems, reference executable (JSON lines in/out)
+verification/spec/   Lean 4 (lake): the model, one module per concept, and the reference executable
+verification/proofs/ Lean 4 (lake): the theorems about the model, one module per invariant
 verification/drt/    proptest generators + core vs reference comparison
 docs/                ubiquitous-language.md, invariants.md, adr/
 openspec/            behaviour specs with scenarios (OpenSpec), archived changes
 deploy/              compose stack, Grafana dashboards, fixtures, smoke script
 ```
 
-Product code lives under `src/`; everything that checks it (the Lean model and the
-differential tests) under `verification/`. Neither depends on the other direction.
+Product code lives under `src/`; everything that checks it (the Lean model, its proofs and
+the differential tests) under `verification/`. Neither depends on the other direction.
 
 ## How to run
 
 Prerequisites: [elan](https://github.com/leanprover/elan) (the toolchain is pinned in
 `verification/spec/lean-toolchain`) and a stable Rust toolchain.
 
-Build the specification and check the proofs:
+Build the specification, then the proofs (a separate lake package that depends on it):
 
 ```bash
 cd verification/spec && lake build
 ```
 
+```bash
+cd verification/proofs && lake build
+```
+
 Confirm that no theorem rests on `sorry`:
 
 ```bash
-cd verification/spec && lake env lean AxiomCheck.lean
+cd verification/proofs && lake env lean AxiomCheck.lean
 ```
 
 Price a cart with the reference executable (one JSON document per line):

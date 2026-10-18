@@ -14,7 +14,7 @@ Notation: `S` is `result.original_subtotal`, `D` is `result.total_discount`,
 
 ## Status by iteration
 
-| # | Invariant | Status | Lean theorem(s) in `verification/spec/Discount/Theorems/Invariants.lean` |
+| # | Invariant | Status | Lean theorem(s) in `verification/proofs/Proofs/Invariants/` (one file per invariant) |
 |---|-----------|--------|------------------------------------------------------------|
 | 1 | Bounds per order and per line | proved | `final_total_bounds`, `line_total_bounds` |
 | 2 | Caps are respected | proved | `discount_le_cap`, `discount_le_budget`, `total_discount_le_order_cap`, `total_discount_le_subtotal` |
@@ -63,7 +63,7 @@ Two separate claims (ADR 4):
 The caller's list orders never matter because `sortPromotions` produces the total order
 `(group.priority DESC, group_id ASC, promotion.priority DESC, promotion_id ASC)` and ids
 are unique after validation. The `skipped` list is in that same total order. The proof
-needs two facts not yet in `verification/spec/`: a sorted permutation of a sorted list under a total,
+needs two facts not yet in `verification/proofs/`: a sorted permutation of a sorted list under a total,
 antisymmetric order is equal to it, and `find?` by a unique key is permutation-invariant.
 Both are routine and planned before the DRT lands; the DRT itself exercises permutation
 invariance on every generated case.
@@ -133,7 +133,7 @@ covered too.
 
 ## Structural lemmas
 
-Proved (`verification/spec/Discount/Theorems/`):
+Proved (`verification/proofs/Proofs/`):
 
 - `validate_ok` (`Validate.lean`): `validate input = ok` implies `Valid (normalize input)`:
   after normalization every `unit_price`, `action.amount`, `cap`, `remaining_budget` and
