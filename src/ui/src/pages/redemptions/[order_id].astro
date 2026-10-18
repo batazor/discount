@@ -1,0 +1,45 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../layouts/Layout.astro";
+import ApiError from "../../components/ApiError.astro";
+import FormStatus from "../../components/FormStatus.astro";
+import ResultPanel from "../../components/ResultPanel.astro";
+import { api, call, unreachableUrl } from "../../api/client";
+import { formState } from "../../actions/run";
+import { formatTimestamp } from "../../model/time";
+
+const orderId = Astro.params.order_id!;
+const confirmed = Astro.getActionResult(actions.confirmRedemption);
+const cancelled = Astro.getActionResult(actions.cancelRedemption);
+const transition = formState(confirmed?.data ?? cancelled?.data, {});
+const current = await call(() => api.GET("/v1/redemptions/{order_id}", { params: { path: { order_id: orderId } } }));
+---
+<Layout title={`Redemption ${orderId}`} unreachable={unreachableUrl(current)}>
+  {!current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
+  {current.ok && (
+    <div class="space-y-4">
+      <dl class="dl mb-5">
+        <dt>status</dt><dd class="font-semibold">{current.data.status}</dd>
+        <dt>customer_id</dt>
+        <dd>{current.data.customer_id ? <a href={`/customers/${encodeURIComponent(current.data.customer_id)}`} class="link">{current.data.customer_id}</a> : "—"}</dd>
+        <dt>created_at</dt><dd>{formatTimestamp(current.data.created_at)}</dd>
+        <dt>updated_at</dt><dd>{formatTimestamp(current.data.updated_at)}</dd>
+      </dl>
+      <div class="flex items-start gap-3">
+        <form method="post" action={actions.confirmRedemption}>
+          <input type="hidden" name="id" value={orderId} />
+          <button type="submit" class="btn btn-success">Confirm</button>
+        </form>
+        <form method="post" action={actions.cancelRedemption} onsubmit={`return confirm('Cancel ${orderId}? Budgets are restored.')`}>
+          <input type="hidden" name="id" value={orderId} />
+          <button type="submit" class="btn btn-danger">Cancel</button>
+        </form>
+        <p class="hint self-center">reserved → confirmed; reserved or confirmed → cancelled. A refused transition is shown as the API returned it.</p>
+      </div>
+      <FormStatus state={transition} okText={`Now ${current.data.status}.`} />
+      <ResultPanel result={current.data.result} />
+      <details class="text-sm"><summary>Replayable PricingInput</summary><pre class="card mt-2 overflow-x-auto text-[12px]">{JSON.stringify(current.data.input, null, 2)}</pre></details>
+    </div>
+  )}
+  <p class="mt-6"><a href="/redemptions" class="btn btn-secondary">Look up another order</a></p>
+</Layout>

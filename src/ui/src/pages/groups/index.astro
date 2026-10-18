@@ -1,0 +1,33 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../layouts/Layout.astro";
+import DeleteButton from "../../components/DeleteButton.astro";
+import FormStatus from "../../components/FormStatus.astro";
+import { api, call, unreachableUrl, dataOr } from "../../api/client";
+import { formState } from "../../actions/run";
+
+const deleted = Astro.getActionResult(actions.deleteGroup);
+const groups = await call(() => api.GET("/v1/groups"));
+const state = formState(deleted?.data, {});
+---
+<Layout title="Stacking groups" unreachable={unreachableUrl(groups)}>
+  <div class="toolbar">
+    <p class="lede">Groups order promotions and decide how many of a group apply.</p>
+    <a href="/groups/new" class="btn btn-primary">New group</a>
+  </div>
+  <FormStatus state={state} okText="Deleted." />
+  <div class="table-card"><table class="table">
+    <thead><tr><th>group_id</th><th>priority</th><th>mode</th><th></th></tr></thead>
+    <tbody>
+      {dataOr(groups, []).map((g) => (
+        <tr>
+          <td class="mono"><a href={`/groups/${encodeURIComponent(g.group_id)}`} class="link">{g.group_id}</a></td>
+          <td class="mono">{g.priority}</td>
+          <td class="mono">{g.mode.type}</td>
+          <td class="text-right"><DeleteButton action={actions.deleteGroup} id={g.group_id} /></td>
+        </tr>
+      ))}
+      {groups.ok && groups.data.length === 0 && <tr><td colspan="4" class="empty">No groups.</td></tr>}
+    </tbody>
+  </table></div>
+</Layout>

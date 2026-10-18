@@ -51,6 +51,7 @@ verification/proofs/ Lean 4 (lake): the theorems about the model, one module per
 verification/drt/    proptest generators + core vs reference comparison
 docs/                ubiquitous-language.md, invariants.md, adr/
 openspec/            behaviour specs with scenarios (OpenSpec), archived changes
+src/ui/              Astro: the operator console, a generated-client consumer of api/openapi.yaml
 deploy/              compose stack, Grafana dashboards, fixtures, smoke script
 ```
 
@@ -123,6 +124,34 @@ npx --yes @redocly/cli@latest lint api/openapi.yaml
 `discount-server` runs the engine behind that API. Without `DATABASE_URL` it uses an
 in-memory catalogue seeded from `deploy/promotions.json`; with it, catalogue and redemptions
 live in Postgres (migrations run at start-up).
+
+
+## Operator console
+
+`src/ui` is a server-rendered Astro application over the HTTP API: policy, groups,
+promotions with budgets, coupons with batch generation, grant rules, exchange rates, a
+redemption lookup with confirm and cancel, a customer's coupons with their status, and an
+evaluate playground that explains a `PricingResult` (applied, skipped with reason, clamps,
+allocation). It is a client of `api/openapi.yaml` like `src/client`: its TypeScript types
+are generated from the document at build time and every request goes through a typed
+client, so an undocumented call does not compile. It computes no price and no status
+itself; every number on screen is a response of the service.
+
+Against a service on `localhost:8080` (set `DISCOUNT_API_URL` for another):
+
+```bash
+cd src/ui && npm ci && npm run dev
+```
+
+In the compose stack it is `http://localhost:4321`. Type-check, unit tests on the
+form-to-body mapping, and the production build:
+
+```bash
+cd src/ui && npm run check && npm test && npm run build
+```
+
+The console has no authentication, as the service has none: deploy it behind the same
+gate as the service. The compose stack binds it to localhost only.
 
 ## Observability
 

@@ -30,3 +30,5 @@ export type PricingError = S["PricingError"];
 export type SkipReason = S["SkipReason"];
 export type ClampReason = S["ClampReason"];
 export type Redemption = S["Redemption"];
+export type PromotionMetadata = S["PromotionMetadata"];
+export type MetadataEntry = S["MetadataEntry"];

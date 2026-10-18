@@ -1,0 +1,12 @@
+---
+// Unix seconds in the contract; entered as a UTC datetime or the raw integer. The current
+// integer is shown alongside so an operator can check what will be sent.
+import type { FormState } from "../actions/run";
+import { parseTimestamp } from "../model/time";
+import Field from "./Field.astro";
+interface Props { state: FormState; name: string; label: string }
+const { state, name, label } = Astro.props;
+const ts = parseTimestamp(state.fields[name] ?? "");
+const hint = ts === null ? "empty = none" : ts === undefined ? "" : `sends ${ts}`;
+---
+<Field state={state} name={name} label={`${label} (UTC)`} type="datetime-local" hint={`${hint}; a raw integer is accepted too`} />

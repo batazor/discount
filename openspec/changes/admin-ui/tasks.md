@@ -13,28 +13,30 @@
 
 ## 3. Catalogue screens (`src/ui/src/pages`, `src/ui/src/actions`)
 
-- [ ] 3.1 Policy page with `PUT /v1/policy` action; verify a manual edit of rounding against a local server round-trips and a bad body shows the `400` verbatim
-- [ ] 3.2 Groups list, group form (`PUT`, `DELETE`); verify create, edit and delete against a local server
-- [ ] 3.3 Promotions list with `uses_total` and `remaining_budget` read-only, promotion form with structural rule and action editors (small client script for variant pickers; rule rows enter/exit with `motion`, disabled under `prefers-reduced-motion`), delete with confirmation, and a separate budget form mapped onto `PUT /v1/promotions/{id}/budget` with an explicit "no budget" state; verify scenarios "Create a promotion", "Archive a promotion", "Budget set separately" against a local server
-- [ ] 3.4 Coupons list with `uses` read-only, coupon form (`PUT`, `DELETE`), generation form revealing the returned codes once with a staggered `motion` animation that never delays them being in the DOM; verify "Generate a batch" against a local server
-- [ ] 3.5 Grant rules list and form (`PUT`, `DELETE`), "grant now" form mapped onto `POST /v1/coupons/grant`; verify a grant for trigger `cancel` creates a code visible in the coupons list
-- [ ] 3.6 Exchange rates list and form (`PUT`, `DELETE /v1/exchange-rates/{from}/{to}`); verify a rate round-trips against a local server
+- [x] 3.1 Policy page with `PUT /v1/policy` action; verify a manual edit of rounding against a local server round-trips and a bad body shows the `400` verbatim
+- [x] 3.2 Groups list, group form (`PUT`, `DELETE`); verify create, edit and delete against a local server
+- [x] 3.3 Promotions list with `uses_total` and `remaining_budget` read-only, promotion form with structural rule and action editors (small client script for variant pickers; rule rows enter/exit with `motion`, disabled under `prefers-reduced-motion`), delete with confirmation, and a separate budget form mapped onto `PUT /v1/promotions/{id}/budget` with an explicit "no budget" state; verify scenarios "Create a promotion", "Archive a promotion", "Budget set separately" against a local server
+- [x] 3.4 Coupons list with `uses` read-only, coupon form (`PUT`, `DELETE`), generation form revealing the returned codes once with a staggered `motion` animation that never delays them being in the DOM; verify "Generate a batch" against a local server
+- [x] 3.5 Grant rules list and form (`PUT`, `DELETE`), "grant now" form mapped onto `POST /v1/coupons/grant`; verify a grant for trigger `cancel` creates a code visible in the coupons list
+- [x] 3.6 Exchange rates list and form (`PUT`, `DELETE /v1/exchange-rates/{from}/{to}`); verify a rate round-trips against a local server
+
+- [x] 3.7 Promotion metadata: `src/ui/src/model/metadata.ts` (form↔body, labels one `key=value` per line, vitest), actions `putPromotionMetadata`/`deletePromotionMetadata`, a metadata card on the promotion page (404 = empty form), title column and `source` filter on the promotions list, title and `source` filter on the customer lookup; verify "Metadata round trip from the screen", "No metadata yet" and "Filter by source" against a local server
 
 ## 4. Lookups and playground (`src/ui/src/pages`, `src/ui/src/actions`)
 
-- [ ] 4.1 Redemption lookup by `order_id` rendering the stored `Redemption` with confirm and cancel actions and verbatim `409`; verify "Confirm from the screen" and "Refused transition" against a local server
-- [ ] 4.2 Customer lookup by `customer_id` rendering `CustomerCoupon`s with status and a link from `order_id` to the redemption lookup; verify "Applied coupon links to its order" after running `deploy/smoke.sh`
-- [ ] 4.3 Evaluate playground: form (cart lines, currency, tags, attributes, coupon codes, customer) or pasted JSON, `POST /v1/evaluate` only, result panel from the view model animated in with `motion` (data present in the DOM before the animation starts), `422` shown verbatim; verify "Explain a skipped promotion", "Pricing error shown verbatim" and that `GET /v1/redemptions` finds nothing for a playground run
+- [x] 4.1 Redemption lookup by `order_id` rendering the stored `Redemption` with confirm and cancel actions and verbatim `409`; verify "Confirm from the screen" and "Refused transition" against a local server
+- [x] 4.2 Customer lookup by `customer_id` rendering `CustomerCoupon`s with status and a link from `order_id` to the redemption lookup; verify "Applied coupon links to its order" after running `deploy/smoke.sh`
+- [x] 4.3 Evaluate playground: form (cart lines, currency, tags, attributes, coupon codes, customer) or pasted JSON, `POST /v1/evaluate` only, result panel from the view model animated in with `motion` (data present in the DOM before the animation starts), `422` shown verbatim; verify "Explain a skipped promotion", "Pricing error shown verbatim" and that `GET /v1/redemptions` finds nothing for a playground run
 
 ## 5. Packaging, stack and CI (`src/ui`, `deploy`, `.github/workflows`)
 
-- [ ] 5.1 `src/ui/Dockerfile` (node:22-alpine, build stage generating types, runtime stage running the Node adapter) and compose service `ui` on `:4321` with `DISCOUNT_API_URL=http://discount:8080`, a health check on `/healthz` and `depends_on: discount`; verify `docker compose -f deploy/compose.yaml up -d --build` brings all three health endpoints to `200`
-- [ ] 5.2 Extend `deploy/smoke.sh`: console `/healthz` is `200` and the promotions page body contains `P1`; verify `deploy/smoke.sh` passes on the fresh stack
+- [x] 5.1 `src/ui/Dockerfile` (node:22-alpine, build stage generating types, runtime stage running the Node adapter) and compose service `ui` on `:4321` with `DISCOUNT_API_URL=http://discount:8080`, a health check on `/healthz` and `depends_on: discount`; verify `docker compose -f deploy/compose.yaml up -d --build` brings all three health endpoints to `200`
+- [x] 5.2 Extend `deploy/smoke.sh`: console `/healthz` is `200` and the promotions page body contains `P1`; verify `deploy/smoke.sh` passes on the fresh stack
 - [ ] 5.3 Add a `ui` job to `.github/workflows/ci.yml` (`npm ci`, type generation, `astro check`, `vitest`, `astro build` in `src/ui`); verify the job passes on the pull request
 
 ## 6. Documentation (`README.md`, `docs/adr`)
 
-- [ ] 6.1 README: `src/ui` in the layout, how to run the console locally (`npm run dev` against `localhost:8080`) and in compose, the no-auth note; ADR 10 edited in place to name the console as a second generated-client consumer; verify the documented commands run as written
+- [x] 6.1 README: `src/ui` in the layout, how to run the console locally (`npm run dev` against `localhost:8080`) and in compose, the no-auth note; ADR 10 edited in place to name the console as a second generated-client consumer; verify the documented commands run as written
 
 ## Workflow follow-up
 

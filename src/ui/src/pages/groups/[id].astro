@@ -1,0 +1,31 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../layouts/Layout.astro";
+import Field from "../../components/Field.astro";
+import FormStatus from "../../components/FormStatus.astro";
+import ApiError from "../../components/ApiError.astro";
+import { api, call, unreachableUrl } from "../../api/client";
+import { formState } from "../../actions/run";
+import { groupToFields, STACKING_MODES } from "../../model/catalogue";
+
+const id = Astro.params.id!;
+const isNew = id === "new";
+const result = Astro.getActionResult(actions.putGroup);
+if (isNew && result?.data?.kind === "ok") return Astro.redirect(`/groups/${encodeURIComponent(result.data.data.group_id)}`);
+
+const current = isNew ? null : await call(() => api.GET("/v1/groups/{group_id}", { params: { path: { group_id: id } } }));
+const state = formState(result?.data, current?.ok ? groupToFields(current.data) : {});
+---
+<Layout title={isNew ? "New group" : `Group ${id}`} unreachable={current ? unreachableUrl(current) : null}>
+  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
+  <form method="post" action={actions.putGroup} class="mt-4 max-w-md space-y-4">
+    <Field state={state} name="group_id" label="group_id" required readonly={!isNew} />
+    <Field state={state} name="priority" label="priority (lower applies first)" type="number" required />
+    <Field state={state} name="mode" label="mode" options={STACKING_MODES} required />
+    <FormStatus state={state} />
+    <div class="flex gap-3">
+      <button type="submit" class="btn btn-primary">{isNew ? "Create" : "Save"}</button>
+      <a href="/groups" class="btn btn-ghost">Back to groups</a>
+    </div>
+  </form>
+</Layout>

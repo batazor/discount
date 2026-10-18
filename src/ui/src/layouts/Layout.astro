@@ -2,24 +2,18 @@
 import "../styles/global.css";
 import { ClientRouter } from "astro:transitions";
 import Unreachable from "../components/Unreachable.astro";
+import { API_URL } from "../api/client";
 
-interface Props { title: string; unreachable?: string | null }
-const { title, unreachable = null } = Astro.props;
+interface Props { title: string; unreachable?: string | null; description?: string }
+const { title, unreachable = null, description } = Astro.props;
 
-const nav = [
-  ["/", "Overview"],
-  ["/policy", "Policy"],
-  ["/groups", "Groups"],
-  ["/promotions", "Promotions"],
-  ["/coupons", "Coupons"],
-  ["/grant-rules", "Grant rules"],
-  ["/exchange-rates", "Exchange rates"],
-  ["/redemptions", "Redemptions"],
-  ["/customers", "Customers"],
-  ["/evaluate", "Evaluate"],
-] as const;
+const groups: [string, [string, string][]][] = [
+  ["Catalogue", [["/policy", "Policy"], ["/groups", "Groups"], ["/promotions", "Promotions"], ["/coupons", "Coupons"], ["/grant-rules", "Grant rules"], ["/exchange-rates", "Exchange rates"]]],
+  ["Operations", [["/redemptions", "Redemptions"], ["/customers", "Customers"]]],
+  ["Tools", [["/evaluate", "Evaluate playground"]]],
+];
 const path = Astro.url.pathname;
-const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
+const active = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
 ---
 <!doctype html>
 <html lang="en" class="h-full">
@@ -29,24 +23,35 @@ const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(
     <title>{title} · discount</title>
     <ClientRouter />
   </head>
-  <body class="min-h-full bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100">
+  <body class="min-h-full">
     <div class="flex min-h-screen">
-      <nav class="w-52 shrink-0 border-r border-gray-200 bg-gray-50 px-3 py-4 dark:border-gray-800 dark:bg-gray-900">
-        <a href="/" class="mb-4 block px-2 text-lg font-bold tracking-tight">discount</a>
-        <ul class="space-y-0.5 text-sm">
-          {nav.map(([href, label]) => (
-            <li>
-              <a href={href}
-                 class:list={["block rounded px-2 py-1.5 hover:bg-gray-200 dark:hover:bg-gray-800",
-                   active(href) && "bg-gray-200 font-semibold dark:bg-gray-800"]}>{label}</a>
-            </li>
-          ))}
-        </ul>
+      <nav class="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r px-3 py-4" style="border-color: var(--color-line); background: var(--color-surface)">
+        <a href="/" class="mb-2 flex items-center gap-2 px-2.5 py-1 no-underline">
+          <span class="flex size-7 items-center justify-center rounded-md text-[13px] font-bold text-white" style="background: var(--color-accent)">%</span>
+          <span class="text-[15px] font-semibold tracking-tight">discount</span>
+        </a>
+        <a href="/" class="nav-link" aria-current={active("/") ? "page" : undefined}>Overview</a>
+        {groups.map(([group, links]) => (
+          <>
+            <div class="nav-group">{group}</div>
+            {links.map(([href, label]) => <a href={href} class="nav-link" aria-current={active(href) ? "page" : undefined}>{label}</a>)}
+          </>
+        ))}
+        <div class="mt-auto px-2.5 pt-4 text-[11px] leading-4" style="color: var(--color-ink-3)">
+          <div class="font-semibold uppercase tracking-[0.08em]">Service</div>
+          <code class="block truncate" title={API_URL}>{API_URL}</code>
+          <a href={`${API_URL}/docs`} class="link mt-1 inline-block" target="_blank" rel="noreferrer">OpenAPI docs ↗</a>
+        </div>
       </nav>
-      <main class="min-w-0 flex-1 px-8 py-6">
-        <h1 class="mb-4 text-2xl font-semibold">{title}</h1>
-        {unreachable && <div class="mb-4"><Unreachable url={unreachable} /></div>}
-        <slot />
+      <main class="min-w-0 flex-1 px-10 py-8">
+        <div class="mx-auto max-w-6xl">
+          <header class="mb-6">
+            <h1 class="page-title">{title}</h1>
+            {description && <p class="lede mt-1" set:html={description} />}
+          </header>
+          {unreachable && <div class="mb-5"><Unreachable url={unreachable} /></div>}
+          <slot />
+        </div>
       </main>
     </div>
   </body>

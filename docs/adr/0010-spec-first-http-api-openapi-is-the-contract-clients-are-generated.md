@@ -38,6 +38,10 @@ Options considered:
   committed.
 - The service serves the document at `/openapi.yaml` and Swagger UI at `/docs`, embedded
   from the same file, so what a running instance shows is what the repository holds.
+- The operator console (`src/ui`, Astro) is a second generated consumer: its TypeScript
+  types come from the document at build time (`openapi-typescript`) and its requests go
+  through a typed client (`openapi-fetch`), so a call outside the contract does not
+  compile. It adds no operation of its own and computes nothing the service computes.
 - Contract tests: `src/infrastructure` checks that every router path is in the document;
   `src/client/tests` starts the service and drives the main flows through the generated
   client, so a server response that does not match the schema fails the build. CI lints

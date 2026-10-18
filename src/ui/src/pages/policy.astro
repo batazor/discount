@@ -1,0 +1,32 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../layouts/Layout.astro";
+import Field from "../components/Field.astro";
+import MoneyField from "../components/MoneyField.astro";
+import FormStatus from "../components/FormStatus.astro";
+import { api, call, unreachableUrl } from "../api/client";
+import { formState } from "../actions/run";
+import { policyToFields, STACKING_POLICIES } from "../model/catalogue";
+import { ROUNDING_POLICIES } from "../model/promotion";
+
+const result = Astro.getActionResult(actions.putPolicy);
+const current = await call(() => api.GET("/v1/policy"));
+const state = formState(result?.data, current.ok ? policyToFields(current.data) : {});
+---
+<Layout title="Policy" unreachable={unreachableUrl(current)}>
+  <p class="lede mb-5">
+    The engine-wide <code class="mono">PricingPolicy</code>: rounding, stacking and the order-level cap.
+    Saved whole with <code class="mono">PUT /v1/policy</code>.
+  </p>
+  <form method="post" action={actions.putPolicy} class="max-w-lg space-y-4">
+    <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} required />
+    <Field state={state} name="stacking" label="Stacking" options={STACKING_POLICIES} required />
+    <fieldset class="card space-y-3">
+      <legend class="card-legend">Order cap (both empty = unconstrained)</legend>
+      <MoneyField state={state} name="order_cap.amount" label="Amount" />
+      <Field state={state} name="order_cap.bps" label="Basis points (0–10000)" type="number" />
+    </fieldset>
+    <FormStatus state={state} />
+    <button type="submit" class="btn btn-primary">Save policy</button>
+  </form>
+</Layout>

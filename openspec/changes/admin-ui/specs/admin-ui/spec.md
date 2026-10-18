@@ -76,6 +76,30 @@ through the budget resource, with an explicit "no budget" state for `null`.
 - **THEN** the form shows `3` as read-only and the `PUT` body carries `uses = 0` or the
   displayed value, which the API ignores either way
 
+### Requirement: Promotion metadata
+The promotion screen SHALL show and edit the promotion's `PromotionMetadata` (title,
+description, source, labels) through `GET|PUT|DELETE /v1/promotions/{promotion_id}/metadata`,
+in a form separate from the promotion `PUT`; labels are entered one `key=value` per line.
+A `404` on the metadata `GET` is the empty state, not an error. The promotions list and the
+customer lookup SHALL show the title when metadata exists and SHALL offer a `source` filter
+passed to the API as `?source=`.
+
+#### Scenario: Metadata round trip from the screen
+- **WHEN** an operator sets title `Summer`, source `hotels` and the label line `channel=app`
+  on `P1` and saves
+- **THEN** the console sends `PUT /v1/promotions/P1/metadata` with
+  `{"title":"Summer","description":"","source":"hotels","labels":{"channel":"app"}}` and the
+  promotions list shows `Summer` next to `P1`
+
+#### Scenario: No metadata yet
+- **WHEN** a promotion without metadata is opened
+- **THEN** the metadata form is empty and no error is shown
+
+#### Scenario: Filter by source
+- **WHEN** an operator filters the promotions list by source `hotels`
+- **THEN** the console sends `GET /v1/promotions?source=hotels` and lists only what the API
+  returns
+
 ### Requirement: Coupon generation and grants
 The coupons screen SHALL offer a generation form mapping onto
 `POST /v1/coupons/generate` and SHALL show the generated codes once, ready to copy. The

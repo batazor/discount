@@ -8,13 +8,13 @@ export function evaluateRequestFromForm(fields: Fields): Parsed<EvaluateRequest>
   return f.finish({
     cart: {
       currency: f.str("cart.currency"),
-      lines: f.rows("lines").map((i) => ({
+      lines: f.rows("lines", "line_id").map((i) => ({
         line_id: f.str(`lines.${i}.line_id`),
         unit_price: f.money(`lines.${i}.unit_price`),
         quantity: f.int(`lines.${i}.quantity`, { min: 1 }),
       })),
       tags: f.list("cart.tags"),
-      attributes: f.rows("attributes").map((i) => ({
+      attributes: f.rows("attributes", "key").map((i) => ({
         key: f.str(`attributes.${i}.key`),
         value: f.str(`attributes.${i}.value`),
       })),
@@ -23,7 +23,7 @@ export function evaluateRequestFromForm(fields: Fields): Parsed<EvaluateRequest>
     customer: {
       customer_id: f.optStr("customer.customer_id"),
       completed_orders: f.int("customer.completed_orders", { min: 0 }),
-      uses: f.rows("uses").map((i) => ({
+      uses: f.rows("uses", "promotion_id").map((i) => ({
         promotion_id: f.str(`uses.${i}.promotion_id`),
         count: f.int(`uses.${i}.count`, { min: 0 }),
       })),

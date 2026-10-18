@@ -113,7 +113,7 @@ export function promotionFromForm(fields: Fields): Parsed<Promotion> {
     remaining_budget: null,
     uses_total: 0,
     rounding: roundingFromForm(f, "rounding"),
-    rules: f.rows("rules").map((i) => ruleFromForm(f, `rules.${i}`)),
+    rules: f.rows("rules", "type").map((i) => ruleFromForm(f, `rules.${i}`)),
     action: actionFromForm(f, "action"),
   };
   return f.finish(promotion);

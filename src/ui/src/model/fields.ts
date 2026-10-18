@@ -108,15 +108,18 @@ export class Form {
       .filter((s) => s !== "");
   }
 
-  /** Indices `i` for which some `prefix.i.*` field exists, ascending (rows may have gaps). */
-  rows(prefix: string): number[] {
+  /**
+   * Indices `i` for which some `prefix.i.*` field exists, ascending (rows may have gaps).
+   * With `key`, rows whose `prefix.i.key` is empty are skipped: a blank row is no row.
+   */
+  rows(prefix: string, key?: string): number[] {
     const re = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(\\d+)\\.`);
     const idx = new Set<number>();
     for (const k of Object.keys(this.fields)) {
       const m = re.exec(k);
       if (m) idx.add(Number(m[1]));
     }
-    return [...idx].sort((a, b) => a - b);
+    return [...idx].sort((a, b) => a - b).filter((i) => key === undefined || this.raw(`${prefix}.${i}.${key}`) !== "");
   }
 
   finish<T>(value: T): Parsed<T> {

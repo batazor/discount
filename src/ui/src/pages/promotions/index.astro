@@ -1,0 +1,49 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../layouts/Layout.astro";
+import DeleteButton from "../../components/DeleteButton.astro";
+import FormStatus from "../../components/FormStatus.astro";
+import { api, call, unreachableUrl, dataOr } from "../../api/client";
+import { formState } from "../../actions/run";
+import { fmtMoney } from "../../model/evaluate";
+
+const deleted = Astro.getActionResult(actions.deletePromotion);
+const source = Astro.url.searchParams.get("source")?.trim() || "";
+const query = source ? { source } : {};
+const [promotions, metadata] = await Promise.all([
+  call(() => api.GET("/v1/promotions", { params: { query } })),
+  call(() => api.GET("/v1/promotion-metadata", { params: { query } })),
+]);
+const titles = new Map(dataOr(metadata, []).map((e) => [e.promotion_id, e.metadata]));
+const state = formState(deleted?.data, {});
+const actionText = (p: { action: { type: string; bps?: number; amount?: { amount: number; currency: string } } }) =>
+  p.action.type === "OrderPercentage" ? `${p.action.bps} bps` : fmtMoney(p.action.amount);
+---
+<Layout title="Promotions" unreachable={unreachableUrl(promotions)}>
+  <div class="toolbar">
+    <p class="lede">Non-archived promotions with their remaining budget and derived <code class="mono">uses_total</code>.</p>
+    <a href="/promotions/new" class="btn btn-primary">New promotion</a>
+  </div>
+  <FormStatus state={state} okText="Archived." />
+  <div class="table-card"><table class="table">
+    <thead>
+      <tr><th>promotion_id</th><th>group</th><th>priority</th><th>exclusive</th><th>action</th><th>rules</th><th>uses_total</th><th>remaining_budget</th><th></th></tr>
+    </thead>
+    <tbody>
+      {dataOr(promotions, []).map((p) => (
+        <tr>
+          <td><a href={`/promotions/${encodeURIComponent(p.promotion_id)}`} class="link mono">{p.promotion_id}</a>{titles.get(p.promotion_id) && <div class="text-[12px]" style="color: var(--color-ink-2)">{titles.get(p.promotion_id)!.title}{titles.get(p.promotion_id)!.source && <span class="badge badge-muted ml-1.5">{titles.get(p.promotion_id)!.source}</span>}</div>}</td>
+          <td class="mono">{p.group_id}</td>
+          <td class="mono">{p.priority}</td>
+          <td class="mono">{p.exclusive ? "yes" : "no"}</td>
+          <td class="mono">{p.action.type} {actionText(p)}</td>
+          <td class="mono">{p.rules.map((r) => r.type).join(", ") || "—"}</td>
+          <td class="mono">{p.uses_total}</td>
+          <td class="mono">{fmtMoney(p.remaining_budget)}</td>
+          <td class="text-right"><DeleteButton action={actions.deletePromotion} id={p.promotion_id} label="Archive" /></td>
+        </tr>
+      ))}
+      {promotions.ok && promotions.data.length === 0 && <tr><td colspan="9" class="empty">{source ? `No promotions with source "${source}".` : "No promotions."}</td></tr>}
+    </tbody>
+  </table></div>
+</Layout>

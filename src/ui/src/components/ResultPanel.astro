@@ -1,0 +1,42 @@
+---
+// A PricingResult as the service returned it: totals, applied promotions with clamps and
+// allocation, skipped promotions with their reason, per-line results. No arithmetic here.
+import type { PricingResult } from "../api/types";
+import { resultRows } from "../model/evaluate";
+interface Props { result: PricingResult; id?: string }
+const { result, id = "result" } = Astro.props;
+const rows = resultRows(result);
+---
+<section id={id} class="space-y-4">
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    {rows.totals.map((t, i) => (
+      <div class="card py-3" style={i === 3 ? "border-color: var(--color-accent); background: var(--color-accent-soft)" : undefined}>
+        <div class="kpi-label">{t.label}</div>
+        <div class="mono mt-1 text-[18px] font-semibold tabular-nums">{t.value}</div>
+      </div>
+    ))}
+  </div>
+  <div class="card p-0">
+    <h3 class="card-title px-4 pt-4">Applied <span class="badge badge-ok ml-1">{rows.applied.length}</span></h3>
+    {rows.applied.length === 0 ? <p class="hint px-4 pb-4">Nothing applied.</p> : (
+      <table class="table"><thead><tr><th>promotion</th><th>discount</th><th>clamped_by</th><th>allocation</th></tr></thead>
+        <tbody>{rows.applied.map((a) => <tr><td class="mono"><a href={`/promotions/${encodeURIComponent(a.promotion_id)}`} class="link">{a.promotion_id}</a></td><td class="mono">{a.discount}</td><td>{a.clamped_by === "—" ? <span style="color: var(--color-ink-3)">—</span> : <span class="badge badge-warn">{a.clamped_by}</span>}</td><td class="mono">{a.allocation}</td></tr>)}</tbody>
+      </table>
+    )}
+  </div>
+  <div class="card p-0">
+    <h3 class="card-title px-4 pt-4">Skipped <span class="badge badge-muted ml-1">{rows.skipped.length}</span></h3>
+    {rows.skipped.length === 0 ? <p class="hint px-4 pb-4">Nothing skipped.</p> : (
+      <table class="table"><thead><tr><th>promotion</th><th>reason</th></tr></thead>
+        <tbody>{rows.skipped.map((s) => <tr><td class="mono"><a href={`/promotions/${encodeURIComponent(s.promotion_id)}`} class="link">{s.promotion_id}</a></td><td class="mono">{s.reason}</td></tr>)}</tbody>
+      </table>
+    )}
+  </div>
+  <div class="card p-0">
+    <h3 class="card-title px-4 pt-4">Lines</h3>
+    <table class="table"><thead><tr><th>line</th><th>subtotal</th><th>discount</th><th>total</th></tr></thead>
+      <tbody>{rows.lines.map((l) => <tr><td class="mono">{l.line_id}</td><td class="mono">{l.subtotal}</td><td class="mono">{l.discount}</td><td class="mono font-semibold">{l.total}</td></tr>)}</tbody>
+    </table>
+  </div>
+  <details><summary class="hint">Raw PricingResult</summary><pre class="card mt-2 overflow-x-auto text-[12px]">{JSON.stringify(result, null, 2)}</pre></details>
+</section>

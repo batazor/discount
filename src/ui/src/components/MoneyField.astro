@@ -1,0 +1,11 @@
+---
+// Money is integer minor units plus a currency (contract `Money`); no decimal input exists.
+import type { FormState } from "../actions/run";
+import Field from "./Field.astro";
+interface Props { state: FormState; name: string; label: string; hint?: string }
+const { state, name, label, hint } = Astro.props;
+---
+<fieldset class="grid grid-cols-[1fr_6rem] gap-2">
+  <Field state={state} name={`${name}.amount`} label={`${label} (minor units)`} type="number" hint={hint} />
+  <Field state={state} name={`${name}.currency`} label="Currency" placeholder="EUR" />
+</fieldset>

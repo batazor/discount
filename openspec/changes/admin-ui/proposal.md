@@ -21,6 +21,10 @@ reasons (ADR 9) deserves a screen that shows them.
   `CustomerCoupon`s with status; an evaluate playground that posts a cart and renders the
   `PricingResult` (applied, skipped with `SkipReason`, clamps with `ClampReason`, per-line
   allocation) or the structured `PricingError`.
+- Promotion metadata (`title`, `description`, `source`, `labels`, change `promotion-metadata`)
+  is edited in its own card on the promotion screen through the metadata resource; titles
+  appear in the promotions list and the customer lookup, which both offer the API's
+  `source` filter.
 - Editing stays faithful to the contract: forms submit the ubiquitous-language JSON,
   derived fields are shown read-only, the API's `400`/`404`/`409`/`422` bodies are shown
   verbatim next to the form. The UI never computes a price or a status itself.

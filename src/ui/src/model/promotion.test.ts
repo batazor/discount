@@ -120,6 +120,11 @@ describe("round trips", () => {
     expect(back).toEqual({ ok: true, value: { ...p, remaining_budget: null, uses_total: 0 } });
   });
 
+  it("a blank rule row (type not chosen) is no rule", () => {
+    const r = promotionFromForm({ ...base, "rules.0.type": "", "rules.0.max": "" });
+    expect(r.ok && r.value.rules).toEqual([]);
+  });
+
   it("rows may have gaps (a row removed in the browser)", () => {
     const r = promotionFromForm({ ...base, "rules.0.type": "RequiresCoupon", "rules.2.type": "MaxUsesTotal", "rules.2.max": "3" });
     expect(r.ok && r.value.rules).toEqual([{ type: "RequiresCoupon" }, { type: "MaxUsesTotal", max: 3 }]);

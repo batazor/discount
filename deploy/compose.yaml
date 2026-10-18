@@ -3,6 +3,7 @@
 #   docker compose -f deploy/compose.yaml up -d --build
 #   open http://localhost:3000        (Grafana, anonymous admin)
 #   curl localhost:8080/healthz       (discount-server)
+#   open http://localhost:4321        (discount-ui, the operator console)
 #   deploy/smoke.sh                   (posts carts, checks the signals arrived)
 #   OTLP: grpc localhost:4317, http localhost:4318
 #
@@ -69,6 +70,20 @@ services:
       lgtm:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: ..
+      dockerfile: src/ui/Dockerfile
+    image: discount-ui:local
+    container_name: discount-ui
+    ports:
+      - "4321:4321"
+    environment:
+      DISCOUNT_API_URL: http://discount:8080
+    depends_on:
+      discount:
         condition: service_healthy
 
 volumes:

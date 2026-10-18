@@ -87,6 +87,12 @@ motivation and `specs/admin-ui/spec.md` for the screens.
     Dependency list becomes Astro, the Node adapter, `@tailwindcss/vite`, `tailwindcss`,
     `motion`, `openapi-typescript`, `openapi-fetch`, `zod`, `vitest`.
 
+11. **Metadata is a sibling resource with its own card.** `PromotionMetadata` has its own
+    `GET|PUT|DELETE`, so the promotion screen edits it in a second form next to the budget
+    form, never inside the promotion `PUT`; a `404` on `GET` renders an empty form. Labels
+    are a free map in the contract, so the form takes one `key=value` line per label and
+    the view model does the split, tested like the other mappings.
+
 ## Risks / Trade-offs
 
 - [Contract drift between a deployed console and a deployed service] → both are built

@@ -1,6 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { api, call, unreachableUrl, dataOr, API_URL } from "../api/client";
+import { fmtMoney } from "../model/evaluate";
 
 const [policy, groups, promotions, coupons, rates, rules] = await Promise.all([
   call(() => api.GET("/v1/policy")),
@@ -18,35 +19,43 @@ const cards = [
   ["Grant rules", "/grant-rules", dataOr(rules, []).length],
   ["Exchange rates", "/exchange-rates", dataOr(rates, []).length],
 ] as const;
+const cap = policy.ok ? policy.data.order_cap : null;
 ---
-<Layout title="Overview" unreachable={unreachable}>
-  <p class="mb-6 text-sm text-gray-600 dark:text-gray-400">
-    Operator console over <code class="font-mono">{API_URL}</code>. Every value here is a response of the
-    service; the console computes nothing itself.
-  </p>
+<Layout title="Overview" description={`Operator console over <code>${API_URL}</code>. Every value here is a response of the service; the console computes nothing itself.`} unreachable={unreachable}>
   {!unreachable && (
     <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
       {cards.map(([label, href, n]) => (
-        <a href={href} class="rounded border border-gray-200 p-4 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900">
-          <div class="text-3xl font-semibold tabular-nums">{n}</div>
-          <div class="text-sm text-gray-600 dark:text-gray-400">{label}</div>
-        </a>
+        <a href={href} class="kpi"><span class="kpi-value">{n}</span><span class="kpi-label">{label}</span></a>
       ))}
     </div>
   )}
-  {policy.ok && (
-    <section class="mt-8">
-      <h2 class="mb-2 text-lg font-semibold">Policy</h2>
-      <dl class="grid max-w-md grid-cols-2 gap-y-1 text-sm">
-        <dt class="text-gray-600 dark:text-gray-400">Rounding</dt><dd class="font-mono">{policy.data.rounding.type}</dd>
-        <dt class="text-gray-600 dark:text-gray-400">Stacking</dt><dd class="font-mono">{policy.data.stacking.type}</dd>
-        <dt class="text-gray-600 dark:text-gray-400">Order cap</dt>
-        <dd class="font-mono">
-          {policy.data.order_cap.amount ? `${policy.data.order_cap.amount.amount} ${policy.data.order_cap.amount.currency}` : "no amount"},
-          {policy.data.order_cap.bps !== null ? `${policy.data.order_cap.bps} bps` : "no bps"}
-        </dd>
-      </dl>
-      <a href="/policy" class="mt-2 inline-block text-sm underline">Edit policy</a>
-    </section>
-  )}
+  <div class="mt-6 grid gap-4 lg:grid-cols-2">
+    {policy.ok && (
+      <section class="card">
+        <h2 class="card-title">Pricing policy</h2>
+        <dl class="dl">
+          <dt>Rounding</dt><dd>{policy.data.rounding.type}</dd>
+          <dt>Stacking</dt><dd>{policy.data.stacking.type}</dd>
+          <dt>Order cap</dt><dd>{cap?.amount || cap?.bps !== null ? `${cap?.amount ? fmtMoney(cap.amount) : "no amount"}, ${cap?.bps !== null ? `${cap?.bps} bps` : "no bps"}` : "unconstrained"}</dd>
+        </dl>
+        <a href="/policy" class="btn btn-secondary mt-4">Edit policy</a>
+      </section>
+    )}
+    {promotions.ok && (
+      <section class="card">
+        <h2 class="card-title">Promotions</h2>
+        {promotions.data.length === 0 ? <p class="hint">No promotions yet.</p> : (
+          <ul class="space-y-1.5">
+            {promotions.data.slice(0, 6).map((p) => (
+              <li class="flex items-center justify-between gap-3 text-[13px]">
+                <a href={`/promotions/${encodeURIComponent(p.promotion_id)}`} class="link mono">{p.promotion_id}</a>
+                <span class="mono" style="color: var(--color-ink-2)">{p.action.type === "OrderPercentage" ? `${p.action.bps} bps` : fmtMoney(p.action.amount)} · {p.rules.length} rule{p.rules.length === 1 ? "" : "s"} · budget {fmtMoney(p.remaining_budget)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div class="mt-4 flex gap-2"><a href="/promotions" class="btn btn-secondary">All promotions</a><a href="/evaluate" class="btn btn-primary">Open the playground</a></div>
+      </section>
+    )}
+  </div>
 </Layout>

@@ -1,0 +1,35 @@
+---
+// One labelled input bound to a flat form field (model/fields.ts): value from `state.fields`,
+// error from `state.errors`.
+import type { FormState } from "../actions/run";
+interface Props {
+  state: FormState; name: string; label: string;
+  type?: "text" | "number" | "datetime-local"; placeholder?: string; hint?: string;
+  readonly?: boolean; required?: boolean; options?: readonly string[]; empty?: string;
+  textarea?: boolean; checkbox?: boolean; variantSelect?: boolean;
+}
+const { state, name, label, type = "text", placeholder, hint, readonly = false, required = false, options, empty, textarea = false, checkbox = false, variantSelect = false } = Astro.props;
+const value = state.fields[name] ?? "";
+const error = state.errors.find((e) => e.field === name)?.message;
+---
+<label class="block">
+  {checkbox ? (
+    <span class="check"><input type="checkbox" name={name} checked={value === "on" || value === "true" || value === "1"} /><span>{label}</span></span>
+  ) : (
+    <>
+      <span class="label">{label}{required && <span style="color: var(--color-danger)"> *</span>}</span>
+      {options ? (
+        <select name={name} class="input" data-variant-select={variantSelect ? "" : undefined}>
+          {empty !== undefined && <option value="" selected={value === ""}>{empty}</option>}
+          {options.map((o) => <option value={o} selected={o === value}>{o}</option>)}
+        </select>
+      ) : textarea ? (
+        <textarea name={name} rows="5" class="input" placeholder={placeholder}>{value}</textarea>
+      ) : (
+        <input type={type} name={name} value={value} class="input" placeholder={placeholder} readonly={readonly} inputmode={type === "number" ? "numeric" : undefined} />
+      )}
+    </>
+  )}
+  {hint && <span class="hint">{hint}</span>}
+  {error && <span class="field-error">{error}</span>}
+</label>

@@ -1,0 +1,78 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../layouts/Layout.astro";
+import DeleteButton from "../../components/DeleteButton.astro";
+import FormStatus from "../../components/FormStatus.astro";
+import Field from "../../components/Field.astro";
+import TimestampField from "../../components/TimestampField.astro";
+import { api, call, unreachableUrl, dataOr } from "../../api/client";
+import { formState } from "../../actions/run";
+import { formatTimestamp } from "../../model/time";
+
+const deleted = Astro.getActionResult(actions.deleteCoupon);
+const generated = Astro.getActionResult(actions.generateCoupons);
+const [coupons, promotions] = await Promise.all([call(() => api.GET("/v1/coupons")), call(() => api.GET("/v1/promotions"))]);
+const delState = formState(deleted?.data, {});
+const genState = formState(generated?.data, { count: "10", prefix: "", max_uses: "1" });
+const codes = generated?.data?.kind === "ok" ? generated.data.data.codes : [];
+const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
+---
+<Layout title="Coupons" unreachable={unreachableUrl(coupons, promotions)}>
+  <div class="toolbar">
+    <p class="lede">Stored codes with their derived <code class="mono">uses</code>. A code turns a <code class="mono">RequiresCoupon</code> promotion on.</p>
+    <a href="/coupons/new" class="btn btn-primary">New coupon</a>
+  </div>
+  <FormStatus state={delState} okText="Deleted." />
+
+  <details class="card mb-6" open={!!generated}>
+    <summary>Generate a batch</summary>
+    <form method="post" action={actions.generateCoupons} class="mt-3 grid max-w-3xl grid-cols-2 gap-3 md:grid-cols-4">
+      <Field state={genState} name="promotion_id" label="promotion_id" options={promotionIds} empty="— choose —" required />
+      <Field state={genState} name="count" label="count (1–10000)" type="number" required />
+      <Field state={genState} name="prefix" label="prefix" placeholder="SPRING-" hint="+ 8 characters" />
+      <Field state={genState} name="max_uses" label="max_uses (empty = unlimited)" type="number" />
+      <TimestampField state={genState} name="starts_at" label="starts_at" />
+      <TimestampField state={genState} name="ends_at" label="ends_at" />
+      <Field state={genState} name="customer_id" label="customer_id (empty = public)" />
+      <div class="self-end"><button type="submit" class="btn btn-primary">Generate</button></div>
+      <div class="col-span-full"><FormStatus state={genState} okText={`Generated ${codes.length} code${codes.length === 1 ? "" : "s"}. They are listed once here; copy them now.`} /></div>
+    </form>
+    {codes.length > 0 && (
+      <ul id="generated-codes" class="mt-3 grid max-w-3xl grid-cols-2 gap-1 font-mono text-sm md:grid-cols-4">
+        {codes.map((c) => <li data-code class="rounded-md px-2 py-1 select-all" style="background: var(--color-surface-2)">{c}</li>)}
+      </ul>
+    )}
+  </details>
+
+  <div class="table-card"><table class="table">
+    <thead>
+      <tr><th>code</th><th>promotion</th><th>customer</th><th>starts_at</th><th>ends_at</th><th>max_uses</th><th>uses</th><th></th></tr>
+    </thead>
+    <tbody>
+      {dataOr(coupons, []).map((c) => (
+        <tr>
+          <td class="mono"><a href={`/coupons/${encodeURIComponent(c.code)}`} class="link">{c.code}</a></td>
+          <td class="mono"><a href={`/promotions/${encodeURIComponent(c.promotion_id)}`} class="link">{c.promotion_id}</a></td>
+          <td class="mono">{c.customer_id ?? "public"}</td>
+          <td class="mono text-xs">{formatTimestamp(c.starts_at)}</td>
+          <td class="mono text-xs">{formatTimestamp(c.ends_at)}</td>
+          <td class="mono">{c.max_uses ?? "∞"}</td>
+          <td class="mono">{c.uses}</td>
+          <td class="text-right"><DeleteButton action={actions.deleteCoupon} id={c.code} /></td>
+        </tr>
+      ))}
+      {coupons.ok && coupons.data.length === 0 && <tr><td colspan="8" class="empty">No coupons.</td></tr>}
+    </tbody>
+  </table></div>
+  <script>
+    // The generated codes are in the DOM before this runs; the stagger only reveals them.
+    import { animate, stagger } from "motion";
+    const reveal = () => {
+      const items = document.querySelectorAll("#generated-codes [data-code]");
+      if (!items.length || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      animate(items, { opacity: [0, 1], y: [4, 0] }, { delay: stagger(0.03), duration: 0.2 });
+    };
+    reveal();
+    document.addEventListener("astro:page-load", reveal);
+  </script>
+</Layout>

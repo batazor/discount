@@ -72,3 +72,24 @@ jobs:
           DISCOUNT_SPEC_BIN: ${{ github.workspace }}/verification/spec/.lake/build/bin/discount-spec
           DATABASE_URL: postgres://discount:discount@localhost:5432/discount
         run: cargo test --workspace
+
+  ui:
+    name: Operator console (Astro)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/ui/package-lock.json
+      - run: npm ci
+      # Types come from api/openapi.yaml (ADR 10): a contract change the console does not
+      # follow fails `astro check` here, as it fails the Rust build of src/client.
+      - run: npm run generate
+      - run: npm run check
+      - run: npm test
+      - run: npm run build

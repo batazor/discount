@@ -1,0 +1,12 @@
+---
+import Layout from "../../layouts/Layout.astro";
+const q = Astro.url.searchParams.get("order_id")?.trim();
+if (q) return Astro.redirect(`/redemptions/${encodeURIComponent(q)}`);
+---
+<Layout title="Redemptions">
+  <p class="lede mb-5">Look a stored redemption up by its order id.</p>
+  <form method="get" class="flex max-w-md gap-2">
+    <input type="text" name="order_id" placeholder="order_id" required class="input flex-1" />
+    <button type="submit" class="btn btn-primary">Open</button>
+  </form>
+</Layout>
