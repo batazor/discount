@@ -410,6 +410,13 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
   and how it is reported, stored next to it in the catalogue and never read by pricing
   (OpenSpec change `promotion-metadata`). `source` partitions listings (hotels, cars, …);
   `labels` is a small string map of reporting dimensions.
+- `Tenant`: one consumer system (a storefront, a business line) with its own policy,
+  catalogue and redemptions; every stored record belongs to exactly one tenant and every
+  store handle is bound to one (OpenSpec `access-control`, ADR 12). `default` is the tenant
+  of unauthenticated local runs and of data that predates tenancy.
+- `Principal { tenant_id, scopes, subject }`: who is calling, resolved from a bearer JWT
+  issued by a configured OIDC issuer; `Scope` is one of `discount:pricing`,
+  `discount:customers`, `discount:catalog.read`, `discount:catalog.write`, `discount:admin`.
 - `Allowlist`: the set of customer ids a promotion is open to, stored next to it in the
   catalogue (OpenSpec change `customer-attributes`). Pricing never reads the set: `Evaluate`
   and `Redeem` put the ids of the promotions whose allowlist contains `customer.customer_id`
@@ -417,8 +424,12 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
 - `CustomerCoupon { coupon, status, order_id?, promotion? }`: read model returned by
   `ListCustomerCoupons`; `promotion` is `{ promotion_id, action, metadata? }` of the coupon's
   promotion.
+- `CatalogState`: `active | paused`, an operator switch on a promotion or a coupon
+  (`PUT /v1/promotions/{id}/state`, `PUT /v1/coupons/{code}/state`); a paused record stays
+  in the catalogue and leaves every pricing snapshot, so it appears neither in `applied` nor
+  in `skipped`. Archiving stays terminal (OpenSpec change `catalogue-states`).
 - `CouponStatus`: `applied` (the customer used the coupon; `order_id` names the earliest such
-  redemption) | `expired` (`ends_at ≤ now`, or `uses ≥ max_uses`, or the promotion is
+  redemption) | `paused` (the coupon or its promotion is paused) | `expired` (`ends_at ≤ now`, or `uses ≥ max_uses`, or the promotion is
   archived or missing) | `scheduled` (`starts_at > now`) | `active`. Cart-free: whether the
   coupon applies to a cart is `Evaluate`'s answer.
 - `ListCustomerCoupons`: use case that merges the customer's bound, used and saved coupons

@@ -1,7 +1,7 @@
 # Load profile of the local stack
 
 What the service does under load on a developer machine, measured with the k6 profile in
-`deploy/load/` (spec `load-profile`). Numbers are from one machine and one evening; they
+`ops/load/` (spec `load-profile`). Numbers are from one machine and one evening; they
 set the alert thresholds and the sampling decision, nothing more.
 
 ## Setup
@@ -9,15 +9,15 @@ set the alert thresholds and the sampling decision, nothing more.
 - Host: Apple M5 Pro, Docker Desktop with 18 CPUs and 7.7 GiB for containers. The service,
   Postgres, otel-lgtm **and k6** share that budget, so client-side latency includes the
   load generator's own scheduling.
-- Stack: `deploy/compose.yaml` as of 2026-10-18, `PgStore` pool of 8 connections,
+- Stack: `ops/compose.yaml` as of 2026-10-18, `PgStore` pool of 8 connections,
   always-on tracing (every request, every repository call as a `db.<method>` span).
-- Traffic: `deploy/load/discount.js`, four open-model scenarios sharing the rate
+- Traffic: `ops/load/discount.js`, four open-model scenarios sharing the rate
   (evaluate 70 %, redeem lifecycle 20 %, idempotent repeat 5 %, invalid cart 5 %).
 - Other traffic was present during both runs (the operator console and its checks were
   being exercised in parallel), so absolute span counts in Tempo are not quoted; ratios
   per request come from k6's own counts.
 
-Reproduce: `deploy/load/run.sh` (50 req/s, 2 min) and `RATE=200 deploy/load/run.sh`.
+Reproduce: `ops/load/run.sh` (50 req/s, 2 min) and `RATE=200 ops/load/run.sh`.
 
 ## Run 1: 50 req/s for 2 minutes
 
@@ -82,7 +82,7 @@ the thresholds in this document are not tightened further.
 
 ## Conclusions
 
-**Alert thresholds** (`deploy/grafana/alerting/discount.yaml`) hold with a wide margin at
+**Alert thresholds** (`ops/grafana/alerting/discount.yaml`) hold with a wide margin at
 50 req/s and the redeem one still holds at 200 req/s on a shared laptop:
 
 - `POST /v1/redeem` p95 > 500 ms: measured 11 ms at 50 req/s, 229 ms at 200 req/s client

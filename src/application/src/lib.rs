@@ -26,8 +26,8 @@ pub use exchange_rates::{
     parse_rate_table, rates_age, source_status,
 };
 pub use ports::{
-    CatalogSnapshot, Clock, Event, EventPublisher, ExchangeRateSource, ExchangeRateSourceRecord,
-    FetchOutcome, PricingFn, PromotionCatalog, RateFetcher, Redemption, RedemptionError,
-    RedemptionRepository, RedemptionStatus, ReserveOutcome, SourcePair, StorageError,
-    transition_allowed,
+    CatalogSnapshot, CatalogState, Clock, Event, EventPublisher, ExchangeRateSource,
+    ExchangeRateSourceRecord, FetchOutcome, PricingFn, PromotionCatalog, RateFetcher, Redemption,
+    RedemptionError, RedemptionRepository, RedemptionStatus, ReserveOutcome, SourcePair,
+    StorageError, transition_allowed,
 };

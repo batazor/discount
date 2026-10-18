@@ -31,7 +31,7 @@ Voucherify, commercetools) pulls rates from a provider on a schedule; here nothi
 
 Outside the verified scope: everything here. The fetcher, scheduler, storage, HTTP
 resource, telemetry, alert rule and console screen live in `src/application/`,
-`src/infrastructure/`, `src/ui/` and `deploy/grafana/`. `src/domain/`,
+`src/infrastructure/`, `src/ui/` and `ops/grafana/`. `src/domain/`,
 `verification/` and the JSON contract of `PricingInput` do not change.
 
 ## Capabilities
@@ -58,5 +58,5 @@ resource, telemetry, alert rule and console screen live in `src/application/`,
   the workspace for `src/client`), a scheduler task in `discount-server`, a migration adding
   the source row and the origin columns, handlers, metrics.
 - `src/ui/`: Settings → Exchange rates.
-- `deploy/grafana/alerting/discount.yaml`, `docs/ubiquitous-language.md` (telemetry
+- `ops/grafana/alerting/discount.yaml`, `docs/ubiquitous-language.md` (telemetry
   vocabulary), `README.md`.

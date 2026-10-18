@@ -8,14 +8,14 @@ from numbers rather than judgement.
 ## Requirements
 
 ### Requirement: Load profile runs against the local stack
-`deploy/load/run.sh` SHALL seed the catalogue and run the k6 script `deploy/load/discount.js`
+`ops/load/run.sh` SHALL seed the catalogue and run the k6 script `ops/load/discount.js`
 from the `grafana/k6` image on the compose network against `discount:8080`, with the
 arrival rate and duration taken from `RATE` (requests per second, default 50) and
-`DURATION` (default `2m`), and SHALL leave the k6 summary in `deploy/load/out/`.
+`DURATION` (default `2m`), and SHALL leave the k6 summary in `ops/load/out/`.
 
 #### Scenario: Default run
-- **WHEN** the compose stack is up and `deploy/load/run.sh` is executed
-- **THEN** it exits zero, `deploy/load/out/summary.json` exists and reports the four
+- **WHEN** the compose stack is up and `ops/load/run.sh` is executed
+- **THEN** it exits zero, `ops/load/out/summary.json` exists and reports the four
   scenarios with their request counts
 
 ### Requirement: Traffic mix mirrors production shapes
@@ -43,5 +43,5 @@ from k6 and from Tempo span metrics, the `db.reserve` share of redeem latency, s
 log lines per request, and the conclusions on alert thresholds and sampling.
 
 #### Scenario: Document matches a run
-- **WHEN** `deploy/load/run.sh` is executed with the documented parameters
+- **WHEN** `ops/load/run.sh` is executed with the documented parameters
 - **THEN** the p95 figures land within the margin stated in the document

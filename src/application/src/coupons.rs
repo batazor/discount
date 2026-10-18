@@ -4,7 +4,7 @@
 use discount_domain::{Coupon, Timestamp};
 
 use crate::ports::{
-    Clock, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog, StorageError,
+    CatalogState, Clock, GenerateCoupons, GrantRule, GrantTrigger, PromotionCatalog, StorageError,
 };
 
 /// Alphabet without `0/O` and `1/I`.
@@ -30,6 +30,8 @@ pub fn render_code(prefix: &str, idx: &[u8; CODE_LENGTH]) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CouponError {
     UnknownPromotion,
+    /// The promotion exists but is paused (spec `catalogue-states`).
+    PromotionPaused,
     InvalidCount,
     NoRuleForTrigger,
     CodeSpaceExhausted,
@@ -52,13 +54,10 @@ impl GenerateCouponsUseCase<'_> {
         if req.count == 0 || req.count > MAX_BATCH {
             return Err(CouponError::InvalidCount);
         }
-        if self
-            .catalog
-            .get_promotion(&req.promotion_id)
-            .await?
-            .is_none()
-        {
-            return Err(CouponError::UnknownPromotion);
+        match self.catalog.get_promotion_state(&req.promotion_id).await? {
+            None => return Err(CouponError::UnknownPromotion),
+            Some(CatalogState::Paused) => return Err(CouponError::PromotionPaused),
+            Some(CatalogState::Active) => {}
         }
         let mut coupons: Vec<Coupon> = Vec::with_capacity(req.count as usize);
         let mut attempts = 0;
@@ -119,6 +118,11 @@ impl GrantCoupon<'_> {
         }
         let rules = self.catalog.list_grant_rules().await?;
         let rule = pick_rule(&rules, trigger).ok_or(CouponError::NoRuleForTrigger)?;
+        match self.catalog.get_promotion_state(&rule.promotion_id).await? {
+            None => return Err(CouponError::UnknownPromotion),
+            Some(CatalogState::Paused) => return Err(CouponError::PromotionPaused),
+            Some(CatalogState::Active) => {}
+        }
         let now: Timestamp = self.clock.now();
         let mut code = render_code(
             &format!("{}-", trigger.as_str().to_uppercase()),

@@ -6,14 +6,16 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, MatchedPath, Path, Query, Request, State};
+use axum::extract::{FromRequest, FromRequestParts, MatchedPath, Path, Query, Request, State};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use discount_application::ports::{
-    Clock, EventPublisher, ExchangeRateSource, GenerateCoupons, GrantRule, GrantTrigger,
-    PromotionCatalog, PromotionMetadata, RateFetcher, RedemptionError, RedemptionRepository,
-    ReserveOutcome, StorageError,
+    CatalogState, Clock, EventPublisher, ExchangeRateSource, GenerateCoupons, GrantRule,
+    GrantTrigger, Principal, PromotionCatalog, PromotionMetadata, RateFetcher, RedemptionError,
+    RedemptionRepository, ReserveOutcome, StorageError, Tenancy, Tenant,
 };
 use discount_application::{
     CancelRedemption, CodeSource, ConfirmRedemption, CouponError, CustomerCouponError, Evaluate,
@@ -31,18 +33,193 @@ use tower_http::trace::TraceLayer;
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::auth::{AuthError, Verifier, local_principal, required_scope};
 use crate::telemetry::{Instruments, evaluate_span};
 
 /// Everything a request handler needs. Ports are trait objects so the binary and the tests
 /// can plug different implementations.
 pub struct AppState {
-    pub catalog: Arc<dyn PromotionCatalog>,
-    pub redemptions: Arc<dyn RedemptionRepository>,
+    /// Store handles per tenant and tenant administration (ADR 12).
+    pub tenancy: Arc<dyn Tenancy>,
+    pub auth: AuthMode,
     pub clock: Arc<dyn Clock>,
     pub events: Arc<dyn EventPublisher>,
     pub codes: Arc<dyn CodeSource>,
     pub fetcher: Arc<dyn RateFetcher>,
     pub instruments: Instruments,
+}
+
+/// How requests are authenticated (spec `access-control`).
+#[derive(Clone)]
+pub enum AuthMode {
+    /// `DISCOUNT_AUTH=off`: everything runs as tenant `default` with every scope.
+    Off,
+    Oidc {
+        verifier: Arc<Verifier>,
+        autocreate_tenants: bool,
+    },
+}
+
+/// The request's principal and the stores of its tenant. Handlers take it as an extractor;
+/// the `authenticate` middleware put the principal into the request extensions.
+pub struct Ctx {
+    pub principal: Principal,
+    pub catalog: Arc<dyn PromotionCatalog>,
+    pub redemptions: Arc<dyn RedemptionRepository>,
+}
+
+impl FromRequestParts<Arc<AppState>> for Ctx {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> Result<Self, Self::Rejection> {
+        let principal = parts
+            .extensions
+            .get::<Principal>()
+            .cloned()
+            .ok_or_else(|| {
+                problem(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal Server Error",
+                    "request reached a handler without a principal",
+                )
+            })?;
+        Ok(Ctx {
+            catalog: state.tenancy.catalog(&principal.tenant_id),
+            redemptions: state.tenancy.redemptions(&principal.tenant_id),
+            principal,
+        })
+    }
+}
+
+impl Ctx {
+    /// The context of an unauthenticated local run (tests, tools): tenant `default`, every
+    /// scope.
+    pub fn local(state: &AppState) -> Ctx {
+        let principal = local_principal();
+        Ctx {
+            catalog: state.tenancy.catalog(&principal.tenant_id),
+            redemptions: state.tenancy.redemptions(&principal.tenant_id),
+            principal,
+        }
+    }
+}
+
+/// RFC 9457 problem details.
+pub fn problem(status: StatusCode, title: &str, detail: impl Into<String>) -> Response {
+    let body = serde_json::json!({
+        "type": "about:blank",
+        "title": title,
+        "status": status.as_u16(),
+        "detail": detail.into(),
+    });
+    let mut res = (status, axum::Json(body)).into_response();
+    res.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/problem+json"),
+    );
+    if status == StatusCode::UNAUTHORIZED {
+        res.headers_mut().insert(
+            axum::http::header::WWW_AUTHENTICATE,
+            axum::http::HeaderValue::from_static("Bearer"),
+        );
+    }
+    res
+}
+
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+}
+
+/// Resolve the principal, check the route family's scope and the tenant, and pass the
+/// request on. Public routes (`required_scope` is `None`) skip everything.
+pub async fn authenticate(
+    State(state): State<Arc<AppState>>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    let path = req.uri().path().to_string();
+    let Some(scope) = required_scope(req.method(), &path) else {
+        return next.run(req).await;
+    };
+    let (principal, oidc) = match &state.auth {
+        AuthMode::Off => (local_principal(), None),
+        AuthMode::Oidc {
+            verifier,
+            autocreate_tenants,
+        } => {
+            let Some(token) = bearer(req.headers()) else {
+                return problem(
+                    StatusCode::UNAUTHORIZED,
+                    "Unauthorized",
+                    AuthError::MissingToken.to_string(),
+                );
+            };
+            let x_tenant = req
+                .headers()
+                .get("x-tenant")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            match verifier.verify(token, x_tenant.as_deref()).await {
+                Ok(p) => (p, Some(*autocreate_tenants)),
+                Err(AuthError::NoTenant) => {
+                    return problem(
+                        StatusCode::FORBIDDEN,
+                        "Forbidden",
+                        AuthError::NoTenant.to_string(),
+                    );
+                }
+                Err(AuthError::KeysUnavailable(m)) => {
+                    return problem(StatusCode::SERVICE_UNAVAILABLE, "Service Unavailable", m);
+                }
+                Err(e) => return problem(StatusCode::UNAUTHORIZED, "Unauthorized", e.to_string()),
+            }
+        }
+    };
+    if !principal.has_scope(scope) {
+        return problem(
+            StatusCode::FORBIDDEN,
+            "Forbidden",
+            format!("missing scope {scope}"),
+        );
+    }
+    if let Some(autocreate) = oidc
+        && !path.starts_with("/v1/tenants")
+    {
+        match state.tenancy.get_tenant(&principal.tenant_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) if autocreate => {
+                let t = Tenant {
+                    tenant_id: principal.tenant_id.clone(),
+                    name: principal.tenant_id.clone(),
+                    created_at: state.clock.now(),
+                };
+                if let Err(e) = state.tenancy.put_tenant(t).await {
+                    return storage_error(&e);
+                }
+            }
+            Ok(None) => {
+                return problem(
+                    StatusCode::FORBIDDEN,
+                    "Forbidden",
+                    format!("unknown tenant {}", principal.tenant_id),
+                );
+            }
+            Err(e) => return storage_error(&e),
+        }
+    }
+    req.extensions_mut().insert(principal);
+    next.run(req).await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +258,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/v1/promotions", get(list_promotions))
         .route("/v1/promotion-metadata", get(list_promotion_metadata))
+        .route(
+            "/v1/promotions/{promotion_id}/state",
+            get(get_promotion_state).put(put_promotion_state),
+        )
+        .route(
+            "/v1/coupons/{code}/state",
+            get(get_coupon_state).put(put_coupon_state),
+        )
+        .route("/v1/tenants", get(list_tenants))
+        .route(
+            "/v1/tenants/{tenant_id}",
+            get(get_tenant).put(put_tenant).delete(delete_tenant),
+        )
         .route(
             "/v1/promotions/{promotion_id}/allowlist",
             get(get_allowlist)
@@ -149,6 +339,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/healthz", get(healthz))
         .route("/openapi.yaml", get(openapi_yaml))
         .route("/docs", get(swagger_ui))
+        .layer(middleware::from_fn_with_state(state.clone(), authenticate))
         .layer(trace_layer())
         .with_state(state)
 }
@@ -309,14 +500,15 @@ fn ok_json<T: Serialize>(v: &T) -> Response {
 /// Run `Evaluate` and emit telemetry for it. Returns the outcome untouched.
 pub async fn evaluate_with_telemetry(
     state: &AppState,
+    ctx: &Ctx,
     request: EvaluateRequest,
 ) -> Result<PricingResult, EvaluateError> {
     let currency = request.cart.currency.clone();
     let span = evaluate_span(&currency, request.cart.lines.len());
     let started = std::time::Instant::now();
     let use_case = Evaluate {
-        catalog: &*state.catalog,
-        redemptions: &*state.redemptions,
+        catalog: &*ctx.catalog,
+        redemptions: &*ctx.redemptions,
         clock: &*state.clock,
         events: &*state.events,
     };
@@ -334,9 +526,10 @@ pub async fn evaluate_with_telemetry(
 
 async fn evaluate(
     State(state): State<Arc<AppState>>,
+    ctx: Ctx,
     StrictJson(request): StrictJson<EvaluateRequest>,
 ) -> Response {
-    match evaluate_with_telemetry(&state, request).await {
+    match evaluate_with_telemetry(&state, &ctx, request).await {
         Ok(result) => ok_json(&result),
         Err(EvaluateError::Pricing(e)) => (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -368,14 +561,15 @@ fn redemption_error(e: RedemptionError) -> Response {
 
 async fn redeem(
     State(state): State<Arc<AppState>>,
+    ctx: Ctx,
     StrictJson(request): StrictJson<RedeemRequest>,
 ) -> Response {
     let currency = request.cart.currency.clone();
     let span = evaluate_span(&currency, request.cart.lines.len());
     let started = std::time::Instant::now();
     let use_case = Redeem {
-        catalog: &*state.catalog,
-        redemptions: &*state.redemptions,
+        catalog: &*ctx.catalog,
+        redemptions: &*ctx.redemptions,
         clock: &*state.clock,
         events: &*state.events,
     };
@@ -399,9 +593,13 @@ async fn redeem(
     }
 }
 
-async fn confirm(State(state): State<Arc<AppState>>, Path(order_id): Path<String>) -> Response {
+async fn confirm(
+    State(state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(order_id): Path<String>,
+) -> Response {
     let use_case = ConfirmRedemption {
-        redemptions: &*state.redemptions,
+        redemptions: &*ctx.redemptions,
         clock: &*state.clock,
         events: &*state.events,
     };
@@ -413,9 +611,13 @@ async fn confirm(State(state): State<Arc<AppState>>, Path(order_id): Path<String
     }
 }
 
-async fn cancel(State(state): State<Arc<AppState>>, Path(order_id): Path<String>) -> Response {
+async fn cancel(
+    State(state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(order_id): Path<String>,
+) -> Response {
     let use_case = CancelRedemption {
-        redemptions: &*state.redemptions,
+        redemptions: &*ctx.redemptions,
         clock: &*state.clock,
         events: &*state.events,
     };
@@ -428,10 +630,11 @@ async fn cancel(State(state): State<Arc<AppState>>, Path(order_id): Path<String>
 }
 
 async fn get_redemption(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(order_id): Path<String>,
 ) -> Response {
-    match state.redemptions.get(&order_id).await {
+    match ctx.redemptions.get(&order_id).await {
         Ok(Some(r)) => ok_json(&r),
         Ok(None) => not_found(),
         Err(e) => redemption_error(e),
@@ -440,32 +643,37 @@ async fn get_redemption(
 
 // ---------------------------------------------------------------- catalogue
 
-async fn get_policy(State(state): State<Arc<AppState>>) -> Response {
-    match state.catalog.get_policy().await {
+async fn get_policy(State(_state): State<Arc<AppState>>, ctx: Ctx) -> Response {
+    match ctx.catalog.get_policy().await {
         Ok(p) => ok_json(&p),
         Err(e) => storage_error(&e),
     }
 }
 
 async fn put_policy(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     StrictJson(policy): StrictJson<PricingPolicy>,
 ) -> Response {
-    match state.catalog.put_policy(policy.clone()).await {
+    match ctx.catalog.put_policy(policy.clone()).await {
         Ok(()) => ok_json(&policy),
         Err(e) => storage_error(&e),
     }
 }
 
-async fn list_groups(State(state): State<Arc<AppState>>) -> Response {
-    match state.catalog.list_groups().await {
+async fn list_groups(State(_state): State<Arc<AppState>>, ctx: Ctx) -> Response {
+    match ctx.catalog.list_groups().await {
         Ok(gs) => ok_json(&gs),
         Err(e) => storage_error(&e),
     }
 }
 
-async fn get_group(State(state): State<Arc<AppState>>, Path(group_id): Path<String>) -> Response {
-    match state.catalog.get_group(&group_id).await {
+async fn get_group(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(group_id): Path<String>,
+) -> Response {
+    match ctx.catalog.get_group(&group_id).await {
         Ok(Some(g)) => ok_json(&g),
         Ok(None) => not_found(),
         Err(e) => storage_error(&e),
@@ -473,22 +681,24 @@ async fn get_group(State(state): State<Arc<AppState>>, Path(group_id): Path<Stri
 }
 
 async fn put_group(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(group_id): Path<String>,
     StrictJson(mut group): StrictJson<StackingGroup>,
 ) -> Response {
     group.group_id = group_id;
-    match state.catalog.put_group(group.clone()).await {
+    match ctx.catalog.put_group(group.clone()).await {
         Ok(()) => ok_json(&group),
         Err(e) => storage_error(&e),
     }
 }
 
 async fn delete_group(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(group_id): Path<String>,
 ) -> Response {
-    match state.catalog.delete_group(&group_id).await {
+    match ctx.catalog.delete_group(&group_id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),
@@ -500,20 +710,35 @@ async fn delete_group(
 #[serde(deny_unknown_fields)]
 pub struct SourceQuery {
     pub source: Option<String>,
+    /// `?state=active|paused` (spec `catalogue-states`).
+    pub state: Option<CatalogState>,
 }
 
 async fn list_promotions(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Query(q): Query<SourceQuery>,
 ) -> Response {
-    let ps = match state.catalog.list_promotions().await {
+    let ps = match ctx.catalog.list_promotions().await {
         Ok(ps) => ps,
         Err(e) => return storage_error(&e),
     };
+    let mut ps = ps;
+    if let Some(want) = q.state {
+        let mut kept = Vec::new();
+        for p in ps {
+            match ctx.catalog.get_promotion_state(&p.promotion_id).await {
+                Ok(Some(st)) if st == want => kept.push(p),
+                Ok(_) => {}
+                Err(e) => return storage_error(&e),
+            }
+        }
+        ps = kept;
+    }
     match q.source {
         None => ok_json(&ps),
         Some(src) => {
-            let md = match state.catalog.list_metadata().await {
+            let md = match ctx.catalog.list_metadata().await {
                 Ok(md) => md,
                 Err(e) => return storage_error(&e),
             };
@@ -539,10 +764,11 @@ pub struct MetadataEntry {
 }
 
 async fn list_promotion_metadata(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Query(q): Query<SourceQuery>,
 ) -> Response {
-    match state.catalog.list_metadata().await {
+    match ctx.catalog.list_metadata().await {
         Ok(md) => {
             let entries: Vec<MetadataEntry> = md
                 .into_iter()
@@ -559,10 +785,11 @@ async fn list_promotion_metadata(
 }
 
 async fn get_promotion_metadata(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
 ) -> Response {
-    match state.catalog.get_metadata(&promotion_id).await {
+    match ctx.catalog.get_metadata(&promotion_id).await {
         Ok(Some(m)) => ok_json(&m),
         Ok(None) => not_found(),
         Err(e) => storage_error(&e),
@@ -570,14 +797,15 @@ async fn get_promotion_metadata(
 }
 
 async fn put_promotion_metadata(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
     StrictJson(metadata): StrictJson<PromotionMetadata>,
 ) -> Response {
     if let Err(msg) = metadata.check() {
         return decode_error(msg);
     }
-    match state
+    match ctx
         .catalog
         .put_metadata(&promotion_id, metadata.clone())
         .await
@@ -589,12 +817,69 @@ async fn put_promotion_metadata(
 }
 
 async fn delete_promotion_metadata(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
 ) -> Response {
-    match state.catalog.delete_metadata(&promotion_id).await {
+    match ctx.catalog.delete_metadata(&promotion_id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+// ---------------------------------------------------------------- tenants
+
+async fn list_tenants(State(state): State<Arc<AppState>>) -> Response {
+    match state.tenancy.list_tenants().await {
+        Ok(ts) => ok_json(&ts),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn get_tenant(State(state): State<Arc<AppState>>, Path(tenant_id): Path<String>) -> Response {
+    match state.tenancy.get_tenant(&tenant_id).await {
+        Ok(Some(t)) => ok_json(&t),
+        Ok(None) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn put_tenant(
+    State(state): State<Arc<AppState>>,
+    Path(tenant_id): Path<String>,
+    StrictJson(mut tenant): StrictJson<Tenant>,
+) -> Response {
+    if !Tenant::valid_id(&tenant_id) {
+        return decode_error("tenant_id must match ^[a-z][a-z0-9_-]{0,63}$".into());
+    }
+    if tenant.name.is_empty() || tenant.name.chars().count() > 200 {
+        return decode_error("name must be 1..=200 characters".into());
+    }
+    tenant.tenant_id = tenant_id;
+    tenant.created_at = match state.tenancy.get_tenant(&tenant.tenant_id).await {
+        Ok(Some(existing)) => existing.created_at,
+        Ok(None) => state.clock.now(),
+        Err(e) => return storage_error(&e),
+    };
+    match state.tenancy.put_tenant(tenant.clone()).await {
+        Ok(()) => ok_json(&tenant),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn delete_tenant(
+    State(state): State<Arc<AppState>>,
+    Path(tenant_id): Path<String>,
+) -> Response {
+    match state.tenancy.delete_tenant(&tenant_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(StorageError::Conflict(m)) => (
+            StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({ "error": "TenantHasRedemptions", "detail": m })),
+        )
+            .into_response(),
         Err(e) => storage_error(&e),
     }
 }
@@ -611,10 +896,11 @@ pub struct AllowlistBody {
 pub const MAX_ALLOWLIST: usize = 100_000;
 
 async fn get_allowlist(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
 ) -> Response {
-    match state.catalog.get_allowlist(&promotion_id).await {
+    match ctx.catalog.get_allowlist(&promotion_id).await {
         Ok(Some(customer_ids)) => ok_json(&AllowlistBody { customer_ids }),
         Ok(None) => not_found(),
         Err(e) => storage_error(&e),
@@ -622,7 +908,8 @@ async fn get_allowlist(
 }
 
 async fn put_allowlist(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
     StrictJson(body): StrictJson<AllowlistBody>,
 ) -> Response {
@@ -637,11 +924,7 @@ async fn put_allowlist(
     let mut ids = body.customer_ids;
     ids.sort();
     ids.dedup();
-    match state
-        .catalog
-        .put_allowlist(&promotion_id, ids.clone())
-        .await
-    {
+    match ctx.catalog.put_allowlist(&promotion_id, ids.clone()).await {
         Ok(true) => ok_json(&AllowlistBody { customer_ids: ids }),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),
@@ -649,10 +932,11 @@ async fn put_allowlist(
 }
 
 async fn delete_allowlist(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
 ) -> Response {
-    match state.catalog.delete_allowlist(&promotion_id).await {
+    match ctx.catalog.delete_allowlist(&promotion_id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),
@@ -660,10 +944,11 @@ async fn delete_allowlist(
 }
 
 async fn is_allowlisted(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path((promotion_id, customer_id)): Path<(String, String)>,
 ) -> Response {
-    match state
+    match ctx
         .catalog
         .is_allowlisted(&promotion_id, &customer_id)
         .await
@@ -675,10 +960,11 @@ async fn is_allowlisted(
 }
 
 async fn add_to_allowlist(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path((promotion_id, customer_id)): Path<(String, String)>,
 ) -> Response {
-    match state
+    match ctx
         .catalog
         .add_to_allowlist(&promotion_id, &customer_id)
         .await
@@ -690,10 +976,11 @@ async fn add_to_allowlist(
 }
 
 async fn remove_from_allowlist(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path((promotion_id, customer_id)): Path<(String, String)>,
 ) -> Response {
-    match state
+    match ctx
         .catalog
         .remove_from_allowlist(&promotion_id, &customer_id)
         .await
@@ -705,10 +992,11 @@ async fn remove_from_allowlist(
 }
 
 async fn get_promotion(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
 ) -> Response {
-    match state.catalog.get_promotion(&promotion_id).await {
+    match ctx.catalog.get_promotion(&promotion_id).await {
         Ok(Some(p)) => ok_json(&p),
         Ok(None) => not_found(),
         Err(e) => storage_error(&e),
@@ -716,23 +1004,25 @@ async fn get_promotion(
 }
 
 async fn put_promotion(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
     StrictJson(mut promotion): StrictJson<Promotion>,
 ) -> Response {
     promotion.promotion_id = promotion_id;
     promotion.remaining_budget = None;
-    match state.catalog.put_promotion(promotion.clone()).await {
+    match ctx.catalog.put_promotion(promotion.clone()).await {
         Ok(()) => ok_json(&promotion),
         Err(e) => storage_error(&e),
     }
 }
 
 async fn delete_promotion(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
 ) -> Response {
-    match state.catalog.archive_promotion(&promotion_id).await {
+    match ctx.catalog.archive_promotion(&promotion_id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),
@@ -740,10 +1030,11 @@ async fn delete_promotion(
 }
 
 async fn get_budget(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
 ) -> Response {
-    match state.catalog.get_budget(&promotion_id).await {
+    match ctx.catalog.get_budget(&promotion_id).await {
         Ok(Some(remaining)) => ok_json(&BudgetBody { remaining }),
         Ok(None) => not_found(),
         Err(e) => storage_error(&e),
@@ -751,11 +1042,12 @@ async fn get_budget(
 }
 
 async fn put_budget(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(promotion_id): Path<String>,
     StrictJson(body): StrictJson<BudgetBody>,
 ) -> Response {
-    match state
+    match ctx
         .catalog
         .put_budget(&promotion_id, body.remaining.clone())
         .await
@@ -766,15 +1058,97 @@ async fn put_budget(
     }
 }
 
-async fn list_coupons(State(state): State<Arc<AppState>>) -> Response {
-    match state.catalog.list_coupons().await {
-        Ok(cs) => ok_json(&cs),
+async fn list_coupons(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Query(q): Query<SourceQuery>,
+) -> Response {
+    let cs = match ctx.catalog.list_coupons().await {
+        Ok(cs) => cs,
+        Err(e) => return storage_error(&e),
+    };
+    let Some(want) = q.state else {
+        return ok_json(&cs);
+    };
+    let mut kept = Vec::new();
+    for c in cs {
+        match ctx.catalog.get_coupon_state(&c.code).await {
+            Ok(Some(st)) if st == want => kept.push(c),
+            Ok(_) => {}
+            Err(e) => return storage_error(&e),
+        }
+    }
+    ok_json(&kept)
+}
+
+// ---------------------------------------------------------------- states
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateBody {
+    pub state: CatalogState,
+}
+
+async fn get_promotion_state(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(promotion_id): Path<String>,
+) -> Response {
+    match ctx.catalog.get_promotion_state(&promotion_id).await {
+        Ok(Some(state)) => ok_json(&StateBody { state }),
+        Ok(None) => not_found(),
         Err(e) => storage_error(&e),
     }
 }
 
-async fn get_coupon(State(state): State<Arc<AppState>>, Path(code): Path<String>) -> Response {
-    match state.catalog.get_coupon(&code).await {
+async fn put_promotion_state(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(promotion_id): Path<String>,
+    StrictJson(body): StrictJson<StateBody>,
+) -> Response {
+    match ctx
+        .catalog
+        .set_promotion_state(&promotion_id, body.state)
+        .await
+    {
+        Ok(true) => ok_json(&body),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn get_coupon_state(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(code): Path<String>,
+) -> Response {
+    match ctx.catalog.get_coupon_state(&code).await {
+        Ok(Some(state)) => ok_json(&StateBody { state }),
+        Ok(None) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn put_coupon_state(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(code): Path<String>,
+    StrictJson(body): StrictJson<StateBody>,
+) -> Response {
+    match ctx.catalog.set_coupon_state(&code, body.state).await {
+        Ok(true) => ok_json(&body),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn get_coupon(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(code): Path<String>,
+) -> Response {
+    match ctx.catalog.get_coupon(&code).await {
         Ok(Some(c)) => ok_json(&c),
         Ok(None) => not_found(),
         Err(e) => storage_error(&e),
@@ -782,28 +1156,33 @@ async fn get_coupon(State(state): State<Arc<AppState>>, Path(code): Path<String>
 }
 
 async fn put_coupon(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(code): Path<String>,
     StrictJson(mut coupon): StrictJson<Coupon>,
 ) -> Response {
     coupon.code = code;
     coupon.uses = 0; // derived from redemptions, never stored
-    match state.catalog.put_coupon(coupon.clone()).await {
+    match ctx.catalog.put_coupon(coupon.clone()).await {
         Ok(()) => ok_json(&coupon),
         Err(e) => storage_error(&e),
     }
 }
 
-async fn delete_coupon(State(state): State<Arc<AppState>>, Path(code): Path<String>) -> Response {
-    match state.catalog.delete_coupon(&code).await {
+async fn delete_coupon(
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
+    Path(code): Path<String>,
+) -> Response {
+    match ctx.catalog.delete_coupon(&code).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),
     }
 }
 
-async fn list_rates(State(state): State<Arc<AppState>>) -> Response {
-    match state.catalog.list_rates().await {
+async fn list_rates(State(_state): State<Arc<AppState>>, ctx: Ctx) -> Response {
+    match ctx.catalog.list_rates().await {
         Ok(rs) => ok_json(&rs),
         Err(e) => storage_error(&e),
     }
@@ -817,7 +1196,8 @@ pub struct RateBody {
 }
 
 async fn put_rate(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path((from, to)): Path<(String, String)>,
     StrictJson(body): StrictJson<RateBody>,
 ) -> Response {
@@ -827,17 +1207,18 @@ async fn put_rate(
         numerator: body.numerator,
         denominator: body.denominator,
     };
-    match state.catalog.put_rate(rate.clone()).await {
+    match ctx.catalog.put_rate(rate.clone()).await {
         Ok(()) => ok_json(&rate),
         Err(e) => storage_error(&e),
     }
 }
 
 async fn delete_rate(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path((from, to)): Path<(String, String)>,
 ) -> Response {
-    match state.catalog.delete_rate(&from, &to).await {
+    match ctx.catalog.delete_rate(&from, &to).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),
@@ -858,39 +1239,48 @@ fn refresh_error(e: RefreshError) -> Response {
     }
 }
 
-async fn status_json(state: &AppState) -> Response {
-    match crate::rates::status(state).await {
+async fn status_json(state: &AppState, ctx: &Ctx) -> Response {
+    match crate::rates::status(&*ctx.catalog, state.clock.now()).await {
         Ok(s) => ok_json(&s),
         Err(e) => refresh_error(e),
     }
 }
 
-async fn get_rate_source(State(state): State<Arc<AppState>>) -> Response {
-    status_json(&state).await
+async fn get_rate_source(State(state): State<Arc<AppState>>, ctx: Ctx) -> Response {
+    status_json(&state, &ctx).await
 }
 
 async fn put_rate_source(
     State(state): State<Arc<AppState>>,
+    ctx: Ctx,
     StrictJson(source): StrictJson<ExchangeRateSource>,
 ) -> Response {
     if let Err(m) = source.check() {
         return decode_error(m);
     }
-    if let Err(e) = state
-        .catalog
-        .put_rate_source(source, state.clock.now())
-        .await
-    {
+    if let Err(e) = ctx.catalog.put_rate_source(source, state.clock.now()).await {
         return storage_error(&e);
     }
-    crate::rates::publish_freshness(&state).await;
-    status_json(&state).await
+    crate::rates::publish_freshness(
+        &ctx.principal.tenant_id,
+        &*ctx.catalog,
+        &*state.clock,
+        &state.instruments,
+    )
+    .await;
+    status_json(&state, &ctx).await
 }
 
-async fn delete_rate_source(State(state): State<Arc<AppState>>) -> Response {
-    match state.catalog.delete_rate_source().await {
+async fn delete_rate_source(State(state): State<Arc<AppState>>, ctx: Ctx) -> Response {
+    match ctx.catalog.delete_rate_source().await {
         Ok(true) => {
-            crate::rates::publish_freshness(&state).await;
+            crate::rates::publish_freshness(
+                &ctx.principal.tenant_id,
+                &*ctx.catalog,
+                &*state.clock,
+                &state.instruments,
+            )
+            .await;
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(false) => not_found(),
@@ -898,9 +1288,17 @@ async fn delete_rate_source(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
-async fn refresh_rate_source(State(state): State<Arc<AppState>>) -> Response {
-    match crate::rates::refresh(&state).await {
-        Ok(_) => status_json(&state).await,
+async fn refresh_rate_source(State(state): State<Arc<AppState>>, ctx: Ctx) -> Response {
+    match crate::rates::refresh(
+        &ctx.principal.tenant_id,
+        &*ctx.catalog,
+        &*state.fetcher,
+        &*state.clock,
+        &state.instruments,
+    )
+    .await
+    {
+        Ok(_) => status_json(&state, &ctx).await,
         Err(e) => refresh_error(e),
     }
 }
@@ -910,6 +1308,11 @@ async fn refresh_rate_source(State(state): State<Arc<AppState>>) -> Response {
 fn coupon_error(e: CouponError) -> Response {
     match e {
         CouponError::UnknownPromotion | CouponError::NoRuleForTrigger => not_found(),
+        CouponError::PromotionPaused => (
+            StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({ "error": "PromotionPaused" })),
+        )
+            .into_response(),
         CouponError::InvalidCount => decode_error("count must be between 1 and 10000".into()),
         CouponError::CodeSpaceExhausted => (
             StatusCode::CONFLICT,
@@ -922,10 +1325,11 @@ fn coupon_error(e: CouponError) -> Response {
 
 async fn generate_coupons(
     State(state): State<Arc<AppState>>,
+    ctx: Ctx,
     StrictJson(req): StrictJson<GenerateCoupons>,
 ) -> Response {
     let uc = GenerateCouponsUseCase {
-        catalog: &*state.catalog,
+        catalog: &*ctx.catalog,
         codes: &*state.codes,
     };
     match uc.run(req).await {
@@ -944,10 +1348,11 @@ pub struct GrantRequest {
 
 async fn grant_coupon(
     State(state): State<Arc<AppState>>,
+    ctx: Ctx,
     StrictJson(req): StrictJson<GrantRequest>,
 ) -> Response {
     let uc = GrantCoupon {
-        catalog: &*state.catalog,
+        catalog: &*ctx.catalog,
         codes: &*state.codes,
         clock: &*state.clock,
     };
@@ -957,18 +1362,19 @@ async fn grant_coupon(
     }
 }
 
-async fn list_grant_rules(State(state): State<Arc<AppState>>) -> Response {
-    match state.catalog.list_grant_rules().await {
+async fn list_grant_rules(State(_state): State<Arc<AppState>>, ctx: Ctx) -> Response {
+    match ctx.catalog.list_grant_rules().await {
         Ok(rs) => ok_json(&rs),
         Err(e) => storage_error(&e),
     }
 }
 
 async fn get_grant_rule(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(rule_id): Path<String>,
 ) -> Response {
-    match state.catalog.get_grant_rule(&rule_id).await {
+    match ctx.catalog.get_grant_rule(&rule_id).await {
         Ok(Some(r)) => ok_json(&r),
         Ok(None) => not_found(),
         Err(e) => storage_error(&e),
@@ -976,7 +1382,8 @@ async fn get_grant_rule(
 }
 
 async fn put_grant_rule(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(rule_id): Path<String>,
     StrictJson(mut rule): StrictJson<GrantRule>,
 ) -> Response {
@@ -984,17 +1391,18 @@ async fn put_grant_rule(
     if rule.validity_seconds < 1 || rule.max_uses.is_some_and(|m| m < 0) {
         return decode_error("validity_seconds must be >= 1 and max_uses >= 0".into());
     }
-    match state.catalog.put_grant_rule(rule.clone()).await {
+    match ctx.catalog.put_grant_rule(rule.clone()).await {
         Ok(()) => ok_json(&rule),
         Err(e) => storage_error(&e),
     }
 }
 
 async fn delete_grant_rule(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(rule_id): Path<String>,
 ) -> Response {
-    match state.catalog.delete_grant_rule(&rule_id).await {
+    match ctx.catalog.delete_grant_rule(&rule_id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),
@@ -1015,20 +1423,21 @@ fn customer_coupon_error(e: CustomerCouponError) -> Response {
     }
 }
 
-fn list_use_case(state: &AppState) -> ListCustomerCoupons<'_> {
+fn list_use_case<'a>(state: &'a AppState, ctx: &'a Ctx) -> ListCustomerCoupons<'a> {
     ListCustomerCoupons {
-        catalog: &*state.catalog,
-        redemptions: &*state.redemptions,
+        catalog: &*ctx.catalog,
+        redemptions: &*ctx.redemptions,
         clock: &*state.clock,
     }
 }
 
 async fn list_customer_coupons(
     State(state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path(customer_id): Path<String>,
     Query(q): Query<SourceQuery>,
 ) -> Response {
-    match list_use_case(&state)
+    match list_use_case(&state, &ctx)
         .run_filtered(&customer_id, q.source.as_deref())
         .await
     {
@@ -1039,10 +1448,11 @@ async fn list_customer_coupons(
 
 async fn save_customer_coupon(
     State(state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path((customer_id, code)): Path<(String, String)>,
 ) -> Response {
     let uc = SaveCustomerCoupon {
-        list: list_use_case(&state),
+        list: list_use_case(&state, &ctx),
     };
     match uc.run(&customer_id, &code).await {
         Ok(c) => ok_json(&c),
@@ -1051,10 +1461,11 @@ async fn save_customer_coupon(
 }
 
 async fn forget_customer_coupon(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
+    ctx: Ctx,
     Path((customer_id, code)): Path<(String, String)>,
 ) -> Response {
-    match state.catalog.forget_coupon(&customer_id, &code).await {
+    match ctx.catalog.forget_coupon(&customer_id, &code).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),

@@ -7,20 +7,23 @@ whole chain can be checked on a laptop.
 ## Requirements
 
 ### Requirement: Local observability stack
-The repository SHALL provide `deploy/compose.yaml` starting `grafana/otel-lgtm` (collector,
-Prometheus, Tempo, Loki, Grafana), the discount service and the admin console, with
+The repository SHALL provide `ops/compose.yaml` starting `grafana/otel-lgtm` (collector,
+Prometheus, Tempo, Loki, Grafana), the discount service, the admin console and
+`alert-sink` (`ops/alert-sink/sink.py`: receives Grafana's alert webhooks, prints one
+JSON line per notification, serves the last 100 on `GET /`), with
 Grafana on `:3000` (anonymous admin), OTLP on `:4317`/`:4318`, the service on `:8080` and
-the console on `:4321`, the service exporting to the collector and the console pointed at
+the console on `:4321`, the sink on `:9095`, the service exporting to the collector and the console pointed at
 the service.
 
 #### Scenario: Stack comes up healthy
-- **WHEN** `docker compose -f deploy/compose.yaml up -d` finishes
+- **WHEN** `docker compose -f ops/compose.yaml up -d` finishes
 - **THEN** `GET http://localhost:3000/api/health` returns `200`,
   `GET http://localhost:8080/healthz` returns `200` and
-  `GET http://localhost:4321/healthz` returns `200`
+  `GET http://localhost:4321/healthz` returns `200` and `GET http://localhost:9095/`
+  returns `200` with a JSON list
 
 ### Requirement: Provisioned dashboards
-Grafana SHALL load the dashboards from `deploy/grafana/dashboards/*.json` into a
+Grafana SHALL load the dashboards from `ops/grafana/dashboards/*.json` into a
 `Discount` folder on start. Three dashboards SHALL exist:
 - **Discount engine overview**: evaluations per second by outcome, p50/p95/p99 of
   `discount.evaluate.duration`, error rate, total discount granted per minute, distribution
@@ -41,14 +44,14 @@ Grafana SHALL load the dashboards from `deploy/grafana/dashboards/*.json` into a
 - **THEN** the overview panels return non-empty series for `discount_evaluations_total`
 
 ### Requirement: Smoke script
-`deploy/smoke.sh` SHALL post the fixture carts to the running service and then assert,
+`ops/smoke.sh` SHALL post the fixture carts to the running service and then assert,
 through Grafana's data source proxies, that `discount_evaluations_total` is present in
 Prometheus, that a trace with `service.name=discount` is found in Tempo, and that a log
 line is found in Loki; it SHALL also assert that the console answers `GET /healthz` and
 that its promotions page lists `P1`; it SHALL exit non-zero otherwise.
 
 #### Scenario: Smoke passes on a fresh stack
-- **WHEN** the stack is up and `deploy/smoke.sh` runs
+- **WHEN** the stack is up and `ops/smoke.sh` runs
 - **THEN** it prints the checks as passed, including the console check, and exits `0`
 
 ### Requirement: HTTP RED metrics come from span metrics
@@ -64,13 +67,13 @@ service for this.
 
 ### Requirement: Provisioned alert rules
 The local stack SHALL provision Grafana-managed alert rules from
-`deploy/grafana/alerting/*.yaml` into folder `Discount`, group `discount` evaluated every
+`ops/grafana/alerting/*.yaml` into folder `Discount`, group `discount` evaluated every
 minute. Each rule SHALL carry labels `service=discount` and `severity` and link to the
 dashboard panel it is derived from. No contact point SHALL be provisioned.
 
 #### Scenario: Rules present after start
 - **WHEN** Grafana is up
-- **THEN** `GET /api/v1/provisioning/alert-rules` lists the rules with uids prefixed
+- **THEN** `GET /api/v1/provisioning/alert-rules` lists the six rules with uids prefixed
   `discount-`, all in folder `Discount`, including `discount-exchange-rates-stale`
 
 #### Scenario: Rule set
@@ -78,14 +81,21 @@ dashboard panel it is derived from. No contact point SHALL be provisioned.
 - **THEN** they are: HTTP 5xx ratio per route above 5 % for 5 minutes (`warning`); p95
   latency of `POST /v1/redeem` above 500 ms for 5 minutes (`warning`); pricing error ratio
   above 20 % for 10 minutes (`warning`); a promotion with `discount.budget.remaining` at or
-  below zero for 1 minute (`critical`); redemption storage errors (`critical`); exchange
-  rates stale, `discount.exchange_rates.stale == 1` for 5 minutes (`warning`)
+  below zero for 1 minute (`critical`); any `discount.redemptions{outcome="error"}` in
+  5 minutes (`critical`); exchange rates stale,
+  `discount.exchange_rates.stale == 1` for 5 minutes (`warning`)
 
 #### Scenario: Exhausted budget fires
 - **WHEN** a promotion's remaining budget is set to `0` and the gauge has been exported
 - **THEN** within three minutes the rule `Promotion budget exhausted` is `Alerting` with
   label `promotion_id` naming that promotion, and returns to `Normal` after the budget is
   restored
+
+#### Scenario: Firing alert is delivered
+- **WHEN** `Promotion budget exhausted` fires for `P1`
+- **THEN** within two minutes `GET http://localhost:9095/` lists a notification with
+  `status` `firing` and an alert labelled `alertname=Promotion budget exhausted`,
+  `promotion_id=P1`; after the budget is restored a `resolved` notification follows
 
 #### Scenario: Stale rates fire
 - **WHEN** a source is set and its provider stays unreachable for three intervals

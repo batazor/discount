@@ -4,10 +4,11 @@
 use std::sync::Arc;
 
 use discount_domain::*;
-use discount_infrastructure::http::AppState;
+use discount_infrastructure::http::{AppState, AuthMode};
 use discount_infrastructure::telemetry::Instruments;
 use discount_infrastructure::{
-    CatalogFixture, FixedClock, InMemoryStore, NoopEventPublisher, PgStore, default_policy,
+    CatalogFixture, FixedClock, InMemoryStore, InMemoryTenants, NoopEventPublisher, PgStore,
+    default_policy,
 };
 
 pub const NOW: i64 = 1_760_227_200;
@@ -19,7 +20,7 @@ pub fn eur(a: i64) -> Money {
 pub fn fixture() -> CatalogFixture {
     CatalogFixture::from_json_file(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../deploy/promotions.json"
+        "/../../ops/promotions.json"
     ))
     .unwrap()
 }
@@ -51,8 +52,8 @@ pub fn sample_cart() -> CartSnapshot {
 
 pub fn state_with(store: InMemoryStore, instruments: Instruments) -> Arc<AppState> {
     Arc::new(AppState {
-        catalog: Arc::new(store.clone()),
-        redemptions: Arc::new(store),
+        tenancy: Arc::new(InMemoryTenants::single(store, default_policy())),
+        auth: AuthMode::Off,
         clock: Arc::new(FixedClock(NOW)),
         events: Arc::new(NoopEventPublisher),
         codes: Arc::new(discount_infrastructure::SequentialCodes::default()),
@@ -94,7 +95,7 @@ pub fn customer_json() -> serde_json::Value {
 }
 
 /// The Postgres the integration tests run against: `DATABASE_URL`, or the `discount_test`
-/// database of the local stack (`docker compose -f deploy/compose.yaml up -d postgres`).
+/// database of the local stack (`docker compose -f ops/compose.yaml up -d postgres`).
 /// Postgres scenarios never skip (ADR 11): without a reachable server the suite fails.
 pub const DEFAULT_TEST_DATABASE_URL: &str =
     "postgres://discount:discount@localhost:5432/discount_test";
@@ -117,7 +118,7 @@ pub async fn pg_store() -> PgStore {
         }
         Err(e) => panic!(
             "Postgres scenarios need a server at {url} ({e}). Start the local one with \
-             `docker compose -f deploy/compose.yaml up -d postgres` or set DATABASE_URL; \
+             `docker compose -f ops/compose.yaml up -d postgres` or set DATABASE_URL; \
              tests do not skip."
         ),
     };

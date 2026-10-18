@@ -48,6 +48,7 @@ pub const ATTR_CLAMPED_BY: &str = "clamped_by";
 pub const ATTR_REASON: &str = "reason";
 pub const ATTR_CURRENCY: &str = "currency";
 pub const ATTR_ACTION: &str = "action";
+pub const ATTR_TENANT_ID: &str = "tenant_id";
 
 /// Span name and attribute keys.
 pub const SPAN_EVALUATE: &str = "discount.evaluate";
@@ -169,9 +170,10 @@ pub struct BudgetCache(Arc<Mutex<Vec<(PromotionId, Money)>>>);
 /// `(seconds since the last successful fetch, stale)`; the age is absent until a fetch succeeded.
 pub type Freshness = (Option<i64>, bool);
 
-/// Freshness of the exchange-rate source for the gauges: `None` while no source is set.
+/// Freshness of each tenant's exchange-rate source for the gauges; a tenant without a
+/// source is absent.
 #[derive(Clone, Default)]
-pub struct RateFreshness(Arc<Mutex<Option<Freshness>>>);
+pub struct RateFreshness(Arc<Mutex<std::collections::BTreeMap<String, Freshness>>>);
 
 /// The metric instruments of the service.
 #[derive(Clone)]
@@ -216,8 +218,10 @@ impl Instruments {
             .with_description("Seconds since the last successful exchange-rate fetch")
             .with_unit("s")
             .with_callback(move |observer| {
-                if let Some((Some(age), _)) = *age_cache.0.lock().unwrap() {
-                    observer.observe(age, &[]);
+                for (tenant, (age, _)) in age_cache.0.lock().unwrap().iter() {
+                    if let Some(age) = age {
+                        observer.observe(*age, &[KeyValue::new(ATTR_TENANT_ID, tenant.clone())]);
+                    }
                 }
             })
             .build();
@@ -227,8 +231,11 @@ impl Instruments {
             .with_description("1 while the exchange rates are older than the source's maximum age")
             .with_unit("1")
             .with_callback(move |observer| {
-                if let Some((_, stale)) = *stale_cache.0.lock().unwrap() {
-                    observer.observe(i64::from(stale), &[]);
+                for (tenant, (_, stale)) in stale_cache.0.lock().unwrap().iter() {
+                    observer.observe(
+                        i64::from(*stale),
+                        &[KeyValue::new(ATTR_TENANT_ID, tenant.clone())],
+                    );
                 }
             })
             .build();
@@ -289,9 +296,17 @@ impl Instruments {
         *self.budgets.0.lock().unwrap() = budgets;
     }
 
-    /// Publish the exchange-rate freshness for the gauges; `None` removes them.
-    pub fn set_rate_freshness(&self, freshness: Option<Freshness>) {
-        *self.freshness.0.lock().unwrap() = freshness;
+    /// Publish one tenant's exchange-rate freshness for the gauges; `None` removes it.
+    pub fn set_rate_freshness(&self, tenant_id: &str, freshness: Option<Freshness>) {
+        let mut map = self.freshness.0.lock().unwrap();
+        match freshness {
+            Some(f) => {
+                map.insert(tenant_id.to_string(), f);
+            }
+            None => {
+                map.remove(tenant_id);
+            }
+        }
     }
 
     /// `discount.exchange_rates.fetches{outcome}` for one fetch.
@@ -458,11 +473,12 @@ impl Instruments {
 /// `record_evaluation`).
 /// The `discount.exchange_rates.fetch` span; the URL is recorded without its query string,
 /// which may carry a provider key.
-pub fn rate_fetch_span(url: &str) -> tracing::Span {
+pub fn rate_fetch_span(url: &str, tenant_id: &str) -> tracing::Span {
     let shown = url.split('?').next().unwrap_or(url).to_string();
     tracing::info_span!(
         SPAN_RATE_FETCH,
         { SPAN_ATTR_SOURCE_URL } = %shown,
+        { ATTR_TENANT_ID } = %tenant_id,
         { SPAN_ATTR_PAIRS } = tracing::field::Empty,
         { SPAN_ATTR_ERROR_TYPE } = tracing::field::Empty,
     )

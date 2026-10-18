@@ -11,10 +11,11 @@ use async_trait::async_trait;
 use discount_application::CodeSource;
 use discount_application::coupons::CODE_LENGTH;
 use discount_application::ports::{
-    CatalogSnapshot, Clock, Counters, Event, EventPublisher, ExchangeRateSource,
-    ExchangeRateSourceRecord, FetchOutcome, GrantRule, GrantTrigger, PricingFn, PromotionCatalog,
-    PromotionMetadata, Redemption, RedemptionError, RedemptionRepository, RedemptionStatus,
-    ReserveOutcome, SourcePair, StorageError, Uses, transition_allowed,
+    CatalogSnapshot, CatalogState, Clock, Counters, DEFAULT_TENANT, Event, EventPublisher,
+    ExchangeRateSource, ExchangeRateSourceRecord, FetchOutcome, GrantRule, GrantTrigger, PricingFn,
+    PromotionCatalog, PromotionMetadata, Redemption, RedemptionError, RedemptionRepository,
+    RedemptionStatus, ReserveOutcome, SourcePair, StorageError, Tenancy, Tenant, Uses,
+    transition_allowed,
 };
 use discount_domain::{
     Coupon, ExchangeRate, Money, OrderCap, PricingPolicy, Promotion, PromotionId, RoundingPolicy,
@@ -25,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// `{"groups": [...], "promotions": [...]}` in the ubiquitous-language encoding, plus the
 /// application state next to the promotions: `coupons`, `exchange_rates`, `metadata`,
 /// `allowlists`, `grant_rules`. `as_of` is the day the fixture's timestamps were written
-/// for; the loader ignores it, `deploy/demo/seed.py` shifts every window by `now - as_of`.
+/// for; the loader ignores it, `ops/demo/seed.py` shifts every window by `now - as_of`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogFixture {
@@ -92,6 +93,8 @@ struct Store {
     rate_source: Option<ExchangeRateSourceRecord>,
     /// Pairs written by the source, with the fetch time; every other pair is `manual`.
     rate_origins: BTreeMap<(String, String), Timestamp>,
+    paused_promotions: std::collections::BTreeSet<String>,
+    paused_coupons: std::collections::BTreeSet<String>,
 }
 
 /// In-memory catalogue and redemption store.
@@ -158,21 +161,30 @@ impl InMemoryStore {
         self
     }
 
-    fn snapshot_locked(s: &Store) -> CatalogSnapshot {
+    /// `only_active` is the pricing snapshot (paused promotions and coupons absent); the
+    /// catalogue listings pass `false`.
+    fn snapshot_locked(s: &Store, only_active: bool) -> CatalogSnapshot {
         let mut snapshot = CatalogSnapshot {
             policy: s.policy.clone().unwrap_or_else(default_policy),
             groups: s.groups.values().cloned().collect(),
             promotions: s
                 .promotions
-                .values()
-                .filter(|p| !p.archived)
-                .map(|p| {
+                .iter()
+                .filter(|(id, p)| {
+                    !p.archived && !(only_active && s.paused_promotions.contains(*id))
+                })
+                .map(|(_, p)| {
                     let mut body = p.body.clone();
                     body.remaining_budget = s.budgets.get(&body.promotion_id).cloned();
                     body
                 })
                 .collect(),
-            coupons: s.coupons.values().cloned().collect(),
+            coupons: s
+                .coupons
+                .iter()
+                .filter(|(code, _)| !(only_active && s.paused_coupons.contains(*code)))
+                .map(|(_, c)| c.clone())
+                .collect(),
             exchange_rates: s.rates.values().cloned().collect(),
         };
         InMemoryStore::counters_locked(s, None).apply_to(&mut snapshot);
@@ -251,7 +263,10 @@ impl InMemoryStore {
 #[async_trait]
 impl PromotionCatalog for InMemoryStore {
     async fn snapshot(&self) -> Result<CatalogSnapshot, StorageError> {
-        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap()))
+        Ok(InMemoryStore::snapshot_locked(
+            &self.inner.lock().unwrap(),
+            true,
+        ))
     }
     async fn get_policy(&self) -> Result<PricingPolicy, StorageError> {
         Ok(self
@@ -291,7 +306,7 @@ impl PromotionCatalog for InMemoryStore {
         Ok(self.inner.lock().unwrap().groups.remove(group_id).is_some())
     }
     async fn list_promotions(&self) -> Result<Vec<Promotion>, StorageError> {
-        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap()).promotions)
+        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap(), false).promotions)
     }
     async fn get_promotion(&self, promotion_id: &str) -> Result<Option<Promotion>, StorageError> {
         let s = self.inner.lock().unwrap();
@@ -358,7 +373,7 @@ impl PromotionCatalog for InMemoryStore {
             .collect())
     }
     async fn list_coupons(&self) -> Result<Vec<Coupon>, StorageError> {
-        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap()).coupons)
+        Ok(InMemoryStore::snapshot_locked(&self.inner.lock().unwrap(), false).coupons)
     }
     async fn get_coupon(&self, code: &str) -> Result<Option<Coupon>, StorageError> {
         Ok(InMemoryStore::coupon_with_uses(
@@ -713,6 +728,60 @@ impl PromotionCatalog for InMemoryStore {
             .map(|(pid, _)| pid.clone())
             .collect())
     }
+    async fn get_promotion_state(
+        &self,
+        promotion_id: &str,
+    ) -> Result<Option<CatalogState>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        Ok(match s.promotions.get(promotion_id) {
+            Some(p) if !p.archived => Some(if s.paused_promotions.contains(promotion_id) {
+                CatalogState::Paused
+            } else {
+                CatalogState::Active
+            }),
+            _ => None,
+        })
+    }
+    async fn set_promotion_state(
+        &self,
+        promotion_id: &str,
+        state: CatalogState,
+    ) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        if !s.promotions.get(promotion_id).is_some_and(|p| !p.archived) {
+            return Ok(false);
+        }
+        match state {
+            CatalogState::Paused => s.paused_promotions.insert(promotion_id.to_string()),
+            CatalogState::Active => s.paused_promotions.remove(promotion_id),
+        };
+        Ok(true)
+    }
+    async fn get_coupon_state(&self, code: &str) -> Result<Option<CatalogState>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        Ok(s.coupons.contains_key(code).then(|| {
+            if s.paused_coupons.contains(code) {
+                CatalogState::Paused
+            } else {
+                CatalogState::Active
+            }
+        }))
+    }
+    async fn set_coupon_state(
+        &self,
+        code: &str,
+        state: CatalogState,
+    ) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        if !s.coupons.contains_key(code) {
+            return Ok(false);
+        }
+        match state {
+            CatalogState::Paused => s.paused_coupons.insert(code.to_string()),
+            CatalogState::Active => s.paused_coupons.remove(code),
+        };
+        Ok(true)
+    }
 }
 
 /// Budget bookkeeping shared with the Postgres adapter's logic: what each applied promotion
@@ -745,7 +814,7 @@ impl RedemptionRepository for InMemoryStore {
         {
             return Ok(ReserveOutcome::Idempotent(existing.clone()));
         }
-        let snapshot = InMemoryStore::snapshot_locked(&s);
+        let snapshot = InMemoryStore::snapshot_locked(&s, true);
         let uses = customer_id
             .map(|c| InMemoryStore::uses_locked(&s, c))
             .unwrap_or_default();
@@ -860,6 +929,110 @@ impl RedemptionRepository for InMemoryStore {
     }
 }
 
+/// Tenants in memory: one `InMemoryStore` per tenant, created with the default policy on
+/// first use (ADR 12). The `default` tenant is seeded from the fixture.
+#[derive(Clone)]
+pub struct InMemoryTenants {
+    inner: Arc<Mutex<BTreeMap<String, (Tenant, InMemoryStore)>>>,
+    policy: PricingPolicy,
+}
+
+impl InMemoryTenants {
+    /// A tenancy whose `default` tenant is `store`.
+    pub fn single(store: InMemoryStore, policy: PricingPolicy) -> InMemoryTenants {
+        let mut map = BTreeMap::new();
+        map.insert(
+            DEFAULT_TENANT.to_string(),
+            (
+                Tenant {
+                    tenant_id: DEFAULT_TENANT.to_string(),
+                    name: "Default".to_string(),
+                    created_at: 0,
+                },
+                store,
+            ),
+        );
+        InMemoryTenants {
+            inner: Arc::new(Mutex::new(map)),
+            policy,
+        }
+    }
+
+    pub fn new(policy: PricingPolicy) -> InMemoryTenants {
+        InMemoryTenants::single(InMemoryStore::new(policy.clone()), policy)
+    }
+
+    /// The store of a tenant, created on first use.
+    pub fn store(&self, tenant_id: &str) -> InMemoryStore {
+        let mut map = self.inner.lock().unwrap();
+        map.entry(tenant_id.to_string())
+            .or_insert_with(|| {
+                (
+                    Tenant {
+                        tenant_id: tenant_id.to_string(),
+                        name: tenant_id.to_string(),
+                        created_at: 0,
+                    },
+                    InMemoryStore::new(self.policy.clone()),
+                )
+            })
+            .1
+            .clone()
+    }
+}
+
+#[async_trait]
+impl Tenancy for InMemoryTenants {
+    fn catalog(&self, tenant_id: &str) -> Arc<dyn PromotionCatalog> {
+        Arc::new(self.store(tenant_id))
+    }
+    fn redemptions(&self, tenant_id: &str) -> Arc<dyn RedemptionRepository> {
+        Arc::new(self.store(tenant_id))
+    }
+    async fn list_tenants(&self) -> Result<Vec<Tenant>, StorageError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .values()
+            .map(|(t, _)| t.clone())
+            .collect())
+    }
+    async fn get_tenant(&self, tenant_id: &str) -> Result<Option<Tenant>, StorageError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .get(tenant_id)
+            .map(|(t, _)| t.clone()))
+    }
+    async fn put_tenant(&self, tenant: Tenant) -> Result<(), StorageError> {
+        let mut map = self.inner.lock().unwrap();
+        match map.get_mut(&tenant.tenant_id) {
+            Some((t, _)) => t.name = tenant.name,
+            None => {
+                map.insert(
+                    tenant.tenant_id.clone(),
+                    (tenant, InMemoryStore::new(self.policy.clone())),
+                );
+            }
+        }
+        Ok(())
+    }
+    async fn delete_tenant(&self, tenant_id: &str) -> Result<bool, StorageError> {
+        let mut map = self.inner.lock().unwrap();
+        if let Some((_, store)) = map.get(tenant_id) {
+            let n = store.inner.lock().unwrap().redemptions.len();
+            if n > 0 {
+                return Err(StorageError::Conflict(format!(
+                    "tenant {tenant_id} still has {n} redemptions"
+                )));
+            }
+        }
+        Ok(map.remove(tenant_id).is_some())
+    }
+}
+
 pub struct SystemClock;
 
 /// Codes from the standard library's randomly keyed hasher over a counter: unpredictable
@@ -947,7 +1120,7 @@ mod tests {
 
     #[tokio::test]
     async fn fixture_file_prices_sample_cart() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../deploy/promotions.json");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/promotions.json");
         let fixture = CatalogFixture::from_json_file(path).expect("fixture loads");
         assert_eq!(fixture.groups.len(), 1);
         assert_eq!(fixture.promotions.len(), 3);
@@ -985,13 +1158,13 @@ mod tests {
         assert_eq!(r.final_total.amount, 3750);
     }
 
-    /// The demo catalogue (`deploy/demo/catalogue.json`) loads and every satellite names a
+    /// The demo catalogue (`ops/demo/catalogue.json`) loads and every satellite names a
     /// promotion that exists; the sample cart prices without a validation error.
     #[tokio::test]
     async fn demo_catalogue_loads_and_is_consistent() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../deploy/demo/catalogue.json"
+            "/../../ops/demo/catalogue.json"
         );
         let fixture = CatalogFixture::from_json_file(path).expect("demo catalogue loads");
         assert!(

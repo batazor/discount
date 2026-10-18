@@ -8,7 +8,7 @@ data instead of three promotions and one cart.
 ## Requirements
 
 ### Requirement: Demo catalogue file
-`deploy/demo/catalogue.json` SHALL be a `CatalogFixture` (groups, promotions, coupons,
+`ops/demo/catalogue.json` SHALL be a `CatalogFixture` (groups, promotions, coupons,
 exchange rates, metadata, allowlists, grant rules, `as_of`) that covers every `Rule`
 variant, both `Action` variants, both `StackingMode`s, an exclusive promotion, a promotion
 with its own `RoundingPolicy`, an amount in another currency than the cart's, and campaigns
@@ -29,7 +29,7 @@ coupon, metadata entry, allowlist and grant rule SHALL name a promotion of the f
   of the file
 
 ### Requirement: Seed script
-`deploy/demo/seed.py` SHALL load the catalogue into a running service through the
+`ops/demo/seed.py` SHALL load the catalogue into a running service through the
 documented API operations, shifting every `DateWindow`, `AttributeDateWindow` and coupon
 window by `now - as_of` (midnight UTC), generate one batch of single-use codes, and then
 play a fixed order history: reservations that are confirmed, left reserved or cancelled,

@@ -1,5 +1,7 @@
 ---
 import { actions } from "astro:actions";
+import { tenantLabel } from "../../model/tenant";
+import { authEnabled } from "../../auth/config";
 import Layout from "../../layouts/Layout.astro";
 import DeleteButton from "../../components/DeleteButton.astro";
 import FormStatus from "../../components/FormStatus.astro";
@@ -13,6 +15,7 @@ import { assembleCampaigns, CAMPAIGN_STATUSES, campaignTitle, describeAction, RU
 import { CONSEQUENCE, TERM } from "../../model/glossary";
 
 const archived = Astro.getActionResult(actions.deletePromotion);
+const access = Astro.locals.access;
 const source = Astro.url.searchParams.get("source")?.trim() || "";
 const query = source ? { source } : {};
 const [promotions, metadata, coupons] = await Promise.all([
@@ -25,10 +28,11 @@ const campaigns = assembleCampaigns(dataOr(promotions, []), dataOr(metadata, [])
 const state = formState(archived?.data, {});
 const rowText = (c: (typeof campaigns)[number]) =>
   [c.promotion.promotion_id, c.metadata?.title, c.metadata?.source, c.promotion.group_id, describeAction(c.promotion.action), ...c.promotion.rules.map((r) => RULE_NAMES[r.type])].filter(Boolean).join(" ").toLowerCase();
+const tenant = tenantLabel(Astro.locals.user ?? null, authEnabled);
 ---
-<Layout title="Campaigns" description="Every active promotion with its budget, codes and status." unreachable={unreachableUrl(promotions, metadata, coupons)}>
+<Layout title="Campaigns" description={`Every active campaign of <b>${tenant.name}</b> with its budget, codes and status.`} unreachable={unreachableUrl(promotions, metadata, coupons)}>
   <Fragment slot="badge">{promotions.ok && <span class="badge badge-muted"><span data-filter-count>{campaigns.length}</span></span>}</Fragment>
-  <a slot="actions" href="/campaigns/new" class="btn btn-primary">New campaign</a>
+  {access.write && <Fragment slot="actions"><a href="/campaigns/templates" class="btn btn-secondary">Templates</a><a href="/campaigns/new" class="btn btn-primary">New campaign</a></Fragment>}
   <FormStatus state={state} okText="Archived." />
   {Astro.url.searchParams.get("archived") && <p role="status" class="alert alert-success mb-4">Archived <span class="mono">{Astro.url.searchParams.get("archived")}</span>.</p>}
   <div data-filter-root>
@@ -65,11 +69,11 @@ const rowText = (c: (typeof campaigns)[number]) =>
               <td class="num"><Money m={c.promotion.remaining_budget} empty="unbounded" /></td>
               <td class="num mono">{c.codes.length}</td>
               <td class="num mono">{c.promotion.uses_total}</td>
-              <td class="actions"><DeleteButton action={actions.deletePromotion} id={c.promotion.promotion_id} label="Archive" size="xs" consequence={CONSEQUENCE.archive} title={`Archive ${campaignTitle(c)}?`} /></td>
+              <td class="actions">{access.write && <DeleteButton action={actions.deletePromotion} id={c.promotion.promotion_id} label="Archive" size="xs" consequence={CONSEQUENCE.archive} title={`Archive ${campaignTitle(c)}?`} />}</td>
             </tr>
           ))}
           {promotions.ok && campaigns.length === 0 && (
-            <tr><td colspan="8" class="empty">{source ? `No campaigns with source "${source}".` : <>No campaigns yet. <a href="/campaigns/new" class="link">Create the first one</a>.</>}</td></tr>
+            <tr><td colspan="8" class="empty">{source ? `No campaigns with source "${source}".` : <>No campaigns yet.{access.write && <> <a href="/campaigns/new" class="link">Create the first one</a>.</>}</>}</td></tr>
           )}
           <tr data-filter-empty hidden><td colspan="8" class="empty">Nothing matches the filter.</td></tr>
         </tbody>

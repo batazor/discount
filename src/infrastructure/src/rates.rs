@@ -6,15 +6,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use discount_application::ports::RateFetcher;
+use discount_application::ports::{Clock, PromotionCatalog, RateFetcher};
 use discount_application::{
     ExchangeRateSourceStatus, FetchReport, RefreshError, RefreshExchangeRates, is_stale, rates_age,
     source_status,
 };
+use discount_domain::Timestamp;
 use tracing::Instrument;
 
-use crate::http::AppState;
-use crate::telemetry::{self, rate_fetch_span};
+use crate::telemetry::{self, Instruments, rate_fetch_span};
 
 /// `GET url` with the source's timeout, three redirects at most, no credentials.
 pub struct ReqwestFetcher {
@@ -83,51 +83,67 @@ impl RateFetcher for CannedFetcher {
 }
 
 /// The status read model as `GET /v1/exchange-rate-source` returns it.
-pub async fn status(state: &AppState) -> Result<ExchangeRateSourceStatus, RefreshError> {
-    let record = state.catalog.get_rate_source().await?;
+pub async fn status(
+    catalog: &dyn PromotionCatalog,
+    now: Timestamp,
+) -> Result<ExchangeRateSourceStatus, RefreshError> {
+    let record = catalog.get_rate_source().await?;
     let pairs = if record.is_some() {
-        state.catalog.list_source_pairs().await?
+        catalog.list_source_pairs().await?
     } else {
         vec![]
     };
-    Ok(source_status(record, pairs, state.clock.now()))
+    Ok(source_status(record, pairs, now))
 }
 
-/// Publish the freshness gauges from the stored record (spec `telemetry`).
-pub async fn publish_freshness(state: &AppState) {
-    let now = state.clock.now();
-    match state.catalog.get_rate_source().await {
-        Ok(record) => state.instruments.set_rate_freshness(
+/// Publish one tenant's freshness gauges from its stored record (spec `telemetry`).
+pub async fn publish_freshness(
+    tenant_id: &str,
+    catalog: &dyn PromotionCatalog,
+    clock: &dyn Clock,
+    instruments: &Instruments,
+) {
+    let now = clock.now();
+    match catalog.get_rate_source().await {
+        Ok(record) => instruments.set_rate_freshness(
+            tenant_id,
             record
                 .as_ref()
                 .map(|r| (rates_age(r, now), is_stale(r, now))),
         ),
-        Err(e) => tracing::warn!(error = %e, "exchange-rate source status unavailable"),
+        Err(e) => tracing::warn!(error = %e, tenant_id, "exchange-rate source status unavailable"),
     }
 }
 
-/// One fetch inside the `discount.exchange_rates.fetch` span, with its metrics and a fresh
-/// gauge value afterwards. Used by `POST /v1/exchange-rate-source/refresh` and the scheduler.
-pub async fn refresh(state: &AppState) -> Result<FetchReport, RefreshError> {
-    let url = match state.catalog.get_rate_source().await {
+/// One fetch for one tenant inside the `discount.exchange_rates.fetch` span, with its
+/// metrics and a fresh gauge value afterwards. Used by `POST /v1/exchange-rate-source/refresh`
+/// and the scheduler.
+pub async fn refresh(
+    tenant_id: &str,
+    catalog: &dyn PromotionCatalog,
+    fetcher: &dyn RateFetcher,
+    clock: &dyn Clock,
+    instruments: &Instruments,
+) -> Result<FetchReport, RefreshError> {
+    let url = match catalog.get_rate_source().await {
         Ok(Some(r)) => r.source.url,
         Ok(None) => return Err(RefreshError::NoSource),
         Err(e) => return Err(RefreshError::Storage(e)),
     };
-    let span = rate_fetch_span(&url);
+    let span = rate_fetch_span(&url, tenant_id);
     let outcome = async {
         let uc = RefreshExchangeRates {
-            catalog: &*state.catalog,
-            fetcher: &*state.fetcher,
-            clock: &*state.clock,
+            catalog,
+            fetcher,
+            clock,
         };
         let outcome = uc.run().await;
         telemetry::record_rate_fetch_outcome(&outcome);
-        state.instruments.record_rate_fetch(&outcome);
+        instruments.record_rate_fetch(&outcome);
         outcome
     }
     .instrument(span)
     .await;
-    publish_freshness(state).await;
+    publish_freshness(tenant_id, catalog, clock, instruments).await;
     outcome
 }

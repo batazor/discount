@@ -8,10 +8,13 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use common::*;
 use discount_application::ports::{Counters, PricingFn, RedemptionRepository, StorageError, Uses};
+use discount_application::ports::{PromotionCatalog, Tenancy, Tenant};
 use discount_application::ports::{Redemption, RedemptionError, RedemptionStatus, ReserveOutcome};
 use discount_domain::*;
 use discount_infrastructure::default_policy;
-use discount_infrastructure::http::{AppState, EvaluateRequest, evaluate_with_telemetry, router};
+use discount_infrastructure::http::{
+    AppState, AuthMode, Ctx, EvaluateRequest, evaluate_with_telemetry, router,
+};
 use discount_infrastructure::telemetry::{self, Instruments};
 use opentelemetry::metrics::MeterProvider;
 use opentelemetry::trace::{SpanId, Status, TraceId, TracerProvider};
@@ -163,6 +166,7 @@ fn span_metrics_and_log_for_a_priced_cart() {
         let r = rt
             .block_on(evaluate_with_telemetry(
                 &h.state,
+                &Ctx::local(&h.state),
                 EvaluateRequest {
                     cart: sample_cart(),
                     customer: CustomerContext::default(),
@@ -235,6 +239,7 @@ fn validation_error_is_counted_and_nothing_applied() {
         cart.lines[1].line_id = "L1".into();
         let r = rt.block_on(evaluate_with_telemetry(
             &h.state,
+            &Ctx::local(&h.state),
             EvaluateRequest {
                 cart,
                 customer: CustomerContext::default(),
@@ -463,6 +468,56 @@ fn pricing_rejection_keeps_status_unset() {
     );
 }
 
+/// A tenancy whose redemption store is down; the catalogue is the harness's in-memory one.
+struct DownTenancy(Arc<dyn PromotionCatalog>);
+
+#[async_trait]
+impl Tenancy for DownTenancy {
+    fn catalog(&self, _: &str) -> Arc<dyn PromotionCatalog> {
+        self.0.clone()
+    }
+    fn redemptions(&self, _: &str) -> Arc<dyn RedemptionRepository> {
+        Arc::new(DownRepository)
+    }
+    async fn list_tenants(&self) -> Result<Vec<Tenant>, StorageError> {
+        Ok(vec![])
+    }
+    async fn get_tenant(&self, _: &str) -> Result<Option<Tenant>, StorageError> {
+        Ok(None)
+    }
+    async fn put_tenant(&self, _: Tenant) -> Result<(), StorageError> {
+        Ok(())
+    }
+    async fn delete_tenant(&self, _: &str) -> Result<bool, StorageError> {
+        Ok(false)
+    }
+}
+
+/// Every tenant maps to the one test `PgStore` (the tenancy of the Postgres telemetry tests).
+struct OneStoreTenancy(Arc<discount_infrastructure::PgStore>);
+
+#[async_trait]
+impl Tenancy for OneStoreTenancy {
+    fn catalog(&self, _: &str) -> Arc<dyn PromotionCatalog> {
+        self.0.clone()
+    }
+    fn redemptions(&self, _: &str) -> Arc<dyn RedemptionRepository> {
+        self.0.clone()
+    }
+    async fn list_tenants(&self) -> Result<Vec<Tenant>, StorageError> {
+        Ok(vec![])
+    }
+    async fn get_tenant(&self, _: &str) -> Result<Option<Tenant>, StorageError> {
+        Ok(None)
+    }
+    async fn put_tenant(&self, _: Tenant) -> Result<(), StorageError> {
+        Ok(())
+    }
+    async fn delete_tenant(&self, _: &str) -> Result<bool, StorageError> {
+        Ok(false)
+    }
+}
+
 /// A redemption repository whose store is down.
 struct DownRepository;
 
@@ -519,8 +574,8 @@ impl RedemptionRepository for DownRepository {
 fn storage_failure_sets_error_status() {
     let h = harness();
     let state = Arc::new(AppState {
-        redemptions: Arc::new(DownRepository),
-        catalog: h.state.catalog.clone(),
+        tenancy: Arc::new(DownTenancy(h.state.tenancy.catalog("default"))),
+        auth: AuthMode::Off,
         clock: h.state.clock.clone(),
         events: h.state.events.clone(),
         codes: h.state.codes.clone(),
@@ -600,8 +655,8 @@ fn pg_state(rt: &tokio::runtime::Runtime, h: &Harness) -> Arc<AppState> {
     let store = rt.block_on(pg_store());
     let store = Arc::new(store);
     Arc::new(AppState {
-        catalog: store.clone(),
-        redemptions: store,
+        tenancy: Arc::new(OneStoreTenancy(store)),
+        auth: AuthMode::Off,
         clock: h.state.clock.clone(),
         events: h.state.events.clone(),
         codes: h.state.codes.clone(),

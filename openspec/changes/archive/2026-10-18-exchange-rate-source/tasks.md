@@ -17,16 +17,16 @@
 - [x] 3.2 Handlers for the four operations in `http.rs` with validation of `url`, `interval_seconds`, `max_age_seconds` and `timeout_seconds` (`400`), `404` without a source, `502` on fetch failure; the status read model computes `stale` and `next_due_at` from the clock; verify axum tests for the scenarios of spec `exchange-rate-source`
 - [x] 3.3 Scheduler task in `bin/discount-server.rs`: tick every 15 s, run the use case when due; verify with the in-memory server pointed at a local stub that a changed interval is honoured without restart
 
-## 4. Telemetry and alerting (`src/infrastructure/`, `deploy/grafana/`)
+## 4. Telemetry and alerting (`src/infrastructure/`, `ops/grafana/`)
 
 - [x] 4.1 Instruments `discount.exchange_rates.fetches`, `.age`, `.stale` and the span `discount.exchange_rates.fetch` (URL without query, `discount.pairs`, `discount.error_type`) in `telemetry.rs`; verify `tests/telemetry.rs` sees the counter and the span after a failed fetch
-- [x] 4.2 Alert rule `discount-exchange-rates-stale` (`warning`, `stale == 1` for 5 min) in `deploy/grafana/alerting/discount.yaml` and a stat panel on the overview dashboard; raise the expected rule count in `deploy/smoke.sh`; verify `deploy/smoke.sh` passes on the compose stack
+- [x] 4.2 Alert rule `discount-exchange-rates-stale` (`warning`, `stale == 1` for 5 min) in `ops/grafana/alerting/discount.yaml` and a stat panel on the overview dashboard; raise the expected rule count in `ops/smoke.sh`; verify `ops/smoke.sh` passes on the compose stack
 
 ## 5. Console (`src/ui/`)
 
 - [x] 5.1 Source screen `pages/settings/exchange-rates/source.astro`: URL, interval, maximum age and timeout in human units (`model/units.ts` gains `parseDuration`/`formatDuration`), status, Save / Try again / Turn off actions in `actions/index.ts` with `CONSEQUENCE` and `TERM` help texts; verify `npm run check && npm test` and the two admin-ui scenarios by hand against the in-memory server with a stub provider
 - [x] 5.2 On `pages/settings/exchange-rates/index.astro`: link to the source screen, status line with Try again, origin badge and `fetched_at` on rate rows; verify `npm run build` and the origin scenario by hand
 
-## 6. Demo and docs (`deploy/demo/`, `docs/`)
+## 6. Demo and docs (`ops/demo/`, `docs/`)
 
-- [x] 6.1 Let `deploy/demo/seed.py` set the source when `RATE_SOURCE_URL` is given (default off, so the demo needs no internet); mention it in `README.md`; verify a seed run with and without the variable
+- [x] 6.1 Let `ops/demo/seed.py` set the source when `RATE_SOURCE_URL` is given (default off, so the demo needs no internet); mention it in `README.md`; verify a seed run with and without the variable

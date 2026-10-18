@@ -1,0 +1,26 @@
+# Where the discount alerts go (spec `grafana-dashboards`, "Provisioned alert rules").
+# Locally: the alert-sink service of ops/compose.yaml (GET http://localhost:9095/ shows
+# what was delivered). A deployment replaces this file's contact point with its receiver
+# (Slack, PagerDuty, ...) and keeps the policy: route on `service` and `severity`.
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: discount-sink
+    receivers:
+      - uid: discount-sink
+        type: webhook
+        settings:
+          url: http://alert-sink:8080/
+          httpMethod: POST
+        disableResolveMessage: false
+policies:
+  - orgId: 1
+    receiver: discount-sink
+    group_by: [alertname, promotion_id, span_name]
+    group_wait: 10s
+    group_interval: 30s
+    repeat_interval: 1h
+    routes:
+      - receiver: discount-sink
+        object_matchers:
+          - [service, =, discount]

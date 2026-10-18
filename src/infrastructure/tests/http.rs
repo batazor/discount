@@ -401,6 +401,8 @@ async fn openapi_covers_every_route() {
         "/v1/groups/{group_id}",
         "/v1/promotions:",
         "/v1/promotions/{promotion_id}/metadata",
+        "/v1/promotions/{promotion_id}/state",
+        "/v1/coupons/{code}/state",
         "/v1/promotions/{promotion_id}/allowlist:",
         "/v1/promotions/{promotion_id}/allowlist/customers/{customer_id}",
         "/v1/promotion-metadata",
@@ -1251,8 +1253,8 @@ fn source_json(interval: i64, max_age: i64) -> String {
 fn state_with_fetcher(fetcher: discount_infrastructure::CannedFetcher) -> Arc<AppState> {
     let base = state();
     Arc::new(AppState {
-        catalog: base.catalog.clone(),
-        redemptions: base.redemptions.clone(),
+        tenancy: base.tenancy.clone(),
+        auth: base.auth.clone(),
         clock: base.clock.clone(),
         events: base.events.clone(),
         codes: base.codes.clone(),
@@ -1447,4 +1449,140 @@ async fn exchange_rate_refresh_stores_pairs_and_manual_wins() {
         (v["source"].clone(), v["pairs"].clone()),
         (Value::Null, json!([]))
     );
+}
+
+/// Spec `catalogue-states` over HTTP: the state resources, the listing filter, the effect on
+/// evaluations and the 409 on generation.
+#[tokio::test]
+async fn state_routes() {
+    let app = router(state_with(
+        discount_infrastructure::InMemoryStore::new(discount_infrastructure::default_policy()),
+        discount_infrastructure::telemetry::Instruments::noop(),
+    ));
+    call(
+        &app,
+        Method::PUT,
+        "/v1/groups/g",
+        Some(json!({"group_id": "g", "priority": 0, "mode": {"type": "Stackable"}}).to_string()),
+    )
+    .await;
+    for id in ["P1", "P2"] {
+        let promo = json!({"promotion_id": id, "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
+            "remaining_budget": null, "uses_total": 0, "rounding": null, "rules": [],
+            "action": {"type": "OrderFixedAmount", "amount": {"amount": 100, "currency": "EUR"}}});
+        call(
+            &app,
+            Method::PUT,
+            &format!("/v1/promotions/{id}"),
+            Some(promo.to_string()),
+        )
+        .await;
+    }
+    let (status, st) = call(&app, Method::GET, "/v1/promotions/P1/state", None).await;
+    assert_eq!((status, st), (StatusCode::OK, json!({"state": "active"})));
+    let (status, st) = call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P1/state",
+        Some(json!({"state": "paused"}).to_string()),
+    )
+    .await;
+    assert_eq!((status, st), (StatusCode::OK, json!({"state": "paused"})));
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/P1/state",
+            Some(json!({"state": "off"}).to_string())
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/nope/state",
+            Some(json!({"state": "paused"}).to_string())
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, l) = call(&app, Method::GET, "/v1/promotions", None).await;
+    assert_eq!(l.as_array().unwrap().len(), 2);
+    let (_, l) = call(&app, Method::GET, "/v1/promotions?state=paused", None).await;
+    assert_eq!(
+        l.as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["promotion_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["P1"]
+    );
+    let (_, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer_json()}).to_string()),
+    )
+    .await;
+    assert_eq!(
+        ev["applied"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["promotion_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["P2"]
+    );
+    assert!(ev["skipped"].as_array().unwrap().is_empty());
+    let gen_req = json!({"promotion_id": "P1", "count": 1, "prefix": "X-", "starts_at": null, "ends_at": null, "max_uses": null, "customer_id": null});
+    let (status, b) = call(
+        &app,
+        Method::POST,
+        "/v1/coupons/generate",
+        Some(gen_req.to_string()),
+    )
+    .await;
+    assert_eq!(
+        (status, b["error"].as_str()),
+        (StatusCode::CONFLICT, Some("PromotionPaused"))
+    );
+    call(&app, Method::PUT, "/v1/coupons/W", Some(json!({"code": "W", "promotion_id": "P2", "starts_at": null, "ends_at": null, "customer_id": null, "max_uses": null, "uses": 0}).to_string())).await;
+    let (status, st) = call(
+        &app,
+        Method::PUT,
+        "/v1/coupons/W/state",
+        Some(json!({"state": "paused"}).to_string()),
+    )
+    .await;
+    assert_eq!((status, st), (StatusCode::OK, json!({"state": "paused"})));
+    let (_, l) = call(&app, Method::GET, "/v1/coupons?state=paused", None).await;
+    assert_eq!(l.as_array().unwrap().len(), 1);
+    let (_, l) = call(&app, Method::GET, "/v1/coupons?state=active", None).await;
+    assert_eq!(l.as_array().unwrap().len(), 0);
+    assert_eq!(
+        call(&app, Method::GET, "/v1/coupons/nope/state", None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P1/state",
+        Some(json!({"state": "active"}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer_json()}).to_string()),
+    )
+    .await;
+    assert_eq!(ev["applied"].as_array().unwrap().len(), 2);
 }

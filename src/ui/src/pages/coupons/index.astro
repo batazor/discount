@@ -1,5 +1,7 @@
 ---
 import { actions } from "astro:actions";
+import { tenantLabel } from "../../model/tenant";
+import { authEnabled } from "../../auth/config";
 import Layout from "../../layouts/Layout.astro";
 import DeleteButton from "../../components/DeleteButton.astro";
 import FormStatus from "../../components/FormStatus.astro";
@@ -20,13 +22,15 @@ const genState = formState(generated?.data, { count: "10", prefix: "", max_uses:
 const codes = generated?.data?.kind === "ok" ? generated.data.data.codes : [];
 const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
 const rows = dataOr(coupons, []);
+const tenant = tenantLabel(Astro.locals.user ?? null, authEnabled);
+const access = Astro.locals.access;
 ---
-<Layout title="Coupons" description="Stored codes. A code turns on a promotion that requires one." unreachable={unreachableUrl(coupons, promotions)}>
+<Layout title="Coupons" description={`Stored codes of <b>${tenant.name}</b>. A code turns on a campaign that requires one.`} unreachable={unreachableUrl(coupons, promotions)}>
   <Fragment slot="badge">{coupons.ok && <span class="badge badge-muted">{rows.length}</span>}</Fragment>
-  <a slot="actions" href="/coupons/new" class="btn btn-primary">New coupon</a>
+  {access.write && <a slot="actions" href="/coupons/new" class="btn btn-primary">New coupon</a>}
   <FormStatus state={delState} okText="Deleted." />
 
-  <details class="card mb-5" open={!!generated}>
+  {access.write && <details class="card mb-5" open={!!generated}>
     <summary>Generate a batch of codes</summary>
     <form method="post" action={actions.generateCoupons} class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
       <Field state={genState} name="promotion_id" label="Promotion" options={promotionIds} empty="— choose —" required />
@@ -44,7 +48,7 @@ const rows = dataOr(coupons, []);
         {codes.map((c) => <li data-code class="mono rounded-md px-2.5 py-1.5 select-all" style="background: var(--color-surface-2)">{c}</li>)}
       </ul>
     )}
-  </details>
+  </details>}
 
   <div class="table-card">
     <table class="table">
@@ -60,7 +64,7 @@ const rows = dataOr(coupons, []);
             <td class="text-[12px]"><When ts={c.starts_at} /></td>
             <td class="text-[12px]"><When ts={c.ends_at} /></td>
             <td class="num mono">{c.uses} / {c.max_uses ?? "∞"}</td>
-            <td class="actions"><DeleteButton action={actions.deleteCoupon} id={c.code} consequence={CONSEQUENCE.deleteCoupon} size="xs" /></td>
+            <td class="actions">{access.write && <DeleteButton action={actions.deleteCoupon} id={c.code} consequence={CONSEQUENCE.deleteCoupon} size="xs" />}</td>
           </tr>
         ))}
         {coupons.ok && rows.length === 0 && <tr><td colspan="7" class="empty">No coupons yet.</td></tr>}

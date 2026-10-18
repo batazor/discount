@@ -15,6 +15,7 @@ import { CONSEQUENCE } from "../../model/glossary";
 
 const id = Astro.params.id!;
 if (id === "new") return Astro.redirect("/campaigns/new");
+const access = Astro.locals.access;
 // Archived from this page: the campaign is gone, so land on the list with the message.
 const archived = Astro.getActionResult(actions.deletePromotion);
 if (archived?.data?.kind === "ok") return Astro.redirect(`/campaigns?archived=${encodeURIComponent(id)}`);
@@ -47,8 +48,9 @@ const labels: Record<Tab, string> = { overview: "Overview", rules: "Rules & acti
     {campaign?.endingSoon && <span class="badge badge-warn">ending soon</span>}
   </Fragment>
   <Fragment slot="actions">
-    {campaign && <a href={`/explain?campaign=${encodeURIComponent(id)}`} class="btn btn-secondary">Explain a cart</a>}
-    {campaign && <DeleteButton action={actions.deletePromotion} id={id} label="Archive" consequence={CONSEQUENCE.archive} title={`Archive ${campaignTitle(campaign)}?`} />}
+    {campaign && access.write && <a href={`/campaigns/new?from=${encodeURIComponent(id)}`} class="btn btn-secondary">Duplicate</a>}
+    {campaign && access.pricing && <a href={`/explain?campaign=${encodeURIComponent(id)}`} class="btn btn-secondary">Explain a cart</a>}
+    {campaign && access.write && <DeleteButton action={actions.deletePromotion} id={id} label="Archive" consequence={CONSEQUENCE.archive} title={`Archive ${campaignTitle(campaign)}?`} />}
   </Fragment>
   {!current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
   {campaign && (

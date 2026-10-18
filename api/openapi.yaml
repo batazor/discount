@@ -11,7 +11,8 @@ info:
 servers:
   - url: http://localhost:8080
     description: Local compose stack
-security: []
+security:
+  - bearerAuth: []
 tags:
   - name: pricing
     description: Price a cart without side effects
@@ -21,6 +22,8 @@ tags:
     description: Policy, groups, promotions, budgets, coupons and exchange rates
   - name: customers
     description: 'What a customer owns: their coupons, with status'
+  - name: tenants
+    description: Platform administration of tenants (scope discount:admin)
   - name: system
     description: Health and the API document itself
 paths:
@@ -141,8 +144,8 @@ paths:
     get:
       operationId: listPromotions
       tags: [catalogue]
-      summary: Non-archived promotions with their remaining budget
-      parameters: [ { $ref: '#/components/parameters/Source' } ]
+      summary: Non-archived promotions (active and paused) with their remaining budget
+      parameters: [ { $ref: '#/components/parameters/Source' }, { $ref: '#/components/parameters/State' } ]
       responses:
         '200': { description: Promotions, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Promotion' } } } } }
   /v1/promotions/{promotion_id}:
@@ -168,6 +171,26 @@ paths:
       summary: Archive a promotion (it leaves snapshots; existing redemptions keep their copy)
       responses:
         '204': { description: Archived }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/promotions/{promotion_id}/state:
+    parameters: [ { $ref: '#/components/parameters/PromotionId' } ]
+    get:
+      operationId: getPromotionState
+      tags: [catalogue]
+      summary: Operator switch of a promotion (active | paused)
+      x-required-scope: discount:catalog.read
+      responses:
+        '200': { description: State, content: { application/json: { schema: { $ref: '#/components/schemas/StateBody' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putPromotionState
+      tags: [catalogue]
+      summary: Pause or resume a promotion; paused promotions leave every pricing snapshot, archiving stays terminal
+      x-required-scope: discount:catalog.write
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StateBody' } } } }
+      responses:
+        '200': { description: Stored state, content: { application/json: { schema: { $ref: '#/components/schemas/StateBody' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
         '404': { $ref: '#/components/responses/NotFound' }
   /v1/promotions/{promotion_id}/budget:
     parameters: [ { $ref: '#/components/parameters/PromotionId' } ]
@@ -275,8 +298,29 @@ paths:
       operationId: listCoupons
       tags: [catalogue]
       summary: Coupons
+      parameters: [ { $ref: '#/components/parameters/State' } ]
       responses:
         '200': { description: Coupons, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Coupon' } } } } }
+  /v1/coupons/{code}/state:
+    parameters: [ { name: code, in: path, required: true, schema: { type: string } } ]
+    get:
+      operationId: getCouponState
+      tags: [catalogue]
+      summary: Operator switch of a coupon (active | paused)
+      x-required-scope: discount:catalog.read
+      responses:
+        '200': { description: State, content: { application/json: { schema: { $ref: '#/components/schemas/StateBody' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putCouponState
+      tags: [catalogue]
+      summary: Pause or resume a coupon; a paused coupon does not turn its promotion on
+      x-required-scope: discount:catalog.write
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StateBody' } } } }
+      responses:
+        '200': { description: Stored state, content: { application/json: { schema: { $ref: '#/components/schemas/StateBody' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/coupons/{code}:
     parameters: [ { name: code, in: path, required: true, schema: { type: string } } ]
     get:
@@ -377,6 +421,7 @@ paths:
         '200': { description: The generated codes, content: { application/json: { schema: { $ref: '#/components/schemas/GenerateCouponsResponse' } } } }
         '400': { $ref: '#/components/responses/DecodeError' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The promotion is paused, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } } }
   /v1/coupons/grant:
     post:
       operationId: grantCoupon
@@ -388,6 +433,7 @@ paths:
         '200': { description: The issued coupon, content: { application/json: { schema: { $ref: '#/components/schemas/Coupon' } } } }
         '400': { $ref: '#/components/responses/DecodeError' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The promotion is paused, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } } }
   /v1/grant-rules:
     get:
       operationId: listGrantRules
@@ -451,11 +497,48 @@ paths:
       responses:
         '204': { description: Forgotten }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/tenants:
+    get:
+      operationId: listTenants
+      tags: [tenants]
+      summary: Tenants (platform administrators only)
+      x-required-scope: discount:admin
+      responses:
+        '200': { description: Tenants, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Tenant' } } } } }
+  /v1/tenants/{tenant_id}:
+    parameters: [ { name: tenant_id, in: path, required: true, schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' } } ]
+    get:
+      operationId: getTenant
+      tags: [tenants]
+      summary: One tenant
+      x-required-scope: discount:admin
+      responses:
+        '200': { description: Tenant, content: { application/json: { schema: { $ref: '#/components/schemas/Tenant' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putTenant
+      tags: [tenants]
+      summary: Create or rename a tenant (the path id wins over the body); a new tenant starts with the default pricing policy
+      x-required-scope: discount:admin
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Tenant' } } } }
+      responses:
+        '200': { description: Stored tenant, content: { application/json: { schema: { $ref: '#/components/schemas/Tenant' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+    delete:
+      operationId: deleteTenant
+      tags: [tenants]
+      summary: Delete a tenant and everything it owns; refused while it has redemptions
+      x-required-scope: discount:admin
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The tenant still has redemptions, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } } }
   /healthz:
     get:
       operationId: healthz
       tags: [system]
       summary: Liveness
+      security: []
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [ok] } }, required: [status] } } } }
   /openapi.yaml:
@@ -463,6 +546,7 @@ paths:
       operationId: openapiDocument
       tags: [system]
       summary: This document
+      security: []
       responses:
         '200': { description: OpenAPI 3.1 document, content: { application/yaml: { schema: { type: string } } } }
   /docs:
@@ -470,6 +554,7 @@ paths:
       operationId: swaggerUi
       tags: [system]
       summary: Swagger UI for this document
+      security: []
       responses:
         '200': { description: HTML, content: { text/html: { schema: { type: string } } } }
 components:
@@ -477,7 +562,27 @@ components:
     OrderId: { name: order_id, in: path, required: true, schema: { type: string } }
     PromotionId: { name: promotion_id, in: path, required: true, schema: { type: string } }
     Source: { name: source, in: query, required: false, schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,31}$' }, description: Only promotions whose metadata has this `source` }
+    State: { name: state, in: query, required: false, schema: { $ref: '#/components/schemas/CatalogState' }, description: Only records in this state }
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        A JWT from one of the configured OIDC issuers. The claim named by
+        DISCOUNT_AUTH_TENANT_CLAIM selects the tenant; the claim named by
+        DISCOUNT_AUTH_SCOPES_CLAIM carries the scopes. Each operation states its scope in
+        `x-required-scope`; `discount:admin` satisfies every operation and may name the tenant
+        with the `X-Tenant` header. Missing or invalid tokens are `401`, missing scopes `403`,
+        both as RFC 9457 problem details.
   responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      headers: { WWW-Authenticate: { schema: { type: string } } }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    Forbidden:
+      description: The token lacks the operation's scope or names an unknown tenant
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
     DecodeError:
       description: Malformed body (invalid JSON, schema mismatch, unknown key); `decode_error` is set
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
@@ -497,6 +602,23 @@ components:
       description: The exchange-rate provider could not be fetched or did not answer with a rate table; `error` is `"SourceUnavailable"` and `message` says why. No stored rate changed; the attempt is recorded on the status.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
   schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details
+      required: [type, title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+    Tenant:
+      type: object
+      required: [tenant_id, name, created_at]
+      additionalProperties: false
+      properties:
+        tenant_id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        created_at: { $ref: '#/components/schemas/Timestamp', description: 'Set by the service; ignored on PUT' }
     ErrorBody:
       description: |
         Every non-2xx response carries this shape. Exactly one of `error`, `decode_error` and
@@ -737,10 +859,11 @@ components:
         order_id: { type: string }
     CouponStatus:
       type: string
-      enum: [active, scheduled, expired, applied]
+      enum: [active, scheduled, expired, applied, paused]
       description: >-
-        `applied` = the customer used it (see `order_id`); `expired` = window closed, uses
-        exhausted, or promotion gone; `scheduled` = `starts_at` is in the future; else `active`.
+        `applied` = the customer used it (see `order_id`); `paused` = the coupon or its promotion
+        is paused; `expired` = window closed, uses exhausted, or promotion gone; `scheduled` =
+        `starts_at` is in the future; else `active`.
     PromotionMetadata:
       type: object
       required: [title, description, source, labels]
@@ -761,6 +884,12 @@ components:
       additionalProperties: false
       properties:
         customer_ids: { type: array, items: { type: string, minLength: 1 }, maxItems: 100000 }
+    CatalogState: { type: string, enum: [active, paused] }
+    StateBody:
+      type: object
+      required: [state]
+      additionalProperties: false
+      properties: { state: { $ref: '#/components/schemas/CatalogState' } }
     MetadataEntry:
       type: object
       required: [promotion_id, metadata]

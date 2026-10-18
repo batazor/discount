@@ -323,31 +323,6 @@ an entry in the console's exponent table SHALL use two decimals.
 - **THEN** the list shows that instant in the viewer's time zone and the tooltip carries
   the UTC time and `1760313600`
 
-### Requirement: Role switch
-The navigation SHALL offer two roles, `marketing` and `support`, remembered in a cookie.
-The role SHALL change the navigation order, the overview and the landing page, and
-SHALL NOT hide any screen.
-
-#### Scenario: Support lands on find
-- **WHEN** the role is switched to `support`
-- **THEN** the overview shows the find box first, the navigation leads with Find and
-  Explain, and campaign screens remain reachable
-
-### Requirement: Overview by role
-For `marketing` the overview SHALL show campaigns that are live, ending within seven days,
-the lowest remaining budgets, exhausted and scheduled, and, while the catalogue has no
-group or no campaign, a checklist leading to the missing step. For `support` it SHALL show
-the find box and the last lookups kept in the browser.
-
-#### Scenario: First run
-- **WHEN** the catalogue has no groups
-- **THEN** the marketing overview shows the checklist with "create a group" as the next
-  step and a link to it
-
-#### Scenario: Ending soon
-- **WHEN** a campaign's window ends in three days
-- **THEN** it is listed under "ending soon" with the end shown in local time
-
 ### Requirement: Find
 The console SHALL offer one search box that takes a customer id, an order id, a coupon
 code or a campaign id, looks each up with the documented `GET`, and shows what matched
@@ -421,3 +396,239 @@ button, and SHALL show on every rate row its origin (`manual`, or `source` with
 #### Scenario: Origin on rows
 - **WHEN** the source stored `EUR → USD` and an operator set `USD → EUR` by hand
 - **THEN** the first row shows `source` with its fetch time and the second shows `manual`
+
+### Requirement: Campaign wizard
+`/campaigns/new` SHALL lead through steps (kind, what it gives, who and when, budget and
+codes, name and review) over a single form, with next and back that do not lose values;
+without scripts every step SHALL be visible at once. The plain form SHALL remain at
+`/campaigns/new/form`. Submitting either SHALL create the campaign as the creation flow
+specifies.
+
+#### Scenario: Steps keep values
+- **WHEN** an operator enters `10` percent on the second step, goes to the third and back
+- **THEN** the percentage is still `10`
+
+#### Scenario: Without scripts
+- **WHEN** the wizard is rendered without scripts
+- **THEN** every step's fields are visible and one submit creates the campaign
+
+### Requirement: Live summary
+The wizard SHALL show the campaign as one sentence built from the current fields (what
+it gives, for whom and when, cap, budget, codes), updated as the operator types, and the
+same sentence on the review step without scripts.
+
+#### Scenario: Sentence
+- **WHEN** the fields say `10` percent, first order only, dates 1–30 November, budget
+  `1000.00 EUR`, `500` codes with one use each
+- **THEN** the summary reads `10 % off the order, for first orders only, from <1 Nov> to
+  <30 Nov>, up to 1 000.00 EUR in total, with 500 single-use codes`
+
+### Requirement: Campaign templates
+The wizard's first step SHALL offer templates (everyone, welcome, code-only, date-bound
+sale, VIP allowlist, win-back) that prefill the fields through the URL; a template SHALL
+be a starting point, every field remaining editable.
+
+#### Scenario: Welcome template
+- **WHEN** `/campaigns/new?template=welcome` is opened
+- **THEN** the rule "first order only" and "once per customer" are on, the action is a
+  percentage, and nothing is created until submit
+
+### Requirement: Rule builder in plain words
+The wizard's "who and when" step SHALL offer named conditions (dates, minimum order
+total, first order only, once per customer, needs a code, only allowlisted customers,
+cart tags, customer attribute, limit total uses), each a toggle revealing its inputs, and
+SHALL submit them as the contract's `Rule` variants; the raw rule editor SHALL stay on the
+campaign's rules tab.
+
+#### Scenario: First order and dates
+- **WHEN** "first order only" and "dates" with a start are on
+- **THEN** the created promotion's rules are `MaxCompletedOrders { max: 0 }` and
+  `DateWindow { starts_at: <start>, ends_at: null }`
+
+#### Scenario: Needs a code generates codes
+- **WHEN** "needs a code" is on and `5` codes are requested
+- **THEN** the promotion carries `RequiresCoupon` and five codes exist after creation
+
+### Requirement: Try it on a sample cart
+The campaign page SHALL offer a sample cart (currency, lines, optional coupon code,
+customer id, completed orders and customer attributes), evaluate it with
+`POST /v1/evaluate` and show for this campaign whether it applied with the discount
+granted, or why it was skipped, with the full result available; nothing is stored.
+
+#### Scenario: Applied
+- **WHEN** campaign `SUMMER` gives `10 %` to every cart and a `100.00 EUR` cart is tried
+- **THEN** the card says `SUMMER` applied and granted `10.00 EUR`
+
+#### Scenario: Skipped with the reason
+- **WHEN** `SUMMER` requires a code and the sample cart presents none
+- **THEN** the card says `SUMMER` was skipped as `NotEligible` naming the "needs a code"
+  rule
+
+### Requirement: Templates gallery and duplication
+`/campaigns/templates` SHALL list every template with its sentence and link into the
+wizard, and SHALL list existing campaigns to start from. `/campaigns/new?from=<id>` SHALL
+prefill the wizard from that campaign's action, cap, conditions, budget currency, title,
+source and labels, with an empty id, and SHALL create nothing until submit.
+
+#### Scenario: Duplicate
+- **WHEN** `SUMMER` gives `10 %` to first orders with a code and the wizard is opened with
+  `from=SUMMER`
+- **THEN** the percentage is `10`, "first order only" and "needs a code" are on, the id
+  is empty and the title reads `SUMMER` copy
+
+### Requirement: Rule builder on the rules tab
+The campaign's rules tab SHALL show the builder's conditions prefilled from the stored
+rules; rules the builder cannot express SHALL appear as advanced rules in the raw editor
+beside it; saving SHALL send the builder's rules followed by the advanced ones.
+
+#### Scenario: Round trip
+- **WHEN** a campaign has `MaxCompletedOrders 0`, `RequiresCoupon` and a `TagsMatch` with
+  `none = ["#partner"]`
+- **THEN** the tab shows "first order only" and "needs a code" on, the tag rule as an
+  advanced rule, and saving unchanged stores the same three rules
+
+### Requirement: More conditions
+The builder SHALL also offer cart attribute (`AttributeIn`), cart date attribute
+(`AttributeDateWindow`), customer attribute range (`CustomerAttributeRange`) and maximum
+order total (`OrderTotalRange` with `max`); minimum and maximum order total SHALL become one
+`OrderTotalRange` when both are on.
+
+#### Scenario: Both bounds
+- **WHEN** minimum `50.00 EUR` and maximum `500.00 EUR` are on
+- **THEN** one rule `OrderTotalRange { min: 5000 EUR, max: 50000 EUR }` is sent
+
+### Requirement: Builder sanity checks
+Before sending, the builder SHALL refuse an end before its start and a minimum above the
+maximum as field errors, and SHALL warn on the campaign page when "needs a code" is on
+and no code exists.
+
+#### Scenario: End before start
+- **WHEN** dates are on with an end before the start
+- **THEN** the end field shows an error and nothing is sent
+
+### Requirement: Who gets it
+The rules tab and the wizard SHALL show the conditions as one sentence, updated as they
+change.
+
+#### Scenario: Sentence of conditions
+- **WHEN** "first order only" and "needs a code" are on
+- **THEN** the sentence reads `for first orders only, with a code`
+
+### Requirement: Sign-in gate
+When `DISCOUNT_UI_OIDC_ISSUER` is set, every console page except `/login`, `/healthz`,
+`/api-docs` and `/openapi.yaml` SHALL require a signed-in session and SHALL redirect to
+`/login` with the requested path kept. Without the variable the console SHALL run without
+any sign-in, as before.
+
+#### Scenario: Redirected to sign in
+- **WHEN** `/campaigns` is opened without a session
+- **THEN** the browser lands on `/login?back=/campaigns`
+
+### Requirement: Signing in
+`/login` SHALL obtain tokens from the issuer with the submitted username and password (or,
+with `DISCOUNT_UI_OIDC_FLOW=code`, through the issuer's authorization endpoint) and store
+them in the server-side session only; the browser SHALL receive nothing but the session
+cookie.
+
+#### Scenario: Wrong password
+- **WHEN** a wrong password is submitted
+- **THEN** the page shows the issuer's error and keeps the username
+
+#### Scenario: Signed in and back
+- **WHEN** `marketing` signs in from `/login?back=/campaigns`
+- **THEN** the browser lands on `/campaigns` and the page lists the campaigns of the
+  user's tenant
+
+### Requirement: Token on every call
+Every request the console makes to the service SHALL carry the session's access token as
+`Authorization: Bearer`; a `401` from the service SHALL be shown with a link to sign in
+again, a `403` verbatim as any API error.
+
+#### Scenario: Support cannot write the catalogue
+- **WHEN** `support` saves a stacking group
+- **THEN** the form shows the service's `403` problem body
+
+### Requirement: Session refresh and sign-out
+A token expiring within sixty seconds SHALL be refreshed with the refresh token before a
+page renders; when the refresh fails the session SHALL be cleared and the operator sent to
+`/login`. Sign-out SHALL clear the session and revoke the refresh token when the issuer
+offers revocation.
+
+#### Scenario: Sign out
+- **WHEN** the operator signs out
+- **THEN** the browser lands on `/login` and opening `/campaigns` redirects there again
+
+### Requirement: Who is signed in
+The navigation SHALL show the signed-in name, tenant and scopes with a sign-out control,
+and the role SHALL default from the scopes (catalogue write → `marketing`, otherwise
+`support`) until the operator switches it.
+
+#### Scenario: Support role by default
+- **WHEN** `support` signs in with no role cookie
+- **THEN** the overview is the support overview
+
+### Requirement: Demo users in the local realm
+The Keycloak realm of the auth overlay SHALL contain a public client `discount-console`
+with direct access grants, tenant `hotels`, and the users `marketing` (catalogue read and
+write, pricing, customers) and `support` (pricing, customers, catalogue read); the overlay
+SHALL point the console at the realm and name the demo users on the sign-in page.
+
+#### Scenario: Demo users listed
+- **WHEN** the auth overlay is up and `/login` is opened
+- **THEN** the page names `marketing` and `support` as demo users
+
+### Requirement: Tenant visible
+The console SHALL show the current tenant at the top of the navigation, in the overview
+heading and in the description of the campaign, coupon and customer screens: the token's
+tenant when signed in, `default` when the token names none, `local` without sign-in. The
+console SHALL NOT offer tenant switching and SHALL say so next to `default`.
+
+#### Scenario: Signed in to hotels
+- **WHEN** `marketing` (tenant `hotels`) opens the campaigns list
+- **THEN** the navigation and the description name `hotels`
+
+#### Scenario: No sign-in
+- **WHEN** the console runs without an issuer
+- **THEN** the navigation names `local`
+
+### Requirement: Navigation follows scopes
+The navigation SHALL lead with the campaign screens when the token carries
+`discount:catalog.write` (or `discount:admin`) and with the support screens otherwise, and
+SHALL leave out screens whose scope the token lacks: campaigns, coupons and settings need
+`discount:catalog.read`, Explain and redemptions `discount:pricing`, customers
+`discount:customers`, Find either of the last two. Without sign-in every screen SHALL be
+offered.
+
+#### Scenario: Support account
+- **WHEN** `support` (pricing, customers, catalogue read) signs in
+- **THEN** the navigation leads with Find and Explain, lists campaigns and settings after,
+  and offers no role switch
+
+### Requirement: Overview
+The overview SHALL show the find box and recent lookups when the token can look customers
+or orders up, the campaign health sections (live, ending within seven days, lowest
+remaining budgets, exhausted, scheduled) when it can read the catalogue, and the first-run
+checklist when it can write the catalogue and the catalogue has no group or no campaign.
+
+#### Scenario: First run
+- **WHEN** the catalogue has no groups and the token can write it
+- **THEN** the overview shows the checklist with "create a group" as the next step
+
+#### Scenario: Ending soon
+- **WHEN** a campaign's window ends in three days
+- **THEN** it is listed under "ending soon" with the end shown in local time
+
+### Requirement: Actions follow scopes
+Without `discount:catalog.write` the console SHALL render catalogue forms read-only with a
+note and SHALL NOT show create, save, archive, delete or generate controls; without
+`discount:pricing` it SHALL NOT offer Explain, "try it" or the redemption transitions;
+without `discount:customers` it SHALL NOT offer the customer screens. A direct request
+without the scope SHALL still show the service's `403` verbatim.
+
+#### Scenario: Support sees the catalogue read-only
+- **WHEN** `support` opens a campaign's rules tab
+- **THEN** the fields are disabled, a read-only note is shown and there is no Save
+
+#### Scenario: Budget edited from the overview
+- **WHEN** `marketing` sets a campaign's budget on its overview tab
+- **THEN** the console sends the budget `PUT` and the remaining budget updates

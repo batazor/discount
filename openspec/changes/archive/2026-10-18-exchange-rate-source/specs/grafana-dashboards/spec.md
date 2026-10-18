@@ -4,7 +4,7 @@
 
 ### Requirement: Provisioned alert rules
 The local stack SHALL provision Grafana-managed alert rules from
-`deploy/grafana/alerting/*.yaml` into folder `Discount`, group `discount` evaluated every
+`ops/grafana/alerting/*.yaml` into folder `Discount`, group `discount` evaluated every
 minute. Each rule SHALL carry labels `service=discount` and `severity` and link to the
 dashboard panel it is derived from. No contact point SHALL be provisioned.
 

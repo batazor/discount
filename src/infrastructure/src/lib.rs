@@ -6,16 +6,17 @@
 //! implementations (Postgres and in-memory). Nothing here is in the verified scope;
 //! telemetry only reads the `PricingResult` and never changes pricing.
 
+pub mod auth;
 pub mod config;
 pub mod http;
 pub mod persistence;
 pub mod rates;
 pub mod telemetry;
 
-pub use config::Config;
+pub use config::{AuthConfig, Config, OidcConfig};
 pub use persistence::memory::{
-    CatalogFixture, FixedClock, InMemoryStore, NoopEventPublisher, RandomCodes, SequentialCodes,
-    SystemClock, default_policy,
+    CatalogFixture, FixedClock, InMemoryStore, InMemoryTenants, NoopEventPublisher, RandomCodes,
+    SequentialCodes, SystemClock, default_policy,
 };
-pub use persistence::postgres::PgStore;
+pub use persistence::postgres::{PgStore, PgTenants};
 pub use rates::{CannedFetcher, ReqwestFetcher};

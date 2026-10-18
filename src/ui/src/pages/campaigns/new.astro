@@ -3,96 +3,152 @@ import { actions } from "astro:actions";
 import Layout from "../../layouts/Layout.astro";
 import Field from "../../components/Field.astro";
 import MoneyField from "../../components/MoneyField.astro";
+import TimestampField from "../../components/TimestampField.astro";
 import FormStatus from "../../components/FormStatus.astro";
-import RuleRow from "../../components/RuleRow.astro";
+import OptionCards from "../../components/OptionCards.astro";
+import GroupCard from "../../components/GroupCard.astro";
+import ConditionsEditor from "../../components/campaign/ConditionsEditor.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { ACTION_TYPES, ROUNDING_POLICIES } from "../../model/promotion";
 import { ACTION_HELP, ROUNDING_HELP, TERM } from "../../model/glossary";
+import { TEMPLATES, template, fromCampaign } from "../../model/templates";
+import { summarize } from "../../model/summary";
 import { Form } from "../../model/fields";
-import GroupCard from "../../components/GroupCard.astro";
-import OptionCards from "../../components/OptionCards.astro";
+import ApiError from "../../components/ApiError.astro";
 
+if (!Astro.locals.access.write) return Astro.redirect("/campaigns");
 const result = Astro.getActionResult(actions.createCampaign);
 if (result?.data?.kind === "ok") return Astro.redirect(`/campaigns/${encodeURIComponent(result.data.data.promotion_id)}?tab=${result.data.data.codes.length ? "codes" : "overview"}&created=1`);
 const [groups, promotions] = await Promise.all([call(() => api.GET("/v1/groups")), call(() => api.GET("/v1/promotions"))]);
 const groupIds = dataOr(groups, []).map((g) => g.group_id);
+const chosen = template(Astro.url.searchParams.get("template"));
+const fromId = Astro.url.searchParams.get("from")?.trim() || "";
+const [source, sourceMeta] = fromId
+  ? await Promise.all([
+      call(() => api.GET("/v1/promotions/{promotion_id}", { params: { path: { promotion_id: fromId } } })),
+      call(() => api.GET("/v1/promotions/{promotion_id}/metadata", { params: { path: { promotion_id: fromId } } })),
+    ])
+  : [null, null];
+const copied = source?.ok ? fromCampaign(source.data, sourceMeta?.ok ? sourceMeta.data : null) : {};
 const state = formState(result?.data, {
   "action.type": "OrderPercentage",
   priority: "0",
   group_id: groupIds.length === 1 ? groupIds[0]! : "",
   "codes.max_uses": "1",
+  ...(chosen?.fields ?? {}),
+  ...copied,
 });
-const ruleIndices = new Form(state.fields).rows("rules").map(String);
-const empty = formState(undefined, {});
+const advanced = new Form(state.fields).rows("rules").map(String);
+const steps = [["kind", "Kind"], ["gives", "What it gives"], ["who", "Who and when"], ["money", "Budget and codes"], ["review", "Name and review"]] as const;
+const needsCode = (state.fields["b.needs_code"] ?? "") === "on";
+const summary = summarize(state.fields);
 ---
-<Layout title="New campaign" crumbs={[["Campaigns", "/campaigns"], ["New"]]} description="One form; the console saves the promotion, then its budget, title and codes." unreachable={unreachableUrl(groups, promotions)}>
-  <div class="grid gap-6 lg:grid-cols-[minmax(0,48rem)_20rem]">
-  <form method="post" action={actions.createCampaign} class="space-y-5">
-    <section class="card space-y-4">
-      <h2 class="card-title">What is it</h2>
-      <div class="grid grid-cols-2 gap-4">
-        <Field state={state} name="promotion_id" label="Campaign id" required hint="short, stable, e.g. SUMMER-26; it is the promotion id" />
-        <Field state={state} name="title" label="Title" hint="shown in lists; empty = no metadata saved" />
-        <Field state={state} name="source" label="Source" placeholder="hotels" help={TERM.source} hint="lowercase; empty = none" />
-        <Field state={state} name="group_id" label="Stacking group" options={groupIds} empty={groupIds.length ? "— choose —" : "no groups yet"} required hint={groupIds.length === 0 ? "create a group first" : groupIds.length === 1 ? "the only group, preselected" : ""} />
-      </div>
-      <Field state={state} name="description" label="Description" textarea rows={2} />
-      <Field state={state} name="labels" label="Labels" textarea rows={2} help={TERM.labels} hint="one key=value per line" />
-    </section>
+<Layout title="New campaign" crumbs={[["Campaigns", "/campaigns"], ["New"]]} description={`Step by step; <a href="/campaigns/new/form" class="link">all fields at once</a> if you prefer.`} unreachable={unreachableUrl(groups, promotions)}>
+  <div class="grid gap-6 lg:grid-cols-[minmax(0,46rem)_22rem]">
+    <form method="post" action={actions.createCampaign} class="space-y-5" data-wizard data-conditions>
+      <input type="hidden" name="builder" value="1" />
 
-    <section class="card space-y-4">
-      <h2 class="card-title">What it gives</h2>
-      <div data-row-list>
-        <div data-rows>
-          <div data-row="action" class="grid grid-cols-2 gap-4">
-            <div class="col-span-full"><OptionCards state={state} name="action.type" label="Type" options={ACTION_TYPES} help={ACTION_HELP} names={{ OrderPercentage: "Percent off", OrderFixedAmount: "Amount off" }} required variantSelect /></div>
-            <div data-variant="OrderPercentage"><Field state={state} name="action.percent" label="Percent off" placeholder="10" mono hint="e.g. 12.5" /></div>
-            <div data-variant="OrderFixedAmount"><MoneyField state={state} name="action.amount" label="Amount off" /></div>
+      <section data-step="kind" class="card space-y-4">
+        <h2 class="card-title">What kind of campaign</h2>
+        {source && !source.ok && !source.unreachable && <ApiError status={source.status} body={source.body} traceId={source.traceId} />}
+        {source?.ok && <p class="alert alert-success">Starting from <span class="mono">{fromId}</span>: action, conditions, cap and details copied; pick a new id. Codes are not copied.</p>}
+        {state.fields.copied_from && <input type="hidden" name="copied_from" value={state.fields.copied_from} />}
+        <p class="hint">A starting point; every field stays editable. <a href="/campaigns/templates" class="link">All templates and existing campaigns</a>.</p>
+        <div class="option-cards">
+          <a href="/campaigns/new" class:list={["option-card no-underline", !chosen && "is-chosen"]}><span class="option-name font-sans">Blank</span><span class="option-desc">Start from nothing.</span></a>
+          {TEMPLATES.map((t) => <a href={`/campaigns/new?template=${t.id}`} class:list={["option-card no-underline", chosen?.id === t.id && "is-chosen"]}><span class="option-name font-sans">{t.title}</span><span class="option-desc">{t.description}</span></a>)}
+        </div>
+        {chosen?.next && <p class="hint">After creating it: <a href={chosen.next.href.startsWith("?") ? "#" : chosen.next.href} class="link">{chosen.next.label}</a>.</p>}
+      </section>
+
+      <section data-step="gives" class="card space-y-4">
+        <h2 class="card-title">What it gives</h2>
+        <div data-row-list><div data-rows><div data-row="action" class="space-y-4">
+          <OptionCards state={state} name="action.type" label="Type" options={ACTION_TYPES} help={ACTION_HELP} names={{ OrderPercentage: "Percent off", OrderFixedAmount: "Amount off" }} required variantSelect />
+          <div data-variant="OrderPercentage" class="max-w-xs"><Field state={state} name="action.percent" label="Percent off" placeholder="10" mono hint="e.g. 12.5" /></div>
+          <div data-variant="OrderFixedAmount" class="max-w-sm"><MoneyField state={state} name="action.amount" label="Amount off" /></div>
+        </div></div></div>
+        <details class="card" open={!!(state.fields["cap.amount"] || state.fields.rounding || state.fields.exclusive === "on" || state.fields.priority !== "0" || groupIds.length !== 1)}>
+          <summary>More: cap, rounding, group, priority</summary>
+          <div class="mt-4 space-y-4">
+            <div class="grid gap-4 md:grid-cols-2">
+              <MoneyField state={state} name="cap" label="Cap per order" hint="empty = unlimited" help={TERM.cap} />
+              <Field state={state} name="priority" label="Priority" type="number" required help={TERM.promotionPriority} hint="higher applies first; 0 is fine" />
+            </div>
+            <OptionCards state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} help={ROUNDING_HELP} empty={["", "Policy default", "Round as the pricing policy says."]} labelHelp={TERM.promotionRounding} />
+            <Field state={state} name="exclusive" label="Exclusive: applies alone" checkbox help={TERM.exclusive} />
+            <div class="grid gap-4 md:grid-cols-[1fr_1fr]">
+              <Field state={state} name="group_id" label="Stacking group" options={groupIds} empty={groupIds.length ? "— choose —" : "no groups yet"} required hint={groupIds.length === 0 ? "create a group first" : groupIds.length === 1 ? "the only group, preselected" : ""} />
+              <GroupCard groups={dataOr(groups, [])} promotions={dataOr(promotions, [])} selected={state.fields.group_id ?? ""} sticky={false} />
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section data-step="who" class="card space-y-4">
+        <h2 class="card-title">Who gets it, and when <span class="hint inline font-normal">every condition you switch on must hold</span></h2>
+        <ConditionsEditor state={state} />
+        {advanced.length > 0 && <p class="hint">{advanced.length} advanced rule{advanced.length === 1 ? "" : "s"} copied from <span class="mono">{state.fields.copied_from}</span> will be kept; edit them under Rules &amp; action after creating.</p>}
+        {advanced.map((i) => Object.entries(state.fields).filter(([k]) => k.startsWith(`rules.${i}.`)).map(([k, v]) => <input type="hidden" name={k} value={v} />))}
+        <p class="hint">Need something else? Create the campaign, then add an advanced rule under Rules &amp; action.</p>
+      </section>
+
+      <section data-step="money" class="card space-y-4">
+        <h2 class="card-title">Budget and codes</h2>
+        <div class="max-w-sm"><MoneyField state={state} name="budget" label="Budget" hint="empty = unbounded" help={TERM.budget} /></div>
+        <div>
+          <h3 class="label">Codes <span class="hint inline">optional</span></h3>
+          <p class="hint mb-2" data-needs-code-hint hidden={needsCode}>Codes only matter with "Needs a code" switched on in the previous step.</p>
+          <div class="grid grid-cols-3 gap-3">
+            <Field state={state} name="codes.count" label="How many" type="number" hint="empty = none now" />
+            <Field state={state} name="codes.prefix" label="Prefix" placeholder="SUM-" />
+            <Field state={state} name="codes.max_uses" label="Uses per code" type="number" help={TERM.couponMaxUses} hint="empty = unlimited" />
           </div>
         </div>
-      </div>
-      <div class="grid grid-cols-2 gap-4">
-        <MoneyField state={state} name="cap" label="Cap per order" hint="empty = unlimited" help={TERM.cap} />
-        <div class="col-span-full"><OptionCards state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} help={ROUNDING_HELP} empty={["", "Policy default", "Round as the pricing policy says."]} labelHelp={TERM.promotionRounding} /></div>
-        <Field state={state} name="priority" label="Priority" type="number" required help={TERM.promotionPriority} hint="higher applies first; 0 is fine" />
-        <div class="self-center"><Field state={state} name="exclusive" label="Exclusive: applies alone" checkbox help={TERM.exclusive} /></div>
-      </div>
-    </section>
+      </section>
 
-    <section class="card space-y-3">
-      <h2 class="card-title">Who and when <span class="hint inline font-normal">all rules must hold; none = every cart</span></h2>
-      <div data-row-list>
-        <div data-rows class="space-y-3">{ruleIndices.map((i) => <RuleRow state={state} index={i} />)}</div>
-        <template data-row-template><RuleRow state={empty} index="__i__" /></template>
-        <button type="button" data-add-row hidden class="row-add">Add rule</button>
+      <section data-step="review" class="card space-y-4">
+        <h2 class="card-title">Name and review</h2>
+        <div class="grid gap-4 md:grid-cols-2">
+          <Field state={state} name="promotion_id" label="Campaign id" required hint="short, stable, e.g. SUMMER-26" />
+          <Field state={state} name="title" label="Title" hint="shown in lists" />
+          <Field state={state} name="source" label="Source" placeholder="hotels" help={TERM.source} hint="lowercase; empty = none" />
+          <Field state={state} name="labels" label="Labels" help={TERM.labels} hint="one key=value per line" />
+        </div>
+        <Field state={state} name="description" label="Description" textarea rows={2} />
+        <div class="subcard">
+          <div class="label">This campaign</div>
+          <p class="text-[14px] leading-relaxed" data-summary-text-review>{summary}</p>
+        </div>
+        <FormStatus state={state} />
+      </section>
+
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" data-back hidden data-wizard-only>Back</button>
+        <button type="button" class="btn btn-primary" data-next hidden data-wizard-only>Next</button>
+        <button type="submit" class="btn btn-primary" data-submit>Create campaign</button>
+        <a href="/campaigns" class="btn btn-ghost">Cancel</a>
       </div>
-    </section>
+    </form>
 
-    <section class="card space-y-4">
-      <h2 class="card-title">How much to spend</h2>
-      <MoneyField state={state} name="budget" label="Budget" hint="empty = unbounded" help={TERM.budget} />
-    </section>
-
-    <section class="card space-y-4">
-      <h2 class="card-title">Codes <span class="hint inline font-normal">optional; needs a "Needs a code" rule to matter</span></h2>
-      <div class="grid grid-cols-3 gap-4">
-        <Field state={state} name="codes.count" label="How many" type="number" hint="empty = none now" />
-        <Field state={state} name="codes.prefix" label="Prefix" placeholder="SUM-" />
-        <Field state={state} name="codes.max_uses" label="Uses per code" type="number" help={TERM.couponMaxUses} hint="empty = unlimited" />
-      </div>
-    </section>
-
-    <FormStatus state={state} />
-    <div class="form-actions">
-      <button type="submit" class="btn btn-primary">Create campaign</button>
-      <a href="/campaigns" class="btn btn-ghost">Cancel</a>
-    </div>
-  </form>
-  <GroupCard groups={dataOr(groups, [])} promotions={dataOr(promotions, [])} selected={state.fields.group_id ?? ""} />
+    <aside class="space-y-4 lg:sticky lg:top-6 self-start">
+      <section class="card">
+        <h2 class="card-title">Summary</h2>
+        <p class="text-[14px] leading-relaxed" data-summary-text>{summary}</p>
+        <p class="hint mt-2">Updates as you type. Nothing is saved until "Create campaign".</p>
+      </section>
+      <nav class="card" aria-label="Steps">
+        <ol class="space-y-1 text-[13px]">
+          {steps.map(([id, label], i) => <li><a href={`#${id}`} class="step-link" data-step-link aria-current={i === 0 ? "step" : "false"}><span class="step-no">{i + 1}</span>{label}</a></li>)}
+        </ol>
+      </nav>
+    </aside>
   </div>
   <script>
     import { initRows } from "../../client/rows";
+    import "../../client/wizard";
+    import "../../client/conditions";
     initRows();
   </script>
 </Layout>

@@ -6,6 +6,7 @@ import TimestampField from "../TimestampField.astro";
 import FormStatus from "../FormStatus.astro";
 import DeleteButton from "../DeleteButton.astro";
 import GeneratedCodes from "../GeneratedCodes.astro";
+import ReadOnly from "../ReadOnly.astro";
 import When from "../When.astro";
 import Help from "../Help.astro";
 import { formState } from "../../actions/run";
@@ -13,6 +14,7 @@ import { CONSEQUENCE, TERM } from "../../model/glossary";
 interface Props { campaign: Campaign; fresh: string[] }
 const { campaign: c, fresh } = Astro.props;
 const id = c.promotion.promotion_id;
+const access = Astro.locals.access;
 const generated = Astro.getActionResult(actions.generateCoupons);
 const deleted = Astro.getActionResult(actions.deleteCoupon);
 const genState = formState(generated?.data, { promotion_id: id, count: "10", prefix: "", max_uses: "1" });
@@ -26,7 +28,7 @@ const rowText = (x: Campaign["codes"][number]) => [x.code, x.customer_id ?? "pub
   {!needsCode && <p class="alert alert-warn">This campaign has no "Needs a code" rule, so codes do nothing for it. Add the rule under Rules &amp; action.</p>}
   <GeneratedCodes codes={codes} />
   <FormStatus state={formState(deleted?.data, {})} okText="Deleted." />
-  <form method="post" action={act(String(actions.generateCoupons))} class="card grid grid-cols-2 gap-3 md:grid-cols-4">
+  {access.write && <form method="post" action={act(String(actions.generateCoupons))} class="card grid grid-cols-2 gap-3 md:grid-cols-4">
     <input type="hidden" name="promotion_id" value={id} />
     <Field state={genState} name="count" label="How many" type="number" required hint="1–10000" />
     <Field state={genState} name="prefix" label="Prefix" placeholder="SUM-" hint="followed by 8 random characters" />
@@ -36,7 +38,7 @@ const rowText = (x: Campaign["codes"][number]) => [x.code, x.customer_id ?? "pub
     <TimestampField state={genState} name="ends_at" label="Valid until" />
     <div class="col-span-2 self-end"><button type="submit" class="btn btn-primary">Generate codes</button></div>
     <div class="col-span-full"><FormStatus state={genState} okText="" /></div>
-  </form>
+  </form>}
   <div data-filter-root>
     <div class="toolbar">
       <div data-filter-ui hidden><label class="block"><span class="label">Filter</span><input type="search" data-filter placeholder="code or customer" class="input w-56" /></label></div>
@@ -53,7 +55,7 @@ const rowText = (x: Campaign["codes"][number]) => [x.code, x.customer_id ?? "pub
               <td class="text-[12px]"><When ts={x.starts_at} /></td>
               <td class="text-[12px]"><When ts={x.ends_at} /></td>
               <td class="num mono">{x.uses} / {x.max_uses ?? "∞"}</td>
-              <td class="actions"><DeleteButton action={act(String(actions.deleteCoupon))} id={x.code} size="xs" consequence={CONSEQUENCE.deleteCoupon} /></td>
+              <td class="actions">{access.write && <DeleteButton action={act(String(actions.deleteCoupon))} id={x.code} size="xs" consequence={CONSEQUENCE.deleteCoupon} />}</td>
             </tr>
           ))}
           {c.codes.length === 0 && <tr><td colspan="6" class="empty">No codes yet.</td></tr>}

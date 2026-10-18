@@ -1,6 +1,8 @@
 //! Ports: what the application needs from the outside world (ADR 7). Async so that the
 //! Postgres adapter can implement them; `async-trait` keeps them object-safe.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use discount_domain::{
     Coupon, ExchangeRate, Money, PricingError, PricingInput, PricingPolicy, PricingResult,
@@ -11,12 +13,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageError {
     Unavailable(String),
+    /// The operation contradicts stored state (a tenant with redemptions cannot be deleted).
+    Conflict(String),
 }
 
 impl std::fmt::Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StorageError::Unavailable(m) => write!(f, "storage unavailable: {m}"),
+            StorageError::Conflict(m) => write!(f, "conflict: {m}"),
         }
     }
 }
@@ -64,6 +69,73 @@ pub struct CatalogSnapshot {
 
 /// Use counts of one customer: reserved and confirmed redemptions per applied promotion.
 pub type Uses = Vec<(PromotionId, i64)>;
+
+/// A tenant: one consumer system with its own catalogue and redemptions (OpenSpec
+/// `access-control`). Every store handle is bound to exactly one tenant.
+pub type TenantId = String;
+
+/// The tenant used without authentication and for data that predates tenancy.
+pub const DEFAULT_TENANT: &str = "default";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tenant {
+    pub tenant_id: TenantId,
+    pub name: String,
+    pub created_at: Timestamp,
+}
+
+impl Tenant {
+    /// `^[a-z][a-z0-9_-]{0,63}$`
+    pub fn valid_id(s: &str) -> bool {
+        let mut chars = s.chars();
+        matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
+            && s.len() <= 64
+            && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+    }
+}
+
+/// Who is calling: the tenant the request runs in, the scopes the token carries and the
+/// token subject (for logs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Principal {
+    pub tenant_id: TenantId,
+    pub scopes: Vec<String>,
+    pub subject: String,
+}
+
+impl Principal {
+    pub fn has_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|s| s == scope || s == SCOPE_ADMIN)
+    }
+}
+
+pub const SCOPE_PRICING: &str = "discount:pricing";
+pub const SCOPE_CUSTOMERS: &str = "discount:customers";
+pub const SCOPE_CATALOG_READ: &str = "discount:catalog.read";
+pub const SCOPE_CATALOG_WRITE: &str = "discount:catalog.write";
+pub const SCOPE_ADMIN: &str = "discount:admin";
+pub const ALL_SCOPES: [&str; 5] = [
+    SCOPE_PRICING,
+    SCOPE_CUSTOMERS,
+    SCOPE_CATALOG_READ,
+    SCOPE_CATALOG_WRITE,
+    SCOPE_ADMIN,
+];
+
+/// Hands out store handles bound to one tenant and administers tenants.
+#[async_trait]
+pub trait Tenancy: Send + Sync {
+    fn catalog(&self, tenant_id: &str) -> Arc<dyn PromotionCatalog>;
+    fn redemptions(&self, tenant_id: &str) -> Arc<dyn RedemptionRepository>;
+    async fn list_tenants(&self) -> Result<Vec<Tenant>, StorageError>;
+    async fn get_tenant(&self, tenant_id: &str) -> Result<Option<Tenant>, StorageError>;
+    /// Upsert; a new tenant starts with the service's default pricing policy.
+    async fn put_tenant(&self, tenant: Tenant) -> Result<(), StorageError>;
+    /// `Ok(false)` when unknown; `Err(StorageError::Conflict)` when the tenant still has
+    /// redemptions.
+    async fn delete_tenant(&self, tenant_id: &str) -> Result<bool, StorageError>;
+}
 
 /// Everything the counters of a snapshot are derived from: per promotion, how many reserved
 /// or confirmed redemptions applied it; per coupon code, how many of them presented the code
@@ -401,6 +473,47 @@ pub trait PromotionCatalog: Send + Sync {
     ) -> Result<bool, StorageError>;
     /// Non-archived promotions whose allowlist contains the customer, sorted.
     async fn allowlisted_for(&self, customer_id: &str) -> Result<Vec<PromotionId>, StorageError>;
+    /// `None` when the promotion is unknown or archived.
+    async fn get_promotion_state(
+        &self,
+        promotion_id: &str,
+    ) -> Result<Option<CatalogState>, StorageError>;
+    /// `Ok(false)` when the promotion is unknown or archived.
+    async fn set_promotion_state(
+        &self,
+        promotion_id: &str,
+        state: CatalogState,
+    ) -> Result<bool, StorageError>;
+    /// `None` when the coupon is unknown.
+    async fn get_coupon_state(&self, code: &str) -> Result<Option<CatalogState>, StorageError>;
+    /// `Ok(false)` when the coupon is unknown.
+    async fn set_coupon_state(&self, code: &str, state: CatalogState)
+    -> Result<bool, StorageError>;
+}
+
+/// Operator switch on a promotion or a coupon (OpenSpec `catalogue-states`): `paused` keeps
+/// the record but takes it out of every pricing snapshot. Archiving stays terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CatalogState {
+    Active,
+    Paused,
+}
+
+impl CatalogState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CatalogState::Active => "active",
+            CatalogState::Paused => "paused",
+        }
+    }
+    pub fn parse(s: &str) -> Option<CatalogState> {
+        match s {
+            "active" => Some(CatalogState::Active),
+            "paused" => Some(CatalogState::Paused),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

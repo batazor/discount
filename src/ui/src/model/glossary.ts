@@ -50,6 +50,7 @@ export const COUPON_STATUS_HELP: Record<CouponStatus, string> = {
   scheduled: "Starts in the future.",
   expired: "Window closed, uses exhausted, or the promotion is gone.",
   applied: "The customer used it; the order links to that redemption.",
+  paused: "Its campaign is paused: the code works again when the campaign resumes.",
 };
 
 export const REDEMPTION_STATUS_HELP: Record<RedemptionStatus, string> = {

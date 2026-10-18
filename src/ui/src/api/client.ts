@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import createClient from "openapi-fetch";
 import type { paths } from "./schema";
+import { currentToken } from "../auth/session";
 
 export const API_URL = process.env.DISCOUNT_API_URL ?? "http://localhost:8080";
 
@@ -28,6 +29,9 @@ api.use({
   onRequest({ request }) {
     if (pending) request.headers.set("traceparent", pending.header);
     pending = null;
+    // The signed-in operator's bearer, set per request by the middleware (spec: Token on every call).
+    const token = currentToken();
+    if (token) request.headers.set("authorization", `Bearer ${token}`);
     return request;
   },
 });

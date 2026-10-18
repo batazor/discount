@@ -7,12 +7,14 @@ import Field from "../Field.astro";
 import FormStatus from "../FormStatus.astro";
 import DeleteButton from "../DeleteButton.astro";
 import Help from "../Help.astro";
+import ReadOnly from "../ReadOnly.astro";
 import { formState } from "../../actions/run";
 import { allowlistToFields } from "../../model/allowlist";
 import { CONSEQUENCE, TERM } from "../../model/glossary";
 interface Props { campaign: Campaign; allowlist: Outcome<Allowlist> }
 const { campaign: c, allowlist } = Astro.props;
 const id = c.promotion.promotion_id;
+const access = Astro.locals.access;
 const put = Astro.getActionResult(actions.putAllowlist);
 const cleared = Astro.getActionResult(actions.clearAllowlist);
 const state = formState(cleared?.data?.kind === "ok" ? undefined : put?.data, allowlist.ok ? allowlistToFields(allowlist.data) : {});
@@ -25,12 +27,14 @@ const act = (a: string) => `?tab=audience&${a.slice(1)}`;
   <h2 class="card-title">Allowlist <span class="badge badge-muted">{count}</span> <Help text={TERM.allowlist} /></h2>
   {!usesList && count > 0 && <p class="alert alert-warn">No "Allowlisted customers" rule reads this list, so it has no effect on pricing.</p>}
   {usesList && count === 0 && <p class="alert alert-warn">The campaign requires an allowlist and it is empty: nobody is eligible.</p>}
+  <ReadOnly allowed={access.write} what="the allowlist">
   <input type="hidden" name="promotion_id" value={id} />
   <Field state={state} name="customer_ids" label="Customer ids" textarea rows={8} hint="one per line; saving replaces the whole list" />
   <FormStatus state={state} okText="Allowlist saved." />
   {cleared?.data?.kind === "ok" && <p role="status" class="alert alert-success">Allowlist cleared.</p>}
-  <div class="flex items-center gap-3">
+  {access.write && <div class="flex items-center gap-3">
     <button type="submit" class="btn btn-primary">Save allowlist</button>
     {count > 0 && <DeleteButton action={act(String(actions.clearAllowlist))} id={id} label="Clear allowlist" consequence={CONSEQUENCE.clearAllowlist} />}
-  </div>
+  </div>}
+  </ReadOnly>
 </form>

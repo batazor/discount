@@ -1,0 +1,46 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import StatusBadge from "../../components/StatusBadge.astro";
+import { api, call, unreachableUrl, dataOr } from "../../api/client";
+import { TEMPLATES } from "../../model/templates";
+import { summarize } from "../../model/summary";
+import { assembleCampaigns, campaignTitle, describeAction } from "../../model/campaign";
+
+if (!Astro.locals.access.write) return Astro.redirect("/campaigns");
+const [promotions, metadata] = await Promise.all([call(() => api.GET("/v1/promotions")), call(() => api.GET("/v1/promotion-metadata"))]);
+const campaigns = assembleCampaigns(dataOr(promotions, []), dataOr(metadata, []), [], Math.floor(Date.now() / 1000));
+---
+<Layout title="Templates" crumbs={[["Campaigns", "/campaigns"], ["Templates"]]} description="Starting points for a new campaign: a template, or an existing campaign to copy. Nothing is created until the wizard's last step." unreachable={unreachableUrl(promotions, metadata)}>
+  <section class="mb-6">
+    <h2 class="card-title">Templates</h2>
+    <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+      {TEMPLATES.map((t) => (
+        <a href={`/campaigns/new?template=${t.id}`} class="kpi">
+          <span class="text-[15px] font-semibold">{t.title}</span>
+          <span class="kpi-label">{t.description}</span>
+          <span class="mt-2 text-[12.5px]" style="color: var(--color-ink-2)">{summarize(t.fields)}</span>
+        </a>
+      ))}
+    </div>
+  </section>
+  <section>
+    <h2 class="card-title">Start from an existing campaign</h2>
+    {campaigns.length === 0 ? <p class="hint">No campaigns yet.</p> : (
+      <div class="table-card">
+        <table class="table">
+          <thead><tr><th>Campaign</th><th>Status</th><th>Gives</th><th></th></tr></thead>
+          <tbody>
+            {campaigns.map((c) => (
+              <tr>
+                <td><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a> <span class="mono text-[12px]" style="color: var(--color-ink-3)">{c.promotion.promotion_id}</span></td>
+                <td><StatusBadge status={c.status} /></td>
+                <td class="mono">{describeAction(c.promotion.action)}</td>
+                <td class="actions"><a href={`/campaigns/new?from=${encodeURIComponent(c.promotion.promotion_id)}`} class="btn-xs">Start from this</a></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </section>
+</Layout>

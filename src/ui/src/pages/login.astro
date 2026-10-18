@@ -1,0 +1,98 @@
+---
+import "../styles/global.css";
+import { authEnabled, OIDC } from "../auth/config";
+import { discover, passwordGrant, pkce, authorizeUrl } from "../auth/oidc";
+import { SESSION_KEY } from "../auth/session";
+import { sessionFrom } from "../middleware";
+
+if (!authEnabled) return Astro.redirect("/");
+const back = (() => { const b = Astro.url.searchParams.get("back") ?? "/"; return b.startsWith("/") && !b.startsWith("//") ? b : "/"; })();
+if (await Astro.session?.get(SESSION_KEY)) return Astro.redirect(back);
+
+let error: string | null = null;
+let username = "";
+let issuerDown = false;
+
+if (OIDC.flow === "code" && Astro.request.method === "GET") {
+  try {
+    const d = await discover(OIDC.issuer);
+    const { verifier, challenge, state } = pkce();
+    await Astro.session?.set("pkce", { verifier, state, back });
+    return Astro.redirect(authorizeUrl(d, OIDC, `${Astro.url.origin}/auth/callback`, challenge, state));
+  } catch {
+    issuerDown = true;
+  }
+}
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  username = String(form.get("username") ?? "").trim();
+  const password = String(form.get("password") ?? "");
+  try {
+    const d = await discover(OIDC.issuer);
+    const t = await passwordGrant(d, OIDC, username, password);
+    if ("error" in t) error = t.error_description ?? t.error;
+    else {
+      const session = sessionFrom(t);
+      await Astro.session?.set(SESSION_KEY, session);
+      return Astro.redirect(back, 303);
+    }
+  } catch (e) {
+    issuerDown = true;
+    error = "Sign-in is unavailable right now: the identity provider did not answer.";
+  }
+}
+---
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in · discount</title>
+  </head>
+  <body class="flex min-h-screen items-center justify-center p-6">
+    <main class="w-full max-w-sm space-y-4">
+      <div class="flex items-center gap-2 px-1">
+        <span class="flex size-8 items-center justify-center rounded-md text-[14px] font-bold text-white" style="background: var(--color-accent)">%</span>
+        <span class="text-[17px] font-semibold tracking-tight">discount</span>
+      </div>
+      <form method="post" action={`/login?back=${encodeURIComponent(back)}`} class="card space-y-4">
+        <h1 class="card-title">Sign in</h1>
+        {error && <p role="alert" class="alert alert-danger">{error}</p>}
+        <label class="block"><span class="label">Username</span><input type="text" name="username" value={username} required autofocus autocomplete="username" class="input mono" /></label>
+        <label class="block"><span class="label">Password</span><input type="password" name="password" required autocomplete="current-password" class="input mono" /></label>
+        <button type="submit" class="btn btn-primary w-full justify-center" disabled={issuerDown}>Sign in</button>
+      </form>
+      {OIDC.demoUsers.length > 0 && (
+        <section class="card">
+          <h2 class="card-title">Demo users</h2>
+          <p class="hint mb-3">One click signs you in as that user.</p>
+          <div class="grid gap-2">
+            {OIDC.demoUsers.map((u) => (
+              <form method="post" action={`/login?back=${encodeURIComponent(back)}`} class="flex items-center justify-between gap-3" data-demo-user>
+                <input type="hidden" name="username" value={u.user} />
+                <input type="hidden" name="password" value={u.password} />
+                <span class="text-[13px]"><span class="mono font-semibold">{u.user}</span>{u.password && <span class="hint inline"> · password <span class="mono select-all">{u.password}</span></span>}</span>
+                <button type="submit" class="btn btn-secondary" disabled={issuerDown}>Sign in as {u.user}</button>
+              </form>
+            ))}
+          </div>
+        </section>
+      )}
+      <script>
+        // Show the demo credentials in the form before it goes, so the switch is visible.
+        for (const f of document.querySelectorAll<HTMLFormElement>("form[data-demo-user]")) {
+          f.addEventListener("submit", () => {
+            const u = f.querySelector<HTMLInputElement>("input[name=username]")!.value;
+            const p = f.querySelector<HTMLInputElement>("input[name=password]")!.value;
+            const main = document.querySelector<HTMLFormElement>("form:not([data-demo-user])");
+            if (main) {
+              main.querySelector<HTMLInputElement>("input[name=username]")!.value = u;
+              main.querySelector<HTMLInputElement>("input[name=password]")!.value = p;
+            }
+          });
+        }
+      </script>
+    </main>
+  </body>
+</html>

@@ -2,6 +2,7 @@
 // The API's error body is the contract (ErrorBody in api/openapi.yaml): status and JSON
 // are printed unchanged next to the form that caused them (spec: errors are shown verbatim).
 import TraceRef from "./TraceRef.astro";
+import { authEnabled } from "../auth/config";
 interface Props { status: number; body: unknown; traceId?: string | null }
 const { status, body, traceId = null } = Astro.props;
 const b = (body ?? {}) as Record<string, unknown>;
@@ -16,5 +17,6 @@ const text = typeof body === "string" ? body : JSON.stringify(body, null, 2);
 <div role="alert" class="alert alert-warn">
   <p class="alert-title">API answered {status}{summary && <span class="font-normal">: {summary}</span>}</p>
   <pre>{text}</pre>
+  {status === 401 && authEnabled && <p class="mt-2"><a href="/login" class="link">Sign in again</a></p>}
   <TraceRef traceId={traceId} />
 </div>

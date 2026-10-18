@@ -3,19 +3,21 @@ import "../styles/global.css";
 import { ClientRouter } from "astro:transitions";
 import Unreachable from "../components/Unreachable.astro";
 import ConfirmDialog from "../components/ConfirmDialog.astro";
-import { API_URL } from "../api/client";
-import { navigation, roleFrom, ROLE_HELP, ROLES } from "../model/role";
+import { navigation } from "../model/access";
+import { authEnabled } from "../auth/config";
+import { tenantLabel } from "../model/tenant";
 
 type Crumb = [label: string, href?: string];
 interface Props { title: string; unreachable?: string | null; description?: string; crumbs?: Crumb[] }
 const { title, unreachable = null, description, crumbs = [] } = Astro.props;
 
-const role = roleFrom(Astro.cookies.get("discount_role")?.value);
-const groups = navigation(role);
+const user = Astro.locals.user ?? null;
+const access = Astro.locals.access;
+const tenant = tenantLabel(user, authEnabled);
+const groups = navigation(access);
 const path = Astro.url.pathname;
 const active = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
 const flat: [string, string][] = [["/", "Overview"], ...groups.flatMap(([, l]) => l)];
-const back = encodeURIComponent(path + Astro.url.search);
 ---
 <!doctype html>
 <html lang="en" class="h-full">
@@ -43,10 +45,8 @@ const back = encodeURIComponent(path + Astro.url.search);
           <span class="flex size-7 items-center justify-center rounded-md text-[13px] font-bold text-white" style="background: var(--color-accent)">%</span>
           <span class="text-[15px] font-semibold tracking-tight">discount</span>
         </a>
-        <div class="role-switch" role="group" aria-label="Role">
-          {ROLES.map((r) => <a href={`/role?set=${r}&back=${back}`} class="role-option" aria-current={r === role ? "true" : undefined} data-tip={ROLE_HELP[r]}>{r}</a>)}
-        </div>
-        <a href="/" class="nav-link mt-3" aria-current={active("/") ? "page" : undefined}>Overview</a>
+        <div class="mb-2 px-2.5 text-[12px]" style="color: var(--color-ink-2)">Tenant <span class={`badge ${tenant.fallback ? "badge-warn" : "badge-info"}`} data-tip={tenant.note ?? undefined}>{tenant.name}</span></div>
+        <a href="/" class="nav-link" aria-current={active("/") ? "page" : undefined}>Overview</a>
         {groups.map(([group, links]) => (
           <>
             <div class="nav-group">{group}</div>
@@ -54,9 +54,14 @@ const back = encodeURIComponent(path + Astro.url.search);
           </>
         ))}
         <div class="mt-auto px-2.5 pt-4 text-[11px] leading-4" style="color: var(--color-ink-3)">
-          <div class="font-semibold uppercase tracking-[0.08em]">Service</div>
-          <code class="block truncate" title={API_URL}>{API_URL}</code>
-          <a href={`${API_URL}/docs`} class="link mt-1 inline-block" target="_blank" rel="noreferrer">OpenAPI docs ↗</a>
+          {authEnabled && user && (
+            <div class="mb-3 rounded-md border p-2" style="border-color: var(--color-line)">
+              <div class="truncate text-[12.5px] font-semibold" style="color: var(--color-ink)" title={user.sub}>{user.name}</div>
+              <div class="mt-1 flex flex-wrap gap-1">{user.scopes.map((s) => <span class="badge badge-muted" style="font-size: 10px">{s.replace("discount:", "")}</span>)}</div>
+              <form method="post" action="/logout" class="mt-2" data-astro-reload><button type="submit" class="btn-xs" style="padding-left: 0">Sign out</button></form>
+            </div>
+          )}
+          <a href="/api-docs" class="link inline-block" target="_blank" rel="noreferrer" data-astro-reload>API docs ↗</a>
         </div>
       </nav>
       <main class="min-w-0 flex-1 px-5 py-6 md:px-10 md:py-8">

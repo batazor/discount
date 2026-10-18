@@ -52,7 +52,7 @@ verification/drt/    proptest generators + core vs reference comparison
 docs/                ubiquitous-language.md, invariants.md, adr/
 openspec/            behaviour specs with scenarios (OpenSpec), archived changes
 src/ui/              Astro: the operator console, a generated-client consumer of api/openapi.yaml
-deploy/              compose stack, Grafana dashboards, demo catalogue and seed, smoke script
+ops/                 compose stack, Grafana dashboards, demo catalogue and seed, smoke script
 ```
 
 Product code lives under `src/`; everything that checks it (the Lean model, its proofs and
@@ -87,7 +87,7 @@ cd verification/spec && lake exe discount-spec < ../drt/fixtures/samples-1.jsonl
 
 Run the Rust tests, the fixture replay and the differential run (the Lean build above
 must exist; `DRT_CASES` sets the number of random cases, default 256). The Postgres
-scenarios need the local database (`docker compose -f deploy/compose.yaml up -d postgres`;
+scenarios need the local database (`docker compose -f ops/compose.yaml up -d postgres`;
 they create and wipe `discount_test`) or `DATABASE_URL`; they never skip (ADR 11):
 
 ```bash
@@ -123,9 +123,17 @@ Lint the document the way CI does:
 npx --yes @redocly/cli@latest lint api/openapi.yaml
 ```
 
+Every route except `/healthz`, `/openapi.yaml` and `/docs` requires a bearer JWT from an
+OIDC issuer named in `DISCOUNT_AUTH_ISSUERS` (Keycloak, Ory, Auth0, …); the tenant and the
+scopes come from claims mapped by `DISCOUNT_AUTH_TENANT_CLAIM` and
+`DISCOUNT_AUTH_SCOPES_CLAIM`, and every record belongs to the token's tenant (ADR 12, spec
+`access-control`). `DISCOUNT_AUTH=off` runs unauthenticated as tenant `default` for local
+work; the compose stack does that, and `ops/compose.auth.yaml` adds a Keycloak realm to
+try real tokens.
+
 `discount-server` runs the engine behind that API. Without `DATABASE_URL` it uses an
 in-memory catalogue seeded from a fixture (`DISCOUNT_PROMOTIONS`, by default the demo
-catalogue `deploy/demo/catalogue.json`; `deploy/promotions.json` is the three-promotion
+catalogue `ops/demo/catalogue.json`; `ops/promotions.json` is the three-promotion
 fixture the tests replay); with it, catalogue and redemptions live in Postgres (migrations
 run at start-up).
 
@@ -175,8 +183,21 @@ form-to-body mapping, units and campaign status, and the production build:
 cd src/ui && npm run check && npm test && npm run build
 ```
 
-The console has no authentication, as the service has none: deploy it behind the same
-gate as the service. The compose stack binds it to localhost only.
+**Signing in.** With `DISCOUNT_UI_OIDC_ISSUER` set, every page needs a session: `/login`
+posts the username and password to the issuer's token endpoint server to server
+(resource owner password grant; `DISCOUNT_UI_OIDC_FLOW=code` switches to the
+authorization-code redirect when the issuer has a browser-facing hostname), keeps the
+tokens in the server session and sends `Authorization: Bearer` on every call to the
+service, refreshing before expiry. The auth overlay wires it to the Keycloak realm, which
+carries two demo users for the console, `marketing` / `marketing` and `support` /
+`support` (tenant `hotels`):
+
+```bash
+docker compose -f ops/compose.yaml -f ops/compose.auth.yaml up -d --build
+```
+
+Without the variable the console runs without sign-in, as the service does with
+`DISCOUNT_AUTH=off`. Either way the compose stack binds it to localhost only.
 
 ## Observability
 
@@ -184,14 +205,14 @@ The service exports traces, metrics and logs over OpenTelemetry (OTLP) and ships
 dashboards as code. Run the whole chain locally:
 
 ```bash
-docker compose -f deploy/compose.yaml up -d --build
+docker compose -f ops/compose.yaml up -d --build
 ```
 
 Then open [http://localhost:3000](http://localhost:3000) (folder **Discount**: engine
 overview, promotions, validation errors) and check that signals arrive end to end:
 
 ```bash
-deploy/smoke.sh
+ops/smoke.sh
 ```
 
 To evaluate the product rather than the pipeline, fill the stack with a business in
@@ -202,7 +223,7 @@ issued, a flash campaign that ran out). Every date window is shifted to today, a
 script can be run again without creating anything twice:
 
 ```bash
-deploy/demo/seed.py
+ops/demo/seed.py
 ```
 
 It prints what to look up in the console (customers `ann` .. `grace`, orders `DEMO-1001`
@@ -214,7 +235,7 @@ Put the stack under load (k6 from the `grafana/k6` image on the compose network;
 installed on the host; thresholds mirror the alert rules and fail the run):
 
 ```bash
-deploy/load/run.sh
+ops/load/run.sh
 ```
 
 `RATE` and `DURATION` change the profile (defaults 50 req/s, 2 min). The measured

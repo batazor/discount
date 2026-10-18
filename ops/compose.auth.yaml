@@ -1,0 +1,70 @@
+# Overlay: Keycloak as the identity provider and the service in oidc mode.
+#
+#   docker compose -f ops/compose.yaml -f ops/compose.auth.yaml up -d --build
+#   docker compose -f ops/compose.yaml -f ops/compose.auth.yaml --profile smoke run --rm smoke-auth
+#
+# The realm `discount` (ops/keycloak/realm-discount.json) has two service accounts:
+# `discount-storefront` (roles discount:pricing, discount:customers, tenant hotels) and
+# `discount-operator` (catalogue roles, tenant hotels), a public client `discount-console`
+# for the operator console, and two people for the console: `marketing` / `marketing`
+# (catalogue read and write, pricing, customers) and `support` / `support` (pricing,
+# customers, catalogue read), both in tenant hotels. Tokens are issued by
+# http://keycloak:8080/realms/discount, which is the issuer the service trusts, so clients
+# inside the compose network see the same issuer URL as the service.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: discount-keycloak
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://keycloak:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      # The image has no curl; bash can open a TCP socket to the management port.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -c 300 <&3 | grep -q '200 OK'"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  discount:
+    environment:
+      DISCOUNT_AUTH: oidc
+      DISCOUNT_AUTH_ISSUERS: http://keycloak:8080/realms/discount
+      DISCOUNT_AUTH_SCOPES_CLAIM: /realm_access/roles
+      DISCOUNT_AUTH_TENANT_CLAIM: tenant_id
+      DISCOUNT_AUTH_AUTOCREATE_TENANTS: "true"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  # The console signs operators in against the same realm (admin-ui-login): the sign-in
+  # form posts to Keycloak server to server, so the browser never needs to reach it.
+  ui:
+    environment:
+      DISCOUNT_UI_OIDC_ISSUER: http://keycloak:8080/realms/discount
+      DISCOUNT_UI_OIDC_CLIENT_ID: discount-console
+      DISCOUNT_UI_DEMO_USERS: marketing:marketing,support:support
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  # One-off: obtain tokens from Keycloak and exercise the service with and without them.
+  smoke-auth:
+    image: python:3.12-alpine
+    profiles: ["smoke"]
+    volumes:
+      - ./smoke-auth.py:/smoke-auth.py:ro
+    command: ["python3", "/smoke-auth.py"]
+    environment:
+      KEYCLOAK: http://keycloak:8080
+      SERVICE: http://discount:8080
+    depends_on:
+      discount:
+        condition: service_started

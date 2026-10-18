@@ -1,5 +1,6 @@
 ---
 import { actions } from "astro:actions";
+import ReadOnly from "../../components/ReadOnly.astro";
 import Layout from "../../layouts/Layout.astro";
 import Field from "../../components/Field.astro";
 import MoneyField from "../../components/MoneyField.astro";
@@ -15,9 +16,11 @@ import OptionCards from "../../components/OptionCards.astro";
 const result = Astro.getActionResult(actions.putPolicy);
 const current = await call(() => api.GET("/v1/policy"));
 const state = formState(result?.data, current.ok ? policyToFields(current.data) : {});
+const access = Astro.locals.access;
 ---
 <Layout title="Pricing policy" description="How every cart is priced: rounding, how promotions stack, and the most an order may be discounted." unreachable={unreachableUrl(current)}>
   <form method="post" action={actions.putPolicy} class="max-w-xl space-y-5">
+  <ReadOnly allowed={access.write}>
     <section class="card space-y-4">
       <OptionCards state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} help={ROUNDING_HELP} required labelHelp="How a fraction of a minor unit is resolved; a campaign may override it." />
       <OptionCards state={state} name="stacking" label="Stacking" options={STACKING_POLICIES} help={STACKING_HELP} required />
@@ -28,6 +31,7 @@ const state = formState(result?.data, current.ok ? policyToFields(current.data) 
       <Field state={state} name="order_cap.bps" label="At most this share, in basis points" type="number" hint="5000 = 50 % of the subtotal" />
     </section>
     <FormStatus state={state} />
-    <div class="form-actions"><button type="submit" class="btn btn-primary">Save policy</button></div>
+    {access.write && <div class="form-actions"><button type="submit" class="btn btn-primary">Save policy</button></div>}
+  </ReadOnly>
   </form>
 </Layout>

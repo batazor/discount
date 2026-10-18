@@ -1,0 +1,17 @@
+---
+// ISO 4217 code from a list; blank means "no amount" for optional money.
+import type { FormState } from "../actions/run";
+import { currencyOptions } from "../model/currencies";
+interface Props { state: FormState; name: string; label?: string; required?: boolean; blank?: boolean }
+const { state, name, label = "Currency", required = false, blank = true } = Astro.props;
+const value = (state.fields[name] ?? "").trim();
+const error = state.errors.find((e) => e.field === name)?.message;
+---
+<label class="block">
+  <span class="label">{label}{required && <span style="color: var(--color-danger)"> *</span>}</span>
+  <select name={name} class="input">
+    {blank && <option value="" selected={value === ""}>—</option>}
+    {currencyOptions(value).map(([code, title]) => <option value={code} selected={code === value.toUpperCase()} title={title}>{code}</option>)}
+  </select>
+  {error && <span class="field-error">{error}</span>}
+</label>

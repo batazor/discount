@@ -19,13 +19,14 @@ const delState = formState(deleted?.data, {});
 const grantState = formState(granted?.data, { trigger: "cancel" });
 const issued = granted?.data?.kind === "ok" ? granted.data.data : null;
 const rows = dataOr(rules, []);
+const access = Astro.locals.access;
 ---
 <Layout title="Grant rules" description="Which coupon a customer receives after an event such as a cancellation or a review. The highest priority rule for the event wins." unreachable={unreachableUrl(rules)}>
   <Fragment slot="badge">{rules.ok && <span class="badge badge-muted">{rows.length}</span>}</Fragment>
-  <a slot="actions" href="/settings/grant-rules/new" class="btn btn-primary">New rule</a>
+  {access.write && <a slot="actions" href="/settings/grant-rules/new" class="btn btn-primary">New rule</a>}
   <FormStatus state={delState} okText="Deleted." />
 
-  <details class="card mb-5" open={!!granted}>
+  {access.write && <details class="card mb-5" open={!!granted}>
     <summary>Grant a coupon now</summary>
     <p class="hint my-2">Issue the coupon for an event by hand. Repeating it for the same event and order returns the same coupon.</p>
     <form method="post" action={actions.grantCoupon} class="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -38,7 +39,7 @@ const rows = dataOr(rules, []);
         {issued && <a href={`/coupons/${encodeURIComponent(issued.code)}`} class="link">Open the coupon</a>}
       </div>
     </form>
-  </details>
+  </details>}
 
   <div class="table-card max-w-5xl">
     <table class="table">
@@ -52,10 +53,10 @@ const rows = dataOr(rules, []);
             <td class="num mono">{r.priority}</td>
             <td class="num mono">{r.validity_seconds} s</td>
             <td class="num mono">{r.max_uses ?? "∞"}</td>
-            <td class="actions"><DeleteButton action={actions.deleteGrantRule} id={r.rule_id} consequence={CONSEQUENCE.deleteGrantRule} size="xs" /></td>
+            <td class="actions">{access.write && <DeleteButton action={actions.deleteGrantRule} id={r.rule_id} consequence={CONSEQUENCE.deleteGrantRule} size="xs" />}</td>
           </tr>
         ))}
-        {rules.ok && rows.length === 0 && <tr><td colspan="7" class="empty">No grant rules yet. <a href="/settings/grant-rules/new" class="link">Create the first one</a>.</td></tr>}
+        {rules.ok && rows.length === 0 && <tr><td colspan="7" class="empty">No grant rules yet. {access.write && <a href="/settings/grant-rules/new" class="link">Create the first one</a>}.</td></tr>}
       </tbody>
     </table>
   </div>

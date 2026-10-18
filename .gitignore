@@ -1,5 +1,5 @@
 /target/
 .claude/worktrees/
 
-# k6 results (deploy/load/run.sh)
-deploy/load/out/
+# k6 results (ops/load/run.sh)
+ops/load/out/

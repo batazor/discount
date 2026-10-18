@@ -1,0 +1,17 @@
+---
+// One builder condition: a toggle card with its description, and the inputs it needs.
+import type { FormState } from "../../actions/run";
+import { CONDITION_TEXT, type Condition } from "../../model/builder";
+interface Props { state: FormState; id: Condition }
+const { state, id } = Astro.props;
+const checked = ["on", "true", "1"].includes((state.fields[`b.${id}`] ?? "").trim());
+const hasInputs = Astro.slots.has("default");
+---
+<div class="space-y-2">
+  <label class="option-card">
+    <input type="checkbox" name={`b.${id}`} checked={checked} />
+    <span class="option-name font-sans">{CONDITION_TEXT[id].label}</span>
+    <span class="option-desc">{CONDITION_TEXT[id].description}</span>
+  </label>
+  {hasInputs && <div data-cond={id} class="pl-3"><slot /></div>}
+</div>

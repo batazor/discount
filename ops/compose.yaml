@@ -1,0 +1,112 @@
+# Local observability stack for the discount service (OpenTelemetry + Grafana).
+#
+#   docker compose -f ops/compose.yaml up -d --build
+#   open http://localhost:3000        (Grafana, anonymous admin)
+#   curl localhost:8080/healthz       (discount-server)
+#   open http://localhost:4321        (discount-ui, the operator console)
+#   ops/smoke.sh                   (posts carts, checks the signals arrived)
+#   OTLP: grpc localhost:4317, http localhost:4318
+#
+# grafana/otel-lgtm bundles an OpenTelemetry Collector, Prometheus (metrics), Tempo
+# (traces), Loki (logs) and Grafana with the data sources pre-wired. Dashboards from
+# ops/grafana/dashboards are provisioned on start.
+name: discount   # fixed project name: network discount_default, volumes discount_*
+
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.36.0
+    container_name: discount-lgtm
+    ports:
+      - "3000:3000"   # Grafana
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      ENABLE_LOGS_ALL: "false"
+    volumes:
+      - ./grafana/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards/discount:ro
+      - ./grafana/provisioning/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/discount.yaml:ro
+      - ./grafana/alerting/discount.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/discount.yaml:ro
+      - ./grafana/alerting/notifications.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/notifications.yaml:ro
+      - lgtm-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Receives Grafana's alert webhooks (contact point discount-sink); GET :9095/ lists them.
+  alert-sink:
+    image: python:3-alpine
+    container_name: discount-alert-sink
+    command: ["python3", "/sink.py", "8080"]
+    volumes:
+      - ./alert-sink/sink.py:/sink.py:ro
+    ports:
+      - "9095:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: discount-postgres
+    environment:
+      POSTGRES_USER: discount
+      POSTGRES_PASSWORD: discount
+      POSTGRES_DB: discount
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U discount -d discount"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  discount:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: discount-server:local
+    container_name: discount-server
+    ports:
+      - "8080:8080"
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      DISCOUNT_AUTH: "off"   # local stack has no identity provider (oidc-auth-and-tenants, design 6)
+      DATABASE_URL: postgres://discount:discount@postgres:5432/discount
+      DISCOUNT_ENV: compose
+      DISCOUNT_ROUNDING: Down
+      DISCOUNT_STACKING: Sequential
+      OTEL_METRIC_EXPORT_INTERVAL: "5000"
+      RUST_LOG: info,opentelemetry=warn,h2=warn,tonic=warn,hyper=warn
+    depends_on:
+      lgtm:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: ..
+      dockerfile: src/ui/Dockerfile
+    image: discount-ui:local
+    container_name: discount-ui
+    ports:
+      - "4321:4321"
+    environment:
+      DISCOUNT_API_URL: http://discount:8080
+      DISCOUNT_GRAFANA_URL: http://localhost:3000   # as reached from the operator's browser
+    depends_on:
+      discount:
+        condition: service_healthy
+
+volumes:
+  lgtm-data:
+  pg-data:
