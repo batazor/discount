@@ -32,7 +32,7 @@
 
 - [x] 5.1 `src/ui/Dockerfile` (node:22-alpine, build stage generating types, runtime stage running the Node adapter) and compose service `ui` on `:4321` with `DISCOUNT_API_URL=http://discount:8080`, a health check on `/healthz` and `depends_on: discount`; verify `docker compose -f deploy/compose.yaml up -d --build` brings all three health endpoints to `200`
 - [x] 5.2 Extend `deploy/smoke.sh`: console `/healthz` is `200` and the promotions page body contains `P1`; verify `deploy/smoke.sh` passes on the fresh stack
-- [ ] 5.3 Add a `ui` job to `.github/workflows/ci.yml` (`npm ci`, type generation, `astro check`, `vitest`, `astro build` in `src/ui`); verify the job passes on the pull request
+- [x] 5.3 Add a `ui` job to `.github/workflows/ci.yml` (`npm ci`, type generation, `astro check`, `vitest`, `astro build` in `src/ui`); verify the job passes on the pull request
 
 ## 6. Documentation (`README.md`, `docs/adr`)
 
