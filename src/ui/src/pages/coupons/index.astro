@@ -1,5 +1,7 @@
 ---
 import { actions } from "astro:actions";
+import { tenantLabel } from "../../model/tenant";
+import { authEnabled } from "../../auth/config";
 import Layout from "../../layouts/Layout.astro";
 import DeleteButton from "../../components/DeleteButton.astro";
 import FormStatus from "../../components/FormStatus.astro";
@@ -20,8 +22,9 @@ const genState = formState(generated?.data, { count: "10", prefix: "", max_uses:
 const codes = generated?.data?.kind === "ok" ? generated.data.data.codes : [];
 const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
 const rows = dataOr(coupons, []);
+const tenant = tenantLabel(Astro.locals.user ?? null, authEnabled);
 ---
-<Layout title="Coupons" description="Stored codes. A code turns on a promotion that requires one." unreachable={unreachableUrl(coupons, promotions)}>
+<Layout title="Coupons" description={`Stored codes of <b>${tenant.name}</b>. A code turns on a campaign that requires one.`} unreachable={unreachableUrl(coupons, promotions)}>
   <Fragment slot="badge">{coupons.ok && <span class="badge badge-muted">{rows.length}</span>}</Fragment>
   <a slot="actions" href="/coupons/new" class="btn btn-primary">New coupon</a>
   <FormStatus state={delState} okText="Deleted." />

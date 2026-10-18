@@ -5,6 +5,7 @@ import Unreachable from "../components/Unreachable.astro";
 import ConfirmDialog from "../components/ConfirmDialog.astro";
 import { navigation, roleFrom, ROLE_HELP, ROLES } from "../model/role";
 import { authEnabled } from "../auth/config";
+import { tenantLabel } from "../model/tenant";
 
 type Crumb = [label: string, href?: string];
 interface Props { title: string; unreachable?: string | null; description?: string; crumbs?: Crumb[] }
@@ -12,6 +13,7 @@ const { title, unreachable = null, description, crumbs = [] } = Astro.props;
 
 const user = Astro.locals.user ?? null;
 const role = roleFrom(Astro.cookies.get("discount_role")?.value);
+const tenant = tenantLabel(user, authEnabled);
 const groups = navigation(role);
 const path = Astro.url.pathname;
 const active = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
@@ -44,6 +46,7 @@ const back = encodeURIComponent(path + Astro.url.search);
           <span class="flex size-7 items-center justify-center rounded-md text-[13px] font-bold text-white" style="background: var(--color-accent)">%</span>
           <span class="text-[15px] font-semibold tracking-tight">discount</span>
         </a>
+        <div class="mb-2 px-2.5 text-[12px]" style="color: var(--color-ink-2)">Tenant <span class={`badge ${tenant.fallback ? "badge-warn" : "badge-info"}`} data-tip={tenant.note ?? undefined}>{tenant.name}</span></div>
         <div class="role-switch" role="group" aria-label="Role">
           {ROLES.map((r) => <a href={`/role?set=${r}&back=${back}`} class="role-option" aria-current={r === role ? "true" : undefined} data-tip={ROLE_HELP[r]}>{r}</a>)}
         </div>
@@ -58,7 +61,6 @@ const back = encodeURIComponent(path + Astro.url.search);
           {authEnabled && user && (
             <div class="mb-3 rounded-md border p-2" style="border-color: var(--color-line)">
               <div class="truncate text-[12.5px] font-semibold" style="color: var(--color-ink)" title={user.sub}>{user.name}</div>
-              <div class="truncate">tenant <span class="mono">{user.tenant ?? "—"}</span></div>
               <div class="mt-1 flex flex-wrap gap-1">{user.scopes.map((s) => <span class="badge badge-muted" style="font-size: 10px">{s.replace("discount:", "")}</span>)}</div>
               <form method="post" action="/logout" class="mt-2" data-astro-reload><button type="submit" class="btn-xs" style="padding-left: 0">Sign out</button></form>
             </div>

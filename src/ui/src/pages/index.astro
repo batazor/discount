@@ -7,8 +7,11 @@ import When from "../components/When.astro";
 import { api, call, unreachableUrl, dataOr } from "../api/client";
 import { assembleCampaigns, campaignTitle, describeAction, type Campaign } from "../model/campaign";
 import { roleFrom } from "../model/role";
+import { tenantLabel } from "../model/tenant";
+import { authEnabled } from "../auth/config";
 
 const role = roleFrom(Astro.cookies.get("discount_role")?.value);
+const tenant = tenantLabel(Astro.locals.user ?? null, authEnabled);
 const [groups, promotions, metadata, coupons] = await Promise.all([
   call(() => api.GET("/v1/groups")),
   call(() => api.GET("/v1/promotions")),
@@ -29,7 +32,7 @@ const checklist: [string, boolean, string, string][] = [
 ];
 const firstRun = groups.ok && promotions.ok && checklist.some(([, done]) => !done);
 ---
-<Layout title="Overview" description={role === "support" ? "Find who or what you are asked about, then explain it." : "How the campaigns are doing right now."} unreachable={unreachable}>
+<Layout title={`Overview · ${tenant.name}`} description={role === "support" ? `Find who or what you are asked about in <b>${tenant.name}</b>, then explain it.` : `How the campaigns of <b>${tenant.name}</b> are doing right now.`} unreachable={unreachable}>
   {role === "support" && (
     <div class="space-y-6">
       <section class="card">

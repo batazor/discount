@@ -1,9 +1,12 @@
 ---
+import { tenantLabel } from "../../model/tenant";
+import { authEnabled } from "../../auth/config";
 import Layout from "../../layouts/Layout.astro";
 const q = Astro.url.searchParams.get("customer_id")?.trim();
 if (q) return Astro.redirect(`/customers/${encodeURIComponent(q)}`);
+const tenant = tenantLabel(Astro.locals.user ?? null, authEnabled);
 ---
-<Layout title="Customers" description="A customer's coupons with their status, as the service lists them.">
+<Layout title="Customers" description={`A customer's coupons in <b>${tenant.name}</b> with their status, as the service lists them.`}>
   <form method="get" class="flex max-w-md gap-2">
     <input type="text" name="customer_id" placeholder="customer_id" required class="input mono flex-1" />
     <button type="submit" class="btn btn-primary">Open</button>

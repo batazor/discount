@@ -1,5 +1,7 @@
 ---
 import { actions } from "astro:actions";
+import { tenantLabel } from "../../model/tenant";
+import { authEnabled } from "../../auth/config";
 import Layout from "../../layouts/Layout.astro";
 import DeleteButton from "../../components/DeleteButton.astro";
 import FormStatus from "../../components/FormStatus.astro";
@@ -25,8 +27,9 @@ const campaigns = assembleCampaigns(dataOr(promotions, []), dataOr(metadata, [])
 const state = formState(archived?.data, {});
 const rowText = (c: (typeof campaigns)[number]) =>
   [c.promotion.promotion_id, c.metadata?.title, c.metadata?.source, c.promotion.group_id, describeAction(c.promotion.action), ...c.promotion.rules.map((r) => RULE_NAMES[r.type])].filter(Boolean).join(" ").toLowerCase();
+const tenant = tenantLabel(Astro.locals.user ?? null, authEnabled);
 ---
-<Layout title="Campaigns" description="Every active promotion with its budget, codes and status." unreachable={unreachableUrl(promotions, metadata, coupons)}>
+<Layout title="Campaigns" description={`Every active campaign of <b>${tenant.name}</b> with its budget, codes and status.`} unreachable={unreachableUrl(promotions, metadata, coupons)}>
   <Fragment slot="badge">{promotions.ok && <span class="badge badge-muted"><span data-filter-count>{campaigns.length}</span></span>}</Fragment>
   <Fragment slot="actions"><a href="/campaigns/templates" class="btn btn-secondary">Templates</a><a href="/campaigns/new" class="btn btn-primary">New campaign</a></Fragment>
   <FormStatus state={state} okText="Archived." />
