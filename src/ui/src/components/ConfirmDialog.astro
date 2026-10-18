@@ -1,0 +1,14 @@
+---
+// One dialog per page, opened by client/confirm.ts for any form carrying data-confirm.
+// Without scripts the forms keep the browser's own confirm() on submit.
+---
+<dialog id="confirm-dialog" class="confirm">
+  <form method="dialog" class="space-y-3">
+    <h2 class="card-title" data-confirm-title>Are you sure?</h2>
+    <p class="text-[13px]" data-confirm-text style="color: var(--color-ink-2)"></p>
+    <div class="flex justify-end gap-2">
+      <button type="submit" value="cancel" class="btn btn-ghost">Keep it</button>
+      <button type="submit" value="ok" class="btn btn-danger" data-confirm-ok>Confirm</button>
+    </div>
+  </form>
+</dialog>

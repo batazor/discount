@@ -1,7 +1,8 @@
 // Promotion form ↔ contract body. Every Rule and Action variant of api/openapi.yaml is
 // offered as a choice; the submitted object is the tagged ubiquitous-language shape.
 import type { Action, Complete, Promotion, Rule, RoundingPolicy } from "../api/types";
-import { Form, flatten, type Fields, type Parsed } from "./fields";
+import { Form, moneyToFields, type Fields, type Parsed } from "./fields";
+import { formatPercentInput } from "./units";
 import { toDatetimeLocal } from "./time";
 
 export const RULE_TYPES = [
@@ -69,7 +70,7 @@ export function ruleToFields(r: Rule, p: string): Fields {
       out[`${p}.ends_at`] = toDatetimeLocal(r.ends_at);
       break;
     case "OrderTotalRange":
-      Object.assign(out, flatten(r.min, `${p}.min`), flatten(r.max, `${p}.max`));
+      Object.assign(out, moneyToFields(r.min, `${p}.min`), moneyToFields(r.max, `${p}.max`));
       break;
     case "TagsMatch":
       out[`${p}.all`] = r.all.join(", ");
@@ -108,13 +109,13 @@ export function ruleToFields(r: Rule, p: string): Fields {
 
 export function actionFromForm(f: Form, p: string): Action {
   const type = f.enum(`${p}.type`, ACTION_TYPES);
-  if (type === "OrderPercentage") return { type, bps: f.int(`${p}.bps`, { min: 0, max: 10000 }) };
+  if (type === "OrderPercentage") return { type, bps: f.percent(`${p}.percent`) };
   return { type, amount: f.money(`${p}.amount`) };
 }
 
 export function actionToFields(a: Action, p: string): Fields {
-  if (a.type === "OrderPercentage") return { [`${p}.type`]: a.type, [`${p}.bps`]: String(a.bps) };
-  return { [`${p}.type`]: a.type, ...flatten(a.amount, `${p}.amount`) };
+  if (a.type === "OrderPercentage") return { [`${p}.type`]: a.type, [`${p}.percent`]: formatPercentInput(a.bps) };
+  return { [`${p}.type`]: a.type, ...moneyToFields(a.amount, `${p}.amount`) };
 }
 
 export function roundingFromForm(f: Form, key: string): RoundingPolicy | null {
@@ -150,7 +151,7 @@ export function promotionToFields(p: Promotion): Fields {
     priority: String(p.priority),
     exclusive: p.exclusive ? "on" : "",
     rounding: p.rounding?.type ?? "",
-    ...flatten(p.cap, "cap"),
+    ...moneyToFields(p.cap, "cap"),
     ...actionToFields(p.action, "action"),
   };
   p.rules.forEach((r, i) => Object.assign(out, ruleToFields(r, `rules.${i}`)));

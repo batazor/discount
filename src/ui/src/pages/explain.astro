@@ -1,0 +1,181 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../layouts/Layout.astro";
+import Field from "../components/Field.astro";
+import FormStatus from "../components/FormStatus.astro";
+import ResultPanel from "../components/ResultPanel.astro";
+import { formState } from "../actions/run";
+import { evaluateRequestToFields, SAMPLE_REQUEST } from "../model/evaluate";
+import { Form } from "../model/fields";
+import { TERM } from "../model/glossary";
+
+import { api, call, unreachableUrl } from "../api/client";
+import type { EvaluateRequest } from "../api/types";
+import ApiError from "../components/ApiError.astro";
+
+const result = Astro.getActionResult(actions.evaluate);
+const order = Astro.url.searchParams.get("order")?.trim() || "";
+const campaignHint = Astro.url.searchParams.get("campaign")?.trim() || "";
+// An order id prefills the form from the stored redemption's replayable input (design.md,
+// decision 6) and evaluates it right away: "what would happen today".
+const stored = order ? await call(() => api.GET("/v1/redemptions/{order_id}", { params: { path: { order_id: order } } })) : null;
+const fromOrder = stored?.ok ? ((stored.data.input as { cart?: EvaluateRequest["cart"]; customer?: EvaluateRequest["customer"] }) ?? {}) : {};
+const prefill: EvaluateRequest | null = fromOrder.cart && fromOrder.customer ? { cart: fromOrder.cart, customer: fromOrder.customer } : null;
+const replay = prefill && !result ? await call(() => api.POST("/v1/evaluate", { body: prefill })) : null;
+// The screen keeps what was posted even after a success, to tweak and re-run.
+const state = formState(result?.data, evaluateRequestToFields(prefill ?? SAMPLE_REQUEST));
+if (result?.data?.kind === "ok") state.fields = result.data.fields;
+const priced = result?.data?.kind === "ok" ? result.data.data : replay?.ok ? replay.data : null;
+const replayError = replay && !replay.ok && !replay.unreachable ? replay : null;
+const f = new Form(state.fields);
+const empty = formState(undefined, {});
+const lines = f.rows("lines").map(String);
+const attrs = f.rows("attributes").map(String);
+const uses = f.rows("uses").map(String);
+const cattrs = f.rows("customer_attributes").map(String);
+---
+<Layout title="Explain" description="Why a cart gets what it gets: price it and see every campaign that applied or did not. Nothing is stored." unreachable={result?.data?.kind === "unreachable" ? result.data.url : stored ? unreachableUrl(stored) : null}>
+  <section class="card mb-6">
+    <form method="get" class="flex max-w-xl gap-2">
+      <label class="block flex-1"><span class="label">Start from a stored order</span><input type="search" name="order" value={order} placeholder="order id" class="input mono" /></label>
+      <button type="submit" class="btn btn-secondary self-end">Load</button>
+    </form>
+    {stored && !stored.ok && !stored.unreachable && <div class="mt-3"><ApiError status={stored.status} body={stored.body} /></div>}
+    {prefill && <p class="hint mt-2">Loaded the cart and customer of order <span class="mono">{order}</span>. The result below is what the catalogue would give that cart today, which may differ from what the order got.</p>}
+    {campaignHint && <p class="hint mt-2">To see campaign <span class="mono">{campaignHint}</span> apply, the cart must meet its rules; its codes go under coupon codes.</p>}
+  </section>
+  <div class="grid gap-6 xl:grid-cols-2">
+    <form method="post" action={actions.evaluate} class="space-y-5">
+      <section class="card space-y-4">
+        <h2 class="card-title">Cart</h2>
+        <div class="grid grid-cols-3 gap-3">
+          <Field state={state} name="cart.currency" label="Currency" required />
+          <Field state={state} name="cart.tags" label="Tags" help={TERM.cartTags} hint="comma-separated" />
+          <Field state={state} name="cart.coupon_codes" label="Coupon codes" help={TERM.couponCodes} hint="comma-separated" />
+        </div>
+        <div data-row-list>
+          <p class="label">Lines</p>
+          <div data-rows class="space-y-2">
+            {lines.map((i) => (
+              <div data-row={i} class="grid grid-cols-[1fr_1fr_5.5rem_4.5rem_auto] items-end gap-2">
+                <Field state={state} name={`lines.${i}.line_id`} label="Line id" />
+                <Field state={state} name={`lines.${i}.unit_price.amount`} label="Unit price (minor units)" type="number" />
+                <Field state={state} name={`lines.${i}.unit_price.currency`} label="Currency" />
+                <Field state={state} name={`lines.${i}.quantity`} label="Qty" type="number" />
+                <button type="button" data-remove-row hidden class="row-remove">×</button>
+              </div>
+            ))}
+          </div>
+          <template data-row-template>
+            <div data-row="__i__" class="grid grid-cols-[1fr_1fr_5.5rem_4.5rem_auto] items-end gap-2">
+              <Field state={empty} name="lines.__i__.line_id" label="Line id" />
+              <Field state={empty} name="lines.__i__.unit_price.amount" label="Unit price (minor units)" type="number" />
+              <Field state={empty} name="lines.__i__.unit_price.currency" label="Currency" />
+              <Field state={empty} name="lines.__i__.quantity" label="Qty" type="number" />
+              <button type="button" data-remove-row hidden class="row-remove">×</button>
+            </div>
+          </template>
+          <button type="button" data-add-row hidden class="row-add">Add line</button>
+        </div>
+        <div data-row-list>
+          <p class="label">Attributes <span class="help" data-tip={TERM.cartAttributes} tabindex="0">?</span></p>
+          <div data-rows class="space-y-2">
+            {attrs.map((i) => (
+              <div data-row={i} class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+                <Field state={state} name={`attributes.${i}.key`} label="Key" />
+                <Field state={state} name={`attributes.${i}.value`} label="Value" />
+                <button type="button" data-remove-row hidden class="row-remove">×</button>
+              </div>
+            ))}
+            {attrs.length === 0 && <p class="hint">None.</p>}
+          </div>
+          <template data-row-template>
+            <div data-row="__i__" class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+              <Field state={empty} name="attributes.__i__.key" label="Key" />
+              <Field state={empty} name="attributes.__i__.value" label="Value" />
+              <button type="button" data-remove-row hidden class="row-remove">×</button>
+            </div>
+          </template>
+          <button type="button" data-add-row hidden class="row-add">Add attribute</button>
+        </div>
+      </section>
+
+      <section class="card space-y-4">
+        <h2 class="card-title">Customer</h2>
+        <div class="grid grid-cols-2 gap-3">
+          <Field state={state} name="customer.customer_id" label="Customer id" hint="empty = anonymous; the service adds this customer's stored uses and allowlists" />
+          <Field state={state} name="customer.completed_orders" label="Completed orders" type="number" required help={TERM.completedOrders} />
+        </div>
+        <div data-row-list>
+          <p class="label">Extra uses <span class="help" data-tip={TERM.customerUses} tabindex="0">?</span></p>
+          <div data-rows class="space-y-2">
+            {uses.map((i) => (
+              <div data-row={i} class="grid grid-cols-[1fr_6rem_auto] items-end gap-2">
+                <Field state={state} name={`uses.${i}.promotion_id`} label="Promotion id" />
+                <Field state={state} name={`uses.${i}.count`} label="Count" type="number" />
+                <button type="button" data-remove-row hidden class="row-remove">×</button>
+              </div>
+            ))}
+            {uses.length === 0 && <p class="hint">None.</p>}
+          </div>
+          <template data-row-template>
+            <div data-row="__i__" class="grid grid-cols-[1fr_6rem_auto] items-end gap-2">
+              <Field state={empty} name="uses.__i__.promotion_id" label="Promotion id" />
+              <Field state={empty} name="uses.__i__.count" label="Count" type="number" />
+              <button type="button" data-remove-row hidden class="row-remove">×</button>
+            </div>
+          </template>
+          <button type="button" data-add-row hidden class="row-add">Add use</button>
+        </div>
+        <div data-row-list>
+          <p class="label">Customer attributes <span class="help" data-tip={TERM.customerAttributes} tabindex="0">?</span></p>
+          <div data-rows class="space-y-2">
+            {cattrs.map((i) => (
+              <div data-row={i} class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+                <Field state={state} name={`customer_attributes.${i}.key`} label="Key" />
+                <Field state={state} name={`customer_attributes.${i}.value`} label="Value" />
+                <button type="button" data-remove-row hidden class="row-remove">×</button>
+              </div>
+            ))}
+            {cattrs.length === 0 && <p class="hint">None.</p>}
+          </div>
+          <template data-row-template>
+            <div data-row="__i__" class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+              <Field state={empty} name="customer_attributes.__i__.key" label="Key" />
+              <Field state={empty} name="customer_attributes.__i__.value" label="Value" />
+              <button type="button" data-remove-row hidden class="row-remove">×</button>
+            </div>
+          </template>
+          <button type="button" data-add-row hidden class="row-add">Add attribute</button>
+        </div>
+        <Field state={state} name="customer.allowlisted" label="Allowlisted promotions" help={TERM.allowlisted} hint="comma-separated promotion ids; the stored allowlists are added by the service" />
+      </section>
+
+      <details class="card" open={!!state.fields.json}>
+        <summary>Paste the request as JSON instead</summary>
+        <Field state={state} name="json" label="Request JSON" textarea rows={8} placeholder='{"cart": {...}, "customer": {...}}' hint="Sent unchanged; the form above is ignored while this is non-empty." />
+      </details>
+
+      <FormStatus state={state} okText="Priced. Nothing was stored." />
+      {replayError && <ApiError status={replayError.status} body={replayError.body} />}
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Explain</button></div>
+    </form>
+
+    <div>
+      {priced ? <ResultPanel result={priced} /> : <div class="card flex min-h-40 items-center justify-center" style="color: var(--color-ink-3)">The result appears here after an evaluation.</div>}
+    </div>
+  </div>
+  <script>
+    import { animate } from "motion";
+    import { initRows } from "../client/rows";
+    initRows();
+    // The result is server-rendered and already in the DOM; this only fades it in.
+    const reveal = () => {
+      const panel = document.getElementById("result");
+      if (panel && !window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+        animate(panel, { opacity: [0, 1], y: [8, 0] }, { duration: 0.25 });
+    };
+    reveal();
+    document.addEventListener("astro:page-load", reveal);
+  </script>
+</Layout>

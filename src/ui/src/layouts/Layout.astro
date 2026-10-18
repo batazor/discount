@@ -2,20 +2,20 @@
 import "../styles/global.css";
 import { ClientRouter } from "astro:transitions";
 import Unreachable from "../components/Unreachable.astro";
+import ConfirmDialog from "../components/ConfirmDialog.astro";
 import { API_URL } from "../api/client";
+import { navigation, roleFrom, ROLE_HELP, ROLES } from "../model/role";
 
 type Crumb = [label: string, href?: string];
 interface Props { title: string; unreachable?: string | null; description?: string; crumbs?: Crumb[] }
 const { title, unreachable = null, description, crumbs = [] } = Astro.props;
 
-const groups: [string, [string, string][]][] = [
-  ["Catalogue", [["/policy", "Policy"], ["/groups", "Groups"], ["/promotions", "Promotions"], ["/coupons", "Coupons"], ["/grant-rules", "Grant rules"], ["/exchange-rates", "Exchange rates"]]],
-  ["Operations", [["/redemptions", "Redemptions"], ["/customers", "Customers"]]],
-  ["Tools", [["/evaluate", "Evaluate playground"]]],
-];
+const role = roleFrom(Astro.cookies.get("discount_role")?.value);
+const groups = navigation(role);
 const path = Astro.url.pathname;
 const active = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
 const flat: [string, string][] = [["/", "Overview"], ...groups.flatMap(([, l]) => l)];
+const back = encodeURIComponent(path + Astro.url.search);
 ---
 <!doctype html>
 <html lang="en" class="h-full">
@@ -25,7 +25,12 @@ const flat: [string, string][] = [["/", "Overview"], ...groups.flatMap(([, l]) =
     <title>{title} · discount</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234f46e5'/%3E%3Ctext x='16' y='22' font-size='18' font-weight='700' font-family='system-ui' fill='white' text-anchor='middle'%3E%25%3C/text%3E%3C/svg%3E" />
     <ClientRouter />
-    <script>import "../client/help";</script>
+    <script>
+      import "../client/help";
+      import "../client/confirm";
+      import "../client/filter";
+      import "../client/localtime";
+    </script>
   </head>
   <body class="min-h-full">
     <nav class="topbar">
@@ -34,11 +39,14 @@ const flat: [string, string][] = [["/", "Overview"], ...groups.flatMap(([, l]) =
     </nav>
     <div class="flex min-h-screen">
       <nav class="sidebar">
-        <a href="/" class="mb-2 flex items-center gap-2 px-2.5 py-1 no-underline">
+        <a href="/" class="mb-3 flex items-center gap-2 px-2.5 py-1 no-underline">
           <span class="flex size-7 items-center justify-center rounded-md text-[13px] font-bold text-white" style="background: var(--color-accent)">%</span>
           <span class="text-[15px] font-semibold tracking-tight">discount</span>
         </a>
-        <a href="/" class="nav-link" aria-current={active("/") ? "page" : undefined}>Overview</a>
+        <div class="role-switch" role="group" aria-label="Role">
+          {ROLES.map((r) => <a href={`/role?set=${r}&back=${back}`} class="role-option" aria-current={r === role ? "true" : undefined} data-tip={ROLE_HELP[r]}>{r}</a>)}
+        </div>
+        <a href="/" class="nav-link mt-3" aria-current={active("/") ? "page" : undefined}>Overview</a>
         {groups.map(([group, links]) => (
           <>
             <div class="nav-group">{group}</div>
@@ -71,6 +79,7 @@ const flat: [string, string][] = [["/", "Overview"], ...groups.flatMap(([, l]) =
           <slot />
         </div>
       </main>
+      <ConfirmDialog />
     </div>
   </body>
 </html>

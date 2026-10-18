@@ -2,8 +2,9 @@
 import Layout from "../../layouts/Layout.astro";
 import ApiError from "../../components/ApiError.astro";
 import { api, call, unreachableUrl } from "../../api/client";
-import { formatTimestamp } from "../../model/time";
-import { fmtMoney } from "../../model/evaluate";
+import When from "../../components/When.astro";
+import Money from "../../components/Money.astro";
+import Percent from "../../components/Percent.astro";
 import { COUPON_STATUS_HELP } from "../../model/glossary";
 
 const customerId = Astro.params.customer_id!;
@@ -12,8 +13,6 @@ const list = await call(() =>
   api.GET("/v1/customers/{customer_id}/coupons", { params: { path: { customer_id: customerId }, query: source ? { source } : {} } }),
 );
 const badge: Record<string, string> = { active: "badge-ok", scheduled: "badge-info", expired: "badge-muted", applied: "badge-warn" };
-const actionText = (a: { type: string; bps?: number; amount?: { amount: number; currency: string } }) =>
-  a.type === "OrderPercentage" ? `${a.bps} bps` : fmtMoney(a.amount);
 ---
 <Layout title={customerId} crumbs={[["Customers", "/customers"], [customerId]]} description="Bound, used and saved coupons with their cart-free status, as the service lists them." unreachable={unreachableUrl(list)}>
   {!list.ok && !list.unreachable && <ApiError status={list.status} body={list.body} traceId={list.traceId} />}
@@ -32,8 +31,8 @@ const actionText = (a: { type: string; bps?: number; amount?: { amount: number; 
               <td class="mono"><a href={`/coupons/${encodeURIComponent(c.coupon.code)}`} class="link">{c.coupon.code}</a></td>
               <td><span class={`badge ${badge[c.status]}`} data-tip={COUPON_STATUS_HELP[c.status]}>{c.status}</span></td>
               <td class="mono">{c.order_id ? <a href={`/redemptions/${encodeURIComponent(c.order_id)}`} class="link">{c.order_id}</a> : "—"}</td>
-              <td>{c.promotion ? <><a href={`/promotions/${encodeURIComponent(c.promotion.promotion_id)}`} class="link mono">{c.promotion.promotion_id}</a>{c.promotion.metadata && <span class="ml-1.5" style="color: var(--color-ink-2)">{c.promotion.metadata.title}</span>}<div class="mono text-[12px]" style="color: var(--color-ink-3)">{c.promotion.action.type} {actionText(c.promotion.action)}</div></> : <span class="badge badge-muted">gone</span>}</td>
-              <td class="mono text-[12px]">{c.coupon.ends_at === null ? <span style="color: var(--color-ink-3)">—</span> : formatTimestamp(c.coupon.ends_at)}</td>
+              <td>{c.promotion ? <><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link mono">{c.promotion.promotion_id}</a>{c.promotion.metadata && <span class="ml-1.5" style="color: var(--color-ink-2)">{c.promotion.metadata.title}</span>}<div class="text-[12px]" style="color: var(--color-ink-3)">{c.promotion.action.type === "OrderPercentage" ? <Percent bps={c.promotion.action.bps} /> : <Money m={c.promotion.action.amount} />} off the order</div></> : <span class="badge badge-muted">gone</span>}</td>
+              <td class="text-[12px]"><When ts={c.coupon.ends_at} /></td>
               <td class="num mono">{c.coupon.uses} / {c.coupon.max_uses ?? "∞"}</td>
             </tr>
           ))}

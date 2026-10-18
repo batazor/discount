@@ -6,9 +6,9 @@ import { fieldsOf, type FieldError, type Fields, type Parsed } from "../model/fi
 
 export type ActionOutcome<T> =
   | { kind: "ok"; data: T; fields: Fields }
-  | { kind: "api"; status: number; body: unknown; fields: Fields; traceId: string }
+  | { kind: "api"; status: number; body: unknown; fields: Fields; traceId: string; step?: string; saved?: string[] }
   | { kind: "invalid"; errors: FieldError[]; fields: Fields }
-  | { kind: "unreachable"; url: string; fields: Fields; traceId: string };
+  | { kind: "unreachable"; url: string; fields: Fields; traceId: string; step?: string; saved?: string[] };
 
 type Reply<T> = { data?: T; error?: unknown; response: Response };
 
@@ -45,10 +45,13 @@ export type FormState = {
   /** Trace id of the failed call (api or unreachable), for the error panel. */
   traceId: string | null;
   ok: boolean;
+  /** For multi-step actions: the step that failed and the steps saved before it. */
+  step: string | null;
+  saved: string[];
 };
 
 export function formState(result: ActionOutcome<unknown> | undefined, initial: Fields): FormState {
-  if (!result) return { fields: initial, errors: [], api: null, unreachable: null, traceId: null, ok: false };
+  if (!result) return { fields: initial, errors: [], api: null, unreachable: null, traceId: null, ok: false, step: null, saved: [] };
   return {
     // After a success the page re-reads the record, so the fresh fields win.
     fields: result.kind === "ok" ? initial : result.fields,
@@ -57,5 +60,7 @@ export function formState(result: ActionOutcome<unknown> | undefined, initial: F
     unreachable: result.kind === "unreachable" ? result.url : null,
     traceId: result.kind === "api" || result.kind === "unreachable" ? result.traceId : null,
     ok: result.kind === "ok",
+    step: result.kind === "api" || result.kind === "unreachable" ? (result.step ?? null) : null,
+    saved: result.kind === "api" || result.kind === "unreachable" ? (result.saved ?? []) : [],
   };
 }

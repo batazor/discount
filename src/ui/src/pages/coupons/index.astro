@@ -6,8 +6,9 @@ import FormStatus from "../../components/FormStatus.astro";
 import Field from "../../components/Field.astro";
 import TimestampField from "../../components/TimestampField.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
+import { CONSEQUENCE } from "../../model/glossary";
 import { formState } from "../../actions/run";
-import { formatTimestamp } from "../../model/time";
+import When from "../../components/When.astro";
 import { TERM } from "../../model/glossary";
 import Help from "../../components/Help.astro";
 
@@ -54,12 +55,12 @@ const rows = dataOr(coupons, []);
         {rows.map((c) => (
           <tr>
             <td><a href={`/coupons/${encodeURIComponent(c.code)}`} class="link mono">{c.code}</a></td>
-            <td><a href={`/promotions/${encodeURIComponent(c.promotion_id)}`} class="link mono">{c.promotion_id}</a></td>
+            <td><a href={`/campaigns/${encodeURIComponent(c.promotion_id)}`} class="link mono">{c.promotion_id}</a></td>
             <td>{c.customer_id ? <span class="mono">{c.customer_id}</span> : <span class="badge badge-muted">public</span>}</td>
-            <td class="mono text-[12px]">{c.starts_at === null ? <span style="color: var(--color-ink-3)">—</span> : formatTimestamp(c.starts_at)}</td>
-            <td class="mono text-[12px]">{c.ends_at === null ? <span style="color: var(--color-ink-3)">—</span> : formatTimestamp(c.ends_at)}</td>
+            <td class="text-[12px]"><When ts={c.starts_at} /></td>
+            <td class="text-[12px]"><When ts={c.ends_at} /></td>
             <td class="num mono">{c.uses} / {c.max_uses ?? "∞"}</td>
-            <td class="actions"><DeleteButton action={actions.deleteCoupon} id={c.code} size="xs" /></td>
+            <td class="actions"><DeleteButton action={actions.deleteCoupon} id={c.code} consequence={CONSEQUENCE.deleteCoupon} size="xs" /></td>
           </tr>
         ))}
         {coupons.ok && rows.length === 0 && <tr><td colspan="7" class="empty">No coupons yet.</td></tr>}

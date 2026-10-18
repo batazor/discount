@@ -1,0 +1,37 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../../layouts/Layout.astro";
+import Field from "../../../components/Field.astro";
+import FormStatus from "../../../components/FormStatus.astro";
+import ApiError from "../../../components/ApiError.astro";
+import DeleteButton from "../../../components/DeleteButton.astro";
+import { api, call, unreachableUrl } from "../../../api/client";
+import { CONSEQUENCE } from "../../../model/glossary";
+import { formState } from "../../../actions/run";
+import { groupToFields, STACKING_MODES } from "../../../model/catalogue";
+import { STACKING_MODE_HELP, TERM } from "../../../model/glossary";
+
+const id = Astro.params.id!;
+const isNew = id === "new";
+const result = Astro.getActionResult(actions.putGroup);
+if (isNew && result?.data?.kind === "ok") return Astro.redirect(`/settings/groups/${encodeURIComponent(result.data.data.group_id)}`);
+
+const current = isNew ? null : await call(() => api.GET("/v1/groups/{group_id}", { params: { path: { group_id: id } } }));
+const state = formState(result?.data, current?.ok ? groupToFields(current.data) : { mode: "Stackable", priority: "0" });
+---
+<Layout title={isNew ? "New group" : id} crumbs={[["Groups", "/settings/groups"], [isNew ? "New" : id]]} unreachable={current ? unreachableUrl(current) : null}>
+  <Fragment slot="actions">{!isNew && current?.ok && <DeleteButton action={actions.deleteGroup} id={id} consequence={CONSEQUENCE.deleteGroup} />}</Fragment>
+  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} traceId={current.traceId} />}
+  <form method="post" action={actions.putGroup} class="max-w-xl space-y-5">
+    <section class="card space-y-4">
+      <Field state={state} name="group_id" label="Group id" required readonly={!isNew} />
+      <Field state={state} name="priority" label="Priority" type="number" required help={TERM.groupPriority} hint="higher applies first" />
+      <Field state={state} name="mode" label="Mode" options={STACKING_MODES} required optionHelp={STACKING_MODE_HELP} />
+    </section>
+    <FormStatus state={state} />
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{isNew ? "Create group" : "Save group"}</button>
+      <a href="/settings/groups" class="btn btn-ghost">Back to groups</a>
+    </div>
+  </form>
+</Layout>

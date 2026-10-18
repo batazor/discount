@@ -8,7 +8,7 @@ const base = {
   group_id: "g",
   priority: "10",
   "action.type": "OrderPercentage",
-  "action.bps": "1000",
+  "action.percent": "10",
 };
 
 describe("spec admin-ui: rules and actions are edited structurally", () => {
@@ -32,22 +32,23 @@ describe("spec admin-ui: rules and actions are edited structurally", () => {
     expect(f.errors).toEqual([]);
   });
 
-  it("Fixed amount in minor units", () => {
-    const r = promotionFromForm({
-      ...base,
-      "action.type": "OrderFixedAmount",
-      "action.amount.amount": "500",
-      "action.amount.currency": "EUR",
-    });
-    expect(r.ok && r.value.action).toEqual({ type: "OrderFixedAmount", amount: { amount: 500, currency: "EUR" } });
-  });
-
-  it("a decimal amount is refused: money is integer minor units", () => {
+  it("Fixed amount in minor units: 5.00 EUR is sent as 500", () => {
     const r = promotionFromForm({
       ...base,
       "action.type": "OrderFixedAmount",
       "action.amount.amount": "5.00",
       "action.amount.currency": "EUR",
+    });
+    expect(r.ok && r.value.action).toEqual({ type: "OrderFixedAmount", amount: { amount: 500, currency: "EUR" } });
+  });
+
+  it("Currency without decimals: 500.5 JPY is refused as a field error", () => {
+    expect(promotionFromForm({ ...base, "action.type": "OrderFixedAmount", "action.amount.amount": "500", "action.amount.currency": "JPY" })).toMatchObject({ ok: true, value: { action: { amount: { amount: 500, currency: "JPY" } } } });
+    const r = promotionFromForm({
+      ...base,
+      "action.type": "OrderFixedAmount",
+      "action.amount.amount": "500.5",
+      "action.amount.currency": "JPY",
     });
     expect(r.ok).toBe(false);
     if (r.ok) return;
@@ -73,11 +74,23 @@ describe("spec admin-ui: rules and actions are edited structurally", () => {
     });
   });
 
+  it("Percent to basis points: 12.5 → 1250, 12.345 refused", () => {
+    expect(promotionFromForm({ ...base, "action.percent": "12.5" })).toMatchObject({ ok: true, value: { action: { type: "OrderPercentage", bps: 1250 } } });
+    const r = promotionFromForm({ ...base, "action.percent": "12.345" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors[0]?.field).toBe("action.percent");
+  });
+
   it("collects every error at once", () => {
-    const r = promotionFromForm({ "action.type": "OrderPercentage", "action.bps": "20000" });
+    const r = promotionFromForm({ "action.type": "OrderPercentage", "action.percent": "200" });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.errors.map((e) => e.field).sort()).toEqual(["action.bps", "group_id", "priority", "promotion_id"]);
+    expect(r.errors.map((e) => e.field).sort()).toEqual(["action.percent", "group_id", "priority", "promotion_id"]);
+  });
+
+  it("a datetime-local is read in the viewer's zone when the offset is sent", () => {
+    const r = promotionFromForm({ ...base, "rules.0.type": "DateWindow", "rules.0.starts_at": "2026-10-18T00:00", "rules.0.ends_at": "", tz_offset_minutes: "-120" });
+    expect(r.ok && r.value.rules[0]).toEqual({ type: "DateWindow", starts_at: Date.UTC(2026, 9, 18) / 1000 - 7200, ends_at: null });
   });
 });
 

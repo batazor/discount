@@ -1,0 +1,9 @@
+---
+// One box for a customer id, an order id, a coupon code or a campaign id (spec: Find).
+interface Props { q?: string; autofocus?: boolean }
+const { q = "", autofocus = false } = Astro.props;
+---
+<form method="get" action="/find" class="flex max-w-xl gap-2">
+  <input type="search" name="q" value={q} placeholder="customer id, order id, coupon code or campaign id" required autofocus={autofocus} class="input mono flex-1" />
+  <button type="submit" class="btn btn-primary">Find</button>
+</form>

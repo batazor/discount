@@ -7,6 +7,7 @@ import FormStatus from "../../components/FormStatus.astro";
 import ApiError from "../../components/ApiError.astro";
 import DeleteButton from "../../components/DeleteButton.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
+import { CONSEQUENCE } from "../../model/glossary";
 import { formState } from "../../actions/run";
 import { couponToFields } from "../../model/catalogue";
 import { TERM } from "../../model/glossary";
@@ -25,7 +26,7 @@ const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
 ---
 <Layout title={isNew ? "New coupon" : code} crumbs={[["Coupons", "/coupons"], [isNew ? "New" : code]]} unreachable={unreachableUrl(current ?? promotions, promotions)}>
   <Fragment slot="badge">{current?.ok && (current.data.customer_id ? <span class="badge badge-info">bound to {current.data.customer_id}</span> : <span class="badge badge-muted">public</span>)}</Fragment>
-  <Fragment slot="actions">{!isNew && current?.ok && <DeleteButton action={actions.deleteCoupon} id={code} />}</Fragment>
+  <Fragment slot="actions">{!isNew && current?.ok && <DeleteButton action={actions.deleteCoupon} id={code} consequence={CONSEQUENCE.deleteCoupon} />}</Fragment>
   {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} traceId={current.traceId} />}
   <form method="post" action={actions.putCoupon} class="max-w-3xl space-y-5">
     <section class="card grid grid-cols-2 gap-4">

@@ -1,12 +1,15 @@
 ---
-// Unix seconds in the contract; entered as a UTC datetime or the raw integer. The current
-// integer is shown alongside so an operator can check what will be sent.
+// Unix seconds in the contract; entered as a datetime in the viewer's zone (UTC without
+// scripts) or the raw integer. The integer that will be sent is shown alongside.
 import type { FormState } from "../actions/run";
 import { parseTimestamp } from "../model/time";
 import Field from "./Field.astro";
 interface Props { state: FormState; name: string; label: string }
 const { state, name, label } = Astro.props;
 const ts = parseTimestamp(state.fields[name] ?? "");
-const hint = ts === null ? "UTC; empty = none" : ts === undefined ? "UTC" : `UTC; sends ${ts}`;
+// A value the server rendered from the API is UTC and gets shifted by the script; a value
+// posted back by the viewer (the form carried tz_offset_minutes) is already local.
+const posted = "tz_offset_minutes" in state.fields;
+const hint = ts === null ? "empty = none" : ts === undefined ? "" : posted ? "" : `sends ${ts}`;
 ---
-<Field state={state} name={name} label={label} type="datetime-local" hint={hint} />
+<Field state={state} name={name} label={label} type="datetime-local" utc={!posted} hintHtml hint={`in <span data-zone>UTC</span>; ${hint}`.replace(/; $/, "")} />

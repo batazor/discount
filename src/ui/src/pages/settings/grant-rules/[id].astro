@@ -1,0 +1,44 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../../layouts/Layout.astro";
+import Field from "../../../components/Field.astro";
+import FormStatus from "../../../components/FormStatus.astro";
+import ApiError from "../../../components/ApiError.astro";
+import DeleteButton from "../../../components/DeleteButton.astro";
+import { api, call, unreachableUrl, dataOr } from "../../../api/client";
+import { CONSEQUENCE } from "../../../model/glossary";
+import { formState } from "../../../actions/run";
+import { GRANT_TRIGGERS, grantRuleToFields } from "../../../model/catalogue";
+import { GRANT_TRIGGER_HELP, TERM } from "../../../model/glossary";
+
+const id = Astro.params.id!;
+const isNew = id === "new";
+const result = Astro.getActionResult(actions.putGrantRule);
+if (isNew && result?.data?.kind === "ok") return Astro.redirect(`/settings/grant-rules/${encodeURIComponent(result.data.data.rule_id)}`);
+
+const [current, promotions] = await Promise.all([
+  isNew ? Promise.resolve(null) : call(() => api.GET("/v1/grant-rules/{rule_id}", { params: { path: { rule_id: id } } })),
+  call(() => api.GET("/v1/promotions")),
+]);
+const state = formState(result?.data, current?.ok ? grantRuleToFields(current.data) : { trigger: "cancel", priority: "0", validity_seconds: "2592000", max_uses: "1" });
+const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
+---
+<Layout title={isNew ? "New grant rule" : id} crumbs={[["Grant rules", "/settings/grant-rules"], [isNew ? "New" : id]]} unreachable={unreachableUrl(current ?? promotions, promotions)}>
+  <Fragment slot="actions">{!isNew && current?.ok && <DeleteButton action={actions.deleteGrantRule} id={id} consequence={CONSEQUENCE.deleteGrantRule} />}</Fragment>
+  {current && !current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} traceId={current.traceId} />}
+  <form method="post" action={actions.putGrantRule} class="max-w-3xl space-y-5">
+    <section class="card grid grid-cols-2 gap-4">
+      <Field state={state} name="rule_id" label="Rule id" required readonly={!isNew} />
+      <Field state={state} name="trigger" label="Event" options={GRANT_TRIGGERS} required optionHelp={GRANT_TRIGGER_HELP} />
+      <Field state={state} name="promotion_id" label="Promotion to grant" options={promotionIds} empty="— choose —" required />
+      <Field state={state} name="priority" label="Priority" type="number" required help={TERM.grantPriority} hint="higher wins" />
+      <Field state={state} name="validity_seconds" label="Valid for, seconds" type="number" required help={TERM.grantValidity} hint="2592000 = 30 days" />
+      <Field state={state} name="max_uses" label="Uses per issued code" type="number" help={TERM.grantMaxUses} hint="empty = unlimited" />
+    </section>
+    <FormStatus state={state} />
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{isNew ? "Create rule" : "Save rule"}</button>
+      <a href="/settings/grant-rules" class="btn btn-ghost">Back to grant rules</a>
+    </div>
+  </form>
+</Layout>

@@ -1,0 +1,7 @@
+---
+import { CAMPAIGN_STATUS_HELP, type CampaignStatus } from "../model/campaign";
+interface Props { status: CampaignStatus }
+const { status } = Astro.props;
+const cls: Record<CampaignStatus, string> = { live: "badge-ok", scheduled: "badge-info", exhausted: "badge-warn", ended: "badge-muted" };
+---
+<span class={`badge ${cls[status]}`} data-tip={CAMPAIGN_STATUS_HELP[status]}>{status}</span>

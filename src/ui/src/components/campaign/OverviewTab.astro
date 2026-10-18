@@ -1,0 +1,45 @@
+---
+import type { Campaign } from "../../model/campaign";
+import { CAMPAIGN_STATUS_HELP, describeAction, RULE_NAMES } from "../../model/campaign";
+import { TERM } from "../../model/glossary";
+import Money from "../Money.astro";
+import When from "../When.astro";
+import Help from "../Help.astro";
+interface Props { campaign: Campaign; allowlistCount: number; href: (t: "overview" | "rules" | "codes" | "audience" | "details") => string }
+const { campaign: c, allowlistCount, href } = Astro.props;
+const p = c.promotion;
+const needsCode = p.rules.some((r) => r.type === "RequiresCoupon");
+const needsList = p.rules.some((r) => r.type === "RequiresAllowlist");
+const todo: [string, string][] = [];
+if (!c.metadata) todo.push(["No title yet: lists show the id.", href("details")]);
+if (needsCode && c.codes.length === 0) todo.push(["Needs a code, but none exist: nobody can use it.", href("codes")]);
+if (!needsCode && c.codes.length > 0) todo.push(["Has codes but no \"Needs a code\" rule: the codes do nothing.", href("rules")]);
+if (needsList && allowlistCount === 0) todo.push(["Requires an allowlist, but it is empty: nobody is eligible.", href("audience")]);
+if (!needsList && allowlistCount > 0) todo.push(["Has an allowlist but no rule reads it.", href("rules")]);
+if (c.exhaustedBy === "budget") todo.push(["Budget is spent: raise it or let it end.", href("overview")]);
+---
+<div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+  <section class="card">
+    <dl class="dl">
+      <dt>Status</dt><dd class="font-sans">{c.status} <span class="hint inline">{CAMPAIGN_STATUS_HELP[c.status]}</span></dd>
+      <dt>Gives</dt><dd>{describeAction(p.action)}</dd>
+      <dt>Cap per order <Help text={TERM.cap} /></dt><dd><Money m={p.cap} empty="unlimited" /></dd>
+      <dt>Runs</dt><dd>{c.startsAt === null && c.endsAt === null ? "always" : <>{c.startsAt !== null && <>from <When ts={c.startsAt} /> </>}{c.endsAt !== null && <>until <When ts={c.endsAt} /></>}</>}</dd>
+      <dt>Rules</dt><dd class="font-sans">{p.rules.length === 0 ? "none: every cart" : p.rules.map((r) => RULE_NAMES[r.type]).join(" · ")}</dd>
+      <dt>Group · priority</dt><dd>{p.group_id} · {p.priority}{p.exclusive && " · exclusive"}</dd>
+      <dt>Remaining budget <Help text={TERM.remainingBudget} /></dt><dd><Money m={p.remaining_budget} empty="unbounded" /></dd>
+      <dt>Uses in total <Help text={TERM.usesTotal} /></dt><dd>{p.uses_total}</dd>
+      <dt>Codes</dt><dd>{c.codes.length}</dd>
+      <dt>Allowlisted</dt><dd>{allowlistCount}</dd>
+    </dl>
+  </section>
+  <aside class="space-y-4">
+    {todo.length > 0 && (
+      <section class="card">
+        <h2 class="card-title">Worth a look</h2>
+        <ul class="space-y-2 text-[13px]">{todo.map(([text, link]) => <li><a href={link} class="link">{text}</a></li>)}</ul>
+      </section>
+    )}
+    {c.metadata?.description && <section class="card"><h2 class="card-title">Description</h2><p class="text-[13px] whitespace-pre-line">{c.metadata.description}</p></section>}
+  </aside>
+</div>

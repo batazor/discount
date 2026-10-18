@@ -1,0 +1,34 @@
+---
+// Codes shown once after a generation, with copy-all and a CSV download.
+interface Props { codes: string[] }
+const { codes } = Astro.props;
+const csv = `data:text/csv;charset=utf-8,${encodeURIComponent(codes.join("\n") + "\n")}`;
+---
+{codes.length > 0 && (
+  <div class="alert alert-success space-y-2">
+    <p class="alert-title">Generated {codes.length} code{codes.length === 1 ? "" : "s"}. They are listed once here; copy or download them now.</p>
+    <ul id="generated-codes" class="grid grid-cols-2 gap-1.5 md:grid-cols-4">
+      {codes.map((c) => <li data-code class="mono rounded-md px-2.5 py-1.5 select-all" style="background: var(--color-surface)">{c}</li>)}
+    </ul>
+    <div class="flex gap-2">
+      <button type="button" class="btn btn-secondary" data-copy-codes={codes.join("\n")}>Copy all</button>
+      <a class="btn btn-secondary" href={csv} download="codes.csv">Download CSV</a>
+    </div>
+  </div>
+)}
+<script>
+  import { animate, stagger } from "motion";
+  const init = () => {
+    const items = document.querySelectorAll("#generated-codes [data-code]");
+    if (items.length && !window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+      animate(items, { opacity: [0, 1], y: [4, 0] }, { delay: stagger(0.03), duration: 0.2 });
+    document.querySelector<HTMLButtonElement>("[data-copy-codes]")?.addEventListener("click", async (e) => {
+      const b = e.currentTarget as HTMLButtonElement;
+      await navigator.clipboard.writeText(b.dataset.copyCodes ?? "");
+      b.textContent = "Copied";
+      setTimeout(() => (b.textContent = "Copy all"), 1500);
+    });
+  };
+  init();
+  document.addEventListener("astro:page-load", init);
+</script>

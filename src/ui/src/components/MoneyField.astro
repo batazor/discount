@@ -1,11 +1,16 @@
 ---
-// Money is integer minor units plus a currency (contract `Money`); no decimal input exists.
+// Money entered as a decimal in the currency's units (`5.00`), converted to integer minor
+// units by the currency's exponent in the view model; the integer is shown in the hint.
 import type { FormState } from "../actions/run";
+import { parseAmount } from "../model/units";
 import Field from "./Field.astro";
 interface Props { state: FormState; name: string; label: string; hint?: string; help?: string }
 const { state, name, label, hint, help } = Astro.props;
+const cur = (state.fields[`${name}.currency`] ?? "").trim();
+const minor = cur ? parseAmount(state.fields[`${name}.amount`] ?? "", cur) : undefined;
+const sends = minor === undefined ? "" : `; sends ${minor}`;
 ---
 <fieldset class="grid grid-cols-[1fr_5.5rem] gap-2">
-  <Field state={state} name={`${name}.amount`} label={label} type="number" hint={hint ?? "minor units, e.g. 500 = 5.00"} help={help} />
+  <Field state={state} name={`${name}.amount`} label={label} placeholder="5.00" mono hint={`${hint ?? "decimal, e.g. 5.00"}${sends}`} help={help} />
   <Field state={state} name={`${name}.currency`} label="Currency" placeholder="EUR" />
 </fieldset>

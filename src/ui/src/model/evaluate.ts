@@ -1,7 +1,8 @@
 // The playground: an EvaluateRequest from form rows, and the PricingResult as rows to
 // render. Nothing here prices anything; it only reshapes the service's answer.
 import type { ClampReason, EvaluateRequest, Money, PricingResult, SkipReason } from "../api/types";
-import { Form, type Fields, type Parsed } from "./fields";
+import { Form, moneyToFields, type Fields, type Parsed } from "./fields";
+import { formatAmount } from "./units";
 
 export function evaluateRequestFromForm(fields: Fields): Parsed<EvaluateRequest> {
   const f = new Form(fields);
@@ -47,8 +48,7 @@ export function evaluateRequestToFields(r: EvaluateRequest): Fields {
   };
   r.cart.lines.forEach((l, i) => {
     out[`lines.${i}.line_id`] = l.line_id;
-    out[`lines.${i}.unit_price.amount`] = String(l.unit_price.amount);
-    out[`lines.${i}.unit_price.currency`] = l.unit_price.currency;
+    Object.assign(out, moneyToFields(l.unit_price, `lines.${i}.unit_price`));
     out[`lines.${i}.quantity`] = String(l.quantity);
   });
   r.cart.attributes.forEach((a, i) => {
@@ -81,8 +81,9 @@ export const SAMPLE_REQUEST: EvaluateRequest = {
   customer: { customer_id: "smoke", completed_orders: 0, uses: [], attributes: [], allowlisted: [] },
 };
 
+/** Human form, `5.00 EUR`; null → `—`. */
 export function fmtMoney(m: Money | null | undefined): string {
-  return m ? `${m.amount} ${m.currency}` : "—";
+  return m ? formatAmount(m.amount, m.currency) : "—";
 }
 
 export function skipReasonText(r: SkipReason): string {
@@ -122,7 +123,7 @@ export function resultRows(r: PricingResult): ResultRows {
       discount: fmtMoney(a.discount),
       clamped_by: a.clamped_by?.type ?? "—",
       clamp: a.clamped_by?.type ?? null,
-      allocation: a.allocation.map((x) => `${x.line_id} ${x.amount.amount}`).join(", "),
+      allocation: a.allocation.map((x) => `${x.line_id} ${formatAmount(x.amount.amount, x.amount.currency)}`).join(", "),
     })),
     skipped: r.skipped.map((s) => ({ promotion_id: s.promotion_id, reason: skipReasonText(s.reason), skip: s.reason.type })),
   };

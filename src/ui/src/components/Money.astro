@@ -1,0 +1,8 @@
+---
+// `5.00 EUR` with the contract's integer minor units in the tooltip.
+import type { Money } from "../api/types";
+import { formatAmount } from "../model/units";
+interface Props { m: Money | null | undefined; empty?: string }
+const { m, empty = "—" } = Astro.props;
+---
+{m ? <span class="mono" data-tip={`${m.amount} minor units of ${m.currency}`}>{formatAmount(m.amount, m.currency)}</span> : <span style="color: var(--color-ink-3)">{empty}</span>}

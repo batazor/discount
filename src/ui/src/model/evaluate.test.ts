@@ -53,10 +53,10 @@ describe("result rows", () => {
 
   it("renders totals, applied with clamps and allocation, skipped with reasons", () => {
     const rows = resultRows(result);
-    expect(rows.totals.map((t) => t.value)).toEqual(["EUR", "4499 EUR", "749 EUR", "3750 EUR"]);
+    expect(rows.totals.map((t) => t.value)).toEqual(["EUR", "44.99 EUR", "7.49 EUR", "37.50 EUR"]);
     expect(rows.applied).toEqual([
-      { promotion_id: "P1", discount: "449 EUR", clamped_by: "—", clamp: null, allocation: "L1 399" },
-      { promotion_id: "P2", discount: "300 EUR", clamped_by: "Cap", clamp: "Cap", allocation: "" },
+      { promotion_id: "P1", discount: "4.49 EUR", clamped_by: "—", clamp: null, allocation: "L1 3.99 EUR" },
+      { promotion_id: "P2", discount: "3.00 EUR", clamped_by: "Cap", clamp: "Cap", allocation: "" },
     ]);
     expect(rows.skipped).toEqual([
       { promotion_id: "P3", reason: "NotEligible (rule #0)", skip: "NotEligible" },

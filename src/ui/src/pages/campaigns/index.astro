@@ -1,0 +1,79 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../layouts/Layout.astro";
+import DeleteButton from "../../components/DeleteButton.astro";
+import FormStatus from "../../components/FormStatus.astro";
+import StatusBadge from "../../components/StatusBadge.astro";
+import Money from "../../components/Money.astro";
+import When from "../../components/When.astro";
+import Help from "../../components/Help.astro";
+import { api, call, unreachableUrl, dataOr } from "../../api/client";
+import { formState } from "../../actions/run";
+import { assembleCampaigns, CAMPAIGN_STATUSES, campaignTitle, describeAction, RULE_NAMES } from "../../model/campaign";
+import { CONSEQUENCE, TERM } from "../../model/glossary";
+
+const archived = Astro.getActionResult(actions.deletePromotion);
+const source = Astro.url.searchParams.get("source")?.trim() || "";
+const query = source ? { source } : {};
+const [promotions, metadata, coupons] = await Promise.all([
+  call(() => api.GET("/v1/promotions", { params: { query } })),
+  call(() => api.GET("/v1/promotion-metadata", { params: { query } })),
+  call(() => api.GET("/v1/coupons")),
+]);
+const now = Math.floor(Date.now() / 1000);
+const campaigns = assembleCampaigns(dataOr(promotions, []), dataOr(metadata, []), dataOr(coupons, []), now);
+const state = formState(archived?.data, {});
+const rowText = (c: (typeof campaigns)[number]) =>
+  [c.promotion.promotion_id, c.metadata?.title, c.metadata?.source, c.promotion.group_id, describeAction(c.promotion.action), ...c.promotion.rules.map((r) => RULE_NAMES[r.type])].filter(Boolean).join(" ").toLowerCase();
+---
+<Layout title="Campaigns" description="Every active promotion with its budget, codes and status." unreachable={unreachableUrl(promotions, metadata, coupons)}>
+  <Fragment slot="badge">{promotions.ok && <span class="badge badge-muted"><span data-filter-count>{campaigns.length}</span></span>}</Fragment>
+  <a slot="actions" href="/campaigns/new" class="btn btn-primary">New campaign</a>
+  <FormStatus state={state} okText="Archived." />
+  {Astro.url.searchParams.get("archived") && <p role="status" class="alert alert-success mb-4">Archived <span class="mono">{Astro.url.searchParams.get("archived")}</span>.</p>}
+  <div data-filter-root>
+    <div class="toolbar">
+      <div class="flex flex-wrap items-end gap-2">
+        <div data-filter-ui hidden class="flex flex-wrap items-end gap-2">
+          <label class="block"><span class="label">Filter</span><input type="search" data-filter placeholder="id, title, rule…" class="input w-56" /></label>
+          <div class="flex gap-1 pb-1.5">{CAMPAIGN_STATUSES.map((s) => <button type="button" class="chip" data-chip={s} aria-pressed="false">{s}</button>)}</div>
+        </div>
+        <form method="get" class="flex items-end gap-2">
+          <label class="block"><span class="label">Source <Help text={TERM.source} /></span><input type="text" name="source" value={source} placeholder="hotels" class="input mono w-36" /></label>
+          <button type="submit" class="btn btn-secondary">Apply</button>
+          {source && <a href="/campaigns" class="btn btn-ghost">Clear</a>}
+        </form>
+      </div>
+    </div>
+    <div class="table-card">
+      <table class="table">
+        <thead><tr><th>Campaign</th><th>Status</th><th>Gives</th><th>Runs</th><th class="num">Remaining budget <Help text={TERM.remainingBudget} /></th><th class="num">Codes</th><th class="num">Uses <Help text={TERM.usesTotal} /></th><th></th></tr></thead>
+        <tbody>
+          {campaigns.map((c) => (
+            <tr data-row-text={rowText(c)} data-status={c.status}>
+              <td>
+                <a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a>
+                <div class="flex items-center gap-1.5 text-[12px]" style="color: var(--color-ink-3)">
+                  <span class="mono">{c.promotion.promotion_id}</span>
+                  {c.metadata?.source && <span class="badge badge-info">{c.metadata.source}</span>}
+                  {c.promotion.exclusive && <span class="badge badge-warn" data-tip={TERM.exclusive}>exclusive</span>}
+                </div>
+              </td>
+              <td><StatusBadge status={c.status} />{c.endingSoon && <span class="badge badge-warn ml-1">ending soon</span>}</td>
+              <td><span class="mono">{describeAction(c.promotion.action)}</span><div class="text-[12px]" style="color: var(--color-ink-3)">{c.promotion.rules.length === 0 ? "every cart" : c.promotion.rules.map((r) => RULE_NAMES[r.type]).join(" · ")}</div></td>
+              <td class="text-[12px]">{c.startsAt === null && c.endsAt === null ? <span style="color: var(--color-ink-3)">always</span> : <>{c.startsAt !== null && <div>from <When ts={c.startsAt} /></div>}{c.endsAt !== null && <div>until <When ts={c.endsAt} /></div>}</>}</td>
+              <td class="num"><Money m={c.promotion.remaining_budget} empty="unbounded" /></td>
+              <td class="num mono">{c.codes.length}</td>
+              <td class="num mono">{c.promotion.uses_total}</td>
+              <td class="actions"><DeleteButton action={actions.deletePromotion} id={c.promotion.promotion_id} label="Archive" size="xs" consequence={CONSEQUENCE.archive} title={`Archive ${campaignTitle(c)}?`} /></td>
+            </tr>
+          ))}
+          {promotions.ok && campaigns.length === 0 && (
+            <tr><td colspan="8" class="empty">{source ? `No campaigns with source "${source}".` : <>No campaigns yet. <a href="/campaigns/new" class="link">Create the first one</a>.</>}</td></tr>
+          )}
+          <tr data-filter-empty hidden><td colspan="8" class="empty">Nothing matches the filter.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</Layout>

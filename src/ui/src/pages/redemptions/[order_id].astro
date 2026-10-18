@@ -6,8 +6,8 @@ import FormStatus from "../../components/FormStatus.astro";
 import ResultPanel from "../../components/ResultPanel.astro";
 import { api, call, unreachableUrl } from "../../api/client";
 import { formState } from "../../actions/run";
-import { formatTimestamp } from "../../model/time";
-import { REDEMPTION_STATUS_HELP } from "../../model/glossary";
+import When from "../../components/When.astro";
+import { CONSEQUENCE, REDEMPTION_STATUS_HELP } from "../../model/glossary";
 
 const orderId = Astro.params.order_id!;
 const confirmed = Astro.getActionResult(actions.confirmRedemption);
@@ -21,11 +21,12 @@ const badge: Record<string, string> = { reserved: "badge-info", confirmed: "badg
   <Fragment slot="actions">
     {current.ok && (
       <>
+        <a href={`/explain?order=${encodeURIComponent(orderId)}`} class="btn btn-secondary">Explain this order</a>
         <form method="post" action={actions.confirmRedemption}>
           <input type="hidden" name="id" value={orderId} />
           <button type="submit" class="btn btn-success" data-tip="reserved → confirmed: the order went through, budgets stay consumed">Confirm</button>
         </form>
-        <form method="post" action={actions.cancelRedemption} onsubmit={`return confirm('Cancel ${orderId}? Budgets are restored.')`}>
+        <form method="post" action={actions.cancelRedemption} onsubmit={`return confirm('Cancel ${orderId}? Budgets are restored.')`} data-confirm={CONSEQUENCE.cancelRedemption} data-confirm-title={`Cancel order ${orderId}?`} data-confirm-label="Cancel the redemption">
           <input type="hidden" name="id" value={orderId} />
           <button type="submit" class="btn btn-danger" data-tip="reserved or confirmed → cancelled: budgets and use counts are restored">Cancel</button>
         </form>
@@ -40,8 +41,8 @@ const badge: Record<string, string> = { reserved: "badge-info", confirmed: "badg
         <dl class="dl">
           <dt>Customer</dt>
           <dd>{current.data.customer_id ? <a href={`/customers/${encodeURIComponent(current.data.customer_id)}`} class="link">{current.data.customer_id}</a> : "—"}</dd>
-          <dt>Created</dt><dd>{formatTimestamp(current.data.created_at)}</dd>
-          <dt>Updated</dt><dd>{formatTimestamp(current.data.updated_at)}</dd>
+          <dt>Created</dt><dd><When ts={current.data.created_at} /></dd>
+          <dt>Updated</dt><dd><When ts={current.data.updated_at} /></dd>
         </dl>
       </section>
       <ResultPanel result={current.data.result} />

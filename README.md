@@ -130,14 +130,27 @@ live in Postgres (migrations run at start-up).
 
 ## Operator console
 
-`src/ui` is a server-rendered Astro application over the HTTP API: policy, groups,
-promotions with budgets, coupons with batch generation, grant rules, exchange rates, a
-redemption lookup with confirm and cancel, a customer's coupons with their status, and an
-evaluate playground that explains a `PricingResult` (applied, skipped with reason, clamps,
-allocation). It is a client of `api/openapi.yaml` like `src/client`: its TypeScript types
-are generated from the document at build time and every request goes through a typed
-client, so an undocumented call does not compile. It computes no price and no status
-itself; every number on screen is a response of the service.
+`src/ui` is a server-rendered Astro application over the HTTP API, shaped around tasks
+rather than resources. A **role switch** (marketing, support) in the navigation changes
+the order of things and the overview, never what is reachable.
+
+- **Campaigns**: a promotion with its budget, title, allowlist and codes as one thing,
+  with a status (`live`, `scheduled`, `exhausted`, `ended`) classified from what the
+  service returns. One form creates all of it: the console calls the documented
+  operations in order and names the step that failed, if any.
+- **Find** takes a customer id, an order id, a coupon code or a campaign id.
+- **Explain** prices a cart and shows every campaign that applied or did not; an order id
+  loads the stored redemption's cart and customer to start from.
+- **Settings**: pricing policy, stacking groups, exchange rates, grant rules.
+
+Amounts are entered and shown as decimals in the currency's units (ISO 4217 exponents,
+so `1.500 KWD` and `500 JPY`), percentages instead of basis points, times in the
+viewer's zone; the integer the contract carries is always one hover away. The console
+computes no price and no coupon status: every number is a response of the service. It
+is a client of `api/openapi.yaml` like `src/client`: its TypeScript types are generated
+from the document at build time, every request goes through a typed client, and the
+option lists and help texts are checked against the contract's unions at compile time, so
+a contract change the console does not follow fails `npm run check`.
 
 Against a service on `localhost:8080` (set `DISCOUNT_API_URL` for another):
 
@@ -146,7 +159,7 @@ cd src/ui && npm ci && npm run dev
 ```
 
 In the compose stack it is `http://localhost:4321`. Type-check, unit tests on the
-form-to-body mapping, and the production build:
+form-to-body mapping, units and campaign status, and the production build:
 
 ```bash
 cd src/ui && npm run check && npm test && npm run build

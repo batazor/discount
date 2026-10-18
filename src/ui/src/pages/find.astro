@@ -1,0 +1,74 @@
+---
+import Layout from "../layouts/Layout.astro";
+import FindBox from "../components/FindBox.astro";
+import StatusBadge from "../components/StatusBadge.astro";
+import { api, call, dataOr, unreachableUrl } from "../api/client";
+import { assembleCampaigns, campaignTitle } from "../model/campaign";
+import { REDEMPTION_STATUS_HELP, COUPON_STATUS_HELP } from "../model/glossary";
+
+const q = Astro.url.searchParams.get("q")?.trim() ?? "";
+const [redemption, customer, coupon, promotion, meta] = q
+  ? await Promise.all([
+      call(() => api.GET("/v1/redemptions/{order_id}", { params: { path: { order_id: q } } })),
+      call(() => api.GET("/v1/customers/{customer_id}/coupons", { params: { path: { customer_id: q } } })),
+      call(() => api.GET("/v1/coupons/{code}", { params: { path: { code: q } } })),
+      call(() => api.GET("/v1/promotions/{promotion_id}", { params: { path: { promotion_id: q } } })),
+      call(() => api.GET("/v1/promotions/{promotion_id}/metadata", { params: { path: { promotion_id: q } } })),
+    ])
+  : [null, null, null, null, null];
+const unreachable = q ? unreachableUrl(redemption!, customer!, coupon!, promotion!) : null;
+const customerHit = customer?.ok && customer.data.length > 0 ? customer.data : null;
+const campaign = promotion?.ok ? assembleCampaigns([promotion.data], meta?.ok ? [{ promotion_id: q, metadata: meta.data }] : [], [], Math.floor(Date.now() / 1000))[0]! : null;
+const hits = [redemption?.ok, !!customerHit, coupon?.ok, !!campaign].filter(Boolean).length;
+const badge: Record<string, string> = { reserved: "badge-info", confirmed: "badge-ok", cancelled: "badge-muted" };
+---
+<Layout title="Find" description="One box for a customer id, an order id, a coupon code or a campaign id." unreachable={unreachable}>
+  <FindBox q={q} autofocus={!q} />
+  {q && !unreachable && (
+    <div class="mt-6 space-y-4" data-found={hits}>
+      {redemption?.ok && (
+        <section class="card">
+          <h2 class="card-title">Order <span class="mono">{q}</span> <span class={`badge ${badge[redemption.data.status]}`} data-tip={REDEMPTION_STATUS_HELP[redemption.data.status]}>{redemption.data.status}</span></h2>
+          <p class="text-[13px]">Customer {redemption.data.customer_id ? <a href={`/customers/${encodeURIComponent(redemption.data.customer_id)}`} class="link mono">{redemption.data.customer_id}</a> : "anonymous"}; {redemption.data.result.applied.length} applied, {redemption.data.result.skipped.length} skipped.</p>
+          <div class="mt-3 flex gap-2"><a href={`/redemptions/${encodeURIComponent(q)}`} class="btn btn-secondary">Open the redemption</a><a href={`/explain?order=${encodeURIComponent(q)}`} class="btn btn-primary">Explain it</a></div>
+        </section>
+      )}
+      {customerHit && (
+        <section class="card">
+          <h2 class="card-title">Customer <span class="mono">{q}</span> <span class="badge badge-muted">{customerHit.length} coupon{customerHit.length === 1 ? "" : "s"}</span></h2>
+          <ul class="flex flex-wrap gap-2 text-[13px]">{customerHit.slice(0, 8).map((c) => <li><a href={`/coupons/${encodeURIComponent(c.coupon.code)}`} class="chip mono" data-tip={COUPON_STATUS_HELP[c.status]}>{c.coupon.code} · {c.status}</a></li>)}</ul>
+          <div class="mt-3"><a href={`/customers/${encodeURIComponent(q)}`} class="btn btn-secondary">Open the customer</a></div>
+        </section>
+      )}
+      {coupon?.ok && (
+        <section class="card">
+          <h2 class="card-title">Coupon <span class="mono">{q}</span></h2>
+          <p class="text-[13px]">For campaign <a href={`/campaigns/${encodeURIComponent(coupon.data.promotion_id)}`} class="link mono">{coupon.data.promotion_id}</a>; {coupon.data.customer_id ? <>bound to <span class="mono">{coupon.data.customer_id}</span></> : "public"}; used {coupon.data.uses} of {coupon.data.max_uses ?? "∞"}.</p>
+          <div class="mt-3"><a href={`/coupons/${encodeURIComponent(q)}`} class="btn btn-secondary">Open the coupon</a></div>
+        </section>
+      )}
+      {campaign && (
+        <section class="card">
+          <h2 class="card-title">Campaign {campaignTitle(campaign)} <StatusBadge status={campaign.status} /></h2>
+          <div class="mt-3"><a href={`/campaigns/${encodeURIComponent(q)}`} class="btn btn-secondary">Open the campaign</a></div>
+        </section>
+      )}
+      {hits === 0 && (
+        <section class="card">
+          <p class="text-[13px]">Nothing matches <span class="mono">{q}</span>.</p>
+          <p class="hint mt-1">Looked up: an order with that id, a customer with coupons, a coupon code, a campaign id.</p>
+        </section>
+      )}
+    </div>
+  )}
+  <script>
+    try {
+      const q = new URL(location.href).searchParams.get("q")?.trim();
+      const found = document.querySelector<HTMLElement>("[data-found]");
+      if (q && found && found.dataset.found !== "0") {
+        const recent: string[] = JSON.parse(localStorage.getItem("discount:recent") ?? "[]").filter((x: string) => x !== q);
+        localStorage.setItem("discount:recent", JSON.stringify([q, ...recent].slice(0, 8)));
+      }
+    } catch {}
+  </script>
+</Layout>

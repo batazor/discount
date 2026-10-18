@@ -1,0 +1,93 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../layouts/Layout.astro";
+import Field from "../../components/Field.astro";
+import MoneyField from "../../components/MoneyField.astro";
+import FormStatus from "../../components/FormStatus.astro";
+import RuleRow from "../../components/RuleRow.astro";
+import { api, call, unreachableUrl, dataOr } from "../../api/client";
+import { formState } from "../../actions/run";
+import { ACTION_TYPES, ROUNDING_POLICIES } from "../../model/promotion";
+import { ACTION_HELP, ROUNDING_HELP, TERM } from "../../model/glossary";
+import { Form } from "../../model/fields";
+
+const result = Astro.getActionResult(actions.createCampaign);
+if (result?.data?.kind === "ok") return Astro.redirect(`/campaigns/${encodeURIComponent(result.data.data.promotion_id)}?tab=${result.data.data.codes.length ? "codes" : "overview"}&created=1`);
+const groups = await call(() => api.GET("/v1/groups"));
+const groupIds = dataOr(groups, []).map((g) => g.group_id);
+const state = formState(result?.data, {
+  "action.type": "OrderPercentage",
+  priority: "0",
+  group_id: groupIds.length === 1 ? groupIds[0]! : "",
+  "codes.max_uses": "1",
+});
+const ruleIndices = new Form(state.fields).rows("rules").map(String);
+const empty = formState(undefined, {});
+---
+<Layout title="New campaign" crumbs={[["Campaigns", "/campaigns"], ["New"]]} description="One form; the console saves the promotion, then its budget, title and codes." unreachable={unreachableUrl(groups)}>
+  <form method="post" action={actions.createCampaign} class="max-w-3xl space-y-5">
+    <section class="card space-y-4">
+      <h2 class="card-title">What is it</h2>
+      <div class="grid grid-cols-2 gap-4">
+        <Field state={state} name="promotion_id" label="Campaign id" required hint="short, stable, e.g. SUMMER-26; it is the promotion id" />
+        <Field state={state} name="title" label="Title" hint="shown in lists; empty = no metadata saved" />
+        <Field state={state} name="source" label="Source" placeholder="hotels" help={TERM.source} hint="lowercase; empty = none" />
+        <Field state={state} name="group_id" label="Stacking group" options={groupIds} empty={groupIds.length ? "— choose —" : "no groups yet"} required hint={groupIds.length === 0 ? "create a group first" : groupIds.length === 1 ? "the only group, preselected" : ""} />
+      </div>
+      <Field state={state} name="description" label="Description" textarea rows={2} />
+      <Field state={state} name="labels" label="Labels" textarea rows={2} help={TERM.labels} hint="one key=value per line" />
+    </section>
+
+    <section class="card space-y-4">
+      <h2 class="card-title">What it gives</h2>
+      <div data-row-list>
+        <div data-rows>
+          <div data-row="action" class="grid grid-cols-2 gap-4">
+            <Field state={state} name="action.type" label="Type" options={ACTION_TYPES} required variantSelect optionHelp={ACTION_HELP} />
+            <div data-variant="OrderPercentage"><Field state={state} name="action.percent" label="Percent off" placeholder="10" mono hint="e.g. 12.5" /></div>
+            <div data-variant="OrderFixedAmount"><MoneyField state={state} name="action.amount" label="Amount off" /></div>
+          </div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <MoneyField state={state} name="cap" label="Cap per order" hint="empty = unlimited" help={TERM.cap} />
+        <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} empty="— policy default —" optionHelp={ROUNDING_HELP} help={TERM.promotionRounding} />
+        <Field state={state} name="priority" label="Priority" type="number" required help={TERM.promotionPriority} hint="higher applies first; 0 is fine" />
+        <div class="self-center"><Field state={state} name="exclusive" label="Exclusive: applies alone" checkbox help={TERM.exclusive} /></div>
+      </div>
+    </section>
+
+    <section class="card space-y-3">
+      <h2 class="card-title">Who and when <span class="hint inline font-normal">all rules must hold; none = every cart</span></h2>
+      <div data-row-list>
+        <div data-rows class="space-y-3">{ruleIndices.map((i) => <RuleRow state={state} index={i} />)}</div>
+        <template data-row-template><RuleRow state={empty} index="__i__" /></template>
+        <button type="button" data-add-row hidden class="row-add">Add rule</button>
+      </div>
+    </section>
+
+    <section class="card space-y-4">
+      <h2 class="card-title">How much to spend</h2>
+      <MoneyField state={state} name="budget" label="Budget" hint="empty = unbounded" help={TERM.budget} />
+    </section>
+
+    <section class="card space-y-4">
+      <h2 class="card-title">Codes <span class="hint inline font-normal">optional; needs a "Needs a code" rule to matter</span></h2>
+      <div class="grid grid-cols-3 gap-4">
+        <Field state={state} name="codes.count" label="How many" type="number" hint="empty = none now" />
+        <Field state={state} name="codes.prefix" label="Prefix" placeholder="SUM-" />
+        <Field state={state} name="codes.max_uses" label="Uses per code" type="number" help={TERM.couponMaxUses} hint="empty = unlimited" />
+      </div>
+    </section>
+
+    <FormStatus state={state} />
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Create campaign</button>
+      <a href="/campaigns" class="btn btn-ghost">Cancel</a>
+    </div>
+  </form>
+  <script>
+    import { initRows } from "../../client/rows";
+    initRows();
+  </script>
+</Layout>

@@ -2,43 +2,56 @@
 // A PricingResult as the service returned it: totals, applied promotions with clamps and
 // allocation, skipped promotions with their reason, per-line results. No arithmetic here.
 import type { PricingResult } from "../api/types";
-import { resultRows } from "../model/evaluate";
+import { skipReasonText } from "../model/evaluate";
 import { CLAMP_HELP, SKIP_HELP, TERM } from "../model/glossary";
 import Help from "./Help.astro";
+import Money from "./Money.astro";
 interface Props { result: PricingResult; id?: string }
-const { result, id = "result" } = Astro.props;
-const rows = resultRows(result);
+const { result: r, id = "result" } = Astro.props;
+const totals: [string, PricingResult["original_subtotal"] | null][] = [
+  ["Original subtotal", r.original_subtotal],
+  ["Total discount", r.total_discount],
+  ["Final total", r.final_total],
+];
 ---
 <section id={id} class="space-y-4">
   <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-    {rows.totals.map((t, i) => (
-      <div class="card py-3" style={i === 3 ? "border-color: var(--color-accent); background: var(--color-accent-soft)" : undefined}>
-        <div class="kpi-label">{t.label}</div>
-        <div class="mono mt-1 text-[18px] font-semibold tabular-nums">{t.value}</div>
+    <div class="card py-3"><div class="kpi-label">Currency</div><div class="mono mt-1 text-[18px] font-semibold">{r.currency}</div></div>
+    {totals.map(([label, m], i) => (
+      <div class="card py-3" style={i === 2 ? "border-color: var(--color-accent); background: var(--color-accent-soft)" : undefined}>
+        <div class="kpi-label">{label}</div>
+        <div class="mt-1 text-[18px] font-semibold tabular-nums"><Money m={m} /></div>
       </div>
     ))}
   </div>
   <div class="card p-0">
-    <h3 class="card-title px-4 pt-4">Applied <span class="badge badge-ok ml-1">{rows.applied.length}</span> <Help text={`In application order. ${TERM.applicationOrder}`} /></h3>
-    {rows.applied.length === 0 ? <p class="hint px-4 pb-4">Nothing applied.</p> : (
-      <table class="table"><thead><tr><th>Promotion</th><th>Discount</th><th>Clamped by <Help text="Why the discount is smaller than its raw value: the first bound that cut it." /></th><th>Allocation <Help text={TERM.allocation} /></th></tr></thead>
-        <tbody>{rows.applied.map((a) => <tr><td class="mono"><a href={`/promotions/${encodeURIComponent(a.promotion_id)}`} class="link">{a.promotion_id}</a></td><td class="mono">{a.discount}</td><td>{a.clamped_by === "—" ? <span style="color: var(--color-ink-3)">—</span> : <span class="badge badge-warn" data-tip={a.clamp ? CLAMP_HELP[a.clamp] : undefined}>{a.clamped_by}</span>}</td><td class="mono">{a.allocation}</td></tr>)}</tbody>
+    <h3 class="card-title px-4 pt-4">Applied <span class="badge badge-ok ml-1">{r.applied.length}</span> <Help text={`In application order. ${TERM.applicationOrder}`} /></h3>
+    {r.applied.length === 0 ? <p class="hint px-4 pb-4">Nothing applied.</p> : (
+      <table class="table"><thead><tr><th>Campaign</th><th class="num">Discount</th><th>Clamped by <Help text="Why the discount is smaller than its raw value: the first bound that cut it." /></th><th>Allocation <Help text={TERM.allocation} /></th></tr></thead>
+        <tbody>{r.applied.map((a) => (
+          <tr>
+            <td><a href={`/campaigns/${encodeURIComponent(a.promotion_id)}`} class="link mono">{a.promotion_id}</a></td>
+            <td class="num"><Money m={a.discount} /></td>
+            <td>{a.clamped_by ? <span class="badge badge-warn" data-tip={CLAMP_HELP[a.clamped_by.type]}>{a.clamped_by.type}</span> : <span style="color: var(--color-ink-3)">—</span>}</td>
+            <td class="text-[12px]">{a.allocation.map((x, i) => <>{i > 0 && ", "}<span class="mono">{x.line_id}</span> <Money m={x.amount} /></>)}</td>
+          </tr>
+        ))}</tbody>
       </table>
     )}
   </div>
   <div class="card p-0">
-    <h3 class="card-title px-4 pt-4">Skipped <span class="badge badge-muted ml-1">{rows.skipped.length}</span></h3>
-    {rows.skipped.length === 0 ? <p class="hint px-4 pb-4">Nothing skipped.</p> : (
-      <table class="table"><thead><tr><th>Promotion</th><th>Reason</th></tr></thead>
-        <tbody>{rows.skipped.map((s) => <tr><td class="mono"><a href={`/promotions/${encodeURIComponent(s.promotion_id)}`} class="link">{s.promotion_id}</a></td><td><span class="badge badge-muted mono" data-tip={SKIP_HELP[s.skip]}>{s.reason}</span></td></tr>)}</tbody>
+    <h3 class="card-title px-4 pt-4">Skipped <span class="badge badge-muted ml-1">{r.skipped.length}</span></h3>
+    {r.skipped.length === 0 ? <p class="hint px-4 pb-4">Nothing skipped.</p> : (
+      <table class="table"><thead><tr><th>Campaign</th><th>Reason</th></tr></thead>
+        <tbody>{r.skipped.map((s) => <tr><td><a href={`/campaigns/${encodeURIComponent(s.promotion_id)}`} class="link mono">{s.promotion_id}</a></td><td><span class="badge badge-muted mono" data-tip={SKIP_HELP[s.reason.type]}>{skipReasonText(s.reason)}</span></td></tr>)}</tbody>
       </table>
     )}
   </div>
   <div class="card p-0">
     <h3 class="card-title px-4 pt-4">Lines</h3>
-    <table class="table"><thead><tr><th>Line</th><th>Subtotal</th><th>Discount</th><th>Total</th></tr></thead>
-      <tbody>{rows.lines.map((l) => <tr><td class="mono">{l.line_id}</td><td class="mono">{l.subtotal}</td><td class="mono">{l.discount}</td><td class="mono font-semibold">{l.total}</td></tr>)}</tbody>
+    <table class="table"><thead><tr><th>Line</th><th class="num">Subtotal</th><th class="num">Discount</th><th class="num">Total</th></tr></thead>
+      <tbody>{r.lines.map((l) => <tr><td class="mono">{l.line_id}</td><td class="num"><Money m={l.subtotal} /></td><td class="num"><Money m={l.discount} /></td><td class="num font-semibold"><Money m={l.total} /></td></tr>)}</tbody>
     </table>
   </div>
-  <details><summary class="hint">Raw PricingResult</summary><pre class="card mt-2 overflow-x-auto text-[12px]">{JSON.stringify(result, null, 2)}</pre></details>
+  <details><summary class="hint">Raw PricingResult</summary><pre class="card mt-2 overflow-x-auto text-[12px]">{JSON.stringify(r, null, 2)}</pre></details>
 </section>

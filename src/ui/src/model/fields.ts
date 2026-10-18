@@ -3,6 +3,7 @@
 // every error so a screen can show all of them at once.
 import type { Money } from "../api/types";
 import { parseTimestamp } from "./time";
+import { exponent, formatAmountInput, parseAmount, parsePercent } from "./units";
 
 export type Fields = Record<string, string>;
 export type FieldError = { field: string; message: string };
@@ -80,9 +81,38 @@ export class Form {
     return this.raw(key) === "" ? null : this.enum(key, values);
   }
 
-  /** `prefix.amount` (integer minor units) and `prefix.currency`. */
+  /** `prefix.amount` as a decimal in the currency's units (`5.00`) and `prefix.currency`. */
   money(prefix: string): Money {
-    return { amount: this.int(`${prefix}.amount`, { min: 0 }), currency: this.str(`${prefix}.currency`) };
+    const currency = this.str(`${prefix}.currency`);
+    const raw = this.raw(`${prefix}.amount`);
+    if (raw === "") {
+      this.fail(`${prefix}.amount`, "required");
+      return { amount: 0, currency };
+    }
+    const amount = currency === "" ? undefined : parseAmount(raw, currency);
+    if (amount === undefined) {
+      if (currency !== "") {
+        const e = exponent(currency);
+        this.fail(`${prefix}.amount`, e === 0 ? `${currency} has no decimals` : `must be an amount with at most ${e} decimals, e.g. ${formatAmountInput(5 * 10 ** e, currency)}`);
+      }
+      return { amount: 0, currency };
+    }
+    return { amount, currency };
+  }
+
+  /** A percentage (`12.5`) → basis points (`1250`). */
+  percent(key: string): number {
+    const raw = this.raw(key);
+    const bps = parsePercent(raw);
+    if (bps === undefined) {
+      this.fail(key, raw === "" ? "required" : "must be a percentage between 0 and 100 with at most two decimals");
+      return 0;
+    }
+    return bps;
+  }
+
+  optPercent(key: string): number | null {
+    return this.raw(key) === "" ? null : this.percent(key);
   }
 
   /** null when both parts are empty. */
@@ -91,13 +121,21 @@ export class Form {
     return this.money(prefix);
   }
 
+  /**
+   * A datetime-local value is read in the viewer's zone when the form carries
+   * `tz_offset_minutes` (filled by script, as `Date.getTimezoneOffset()` reports it), else as
+   * UTC. A raw integer is Unix seconds either way.
+   */
   timestamp(key: string): number | null {
-    const t = parseTimestamp(this.raw(key));
+    const raw = this.raw(key);
+    const t = parseTimestamp(raw);
     if (t === undefined) {
-      this.fail(key, "must be Unix seconds or YYYY-MM-DDTHH:mm (UTC)");
+      this.fail(key, "must be Unix seconds or YYYY-MM-DDTHH:mm");
       return null;
     }
-    return t;
+    if (t === null || /^-?\d+$/.test(raw)) return t;
+    const off = this.raw("tz_offset_minutes");
+    return /^-?\d+$/.test(off) ? t + Number(off) * 60 : t;
   }
 
   /** Comma- or newline-separated strings, trimmed, empties dropped. */
@@ -139,4 +177,10 @@ export function flatten(value: unknown, prefix = "", out: Fields = {}): Fields {
     out[prefix] = String(value);
   }
   return out;
+}
+
+/** Money → decimal input fields (`prefix.amount` = `"5.00"`, `prefix.currency`); null → empty. */
+export function moneyToFields(m: Money | null | undefined, prefix: string): Fields {
+  if (!m) return { [`${prefix}.amount`]: "", [`${prefix}.currency`]: "" };
+  return { [`${prefix}.amount`]: formatAmountInput(m.amount, m.currency), [`${prefix}.currency`]: m.currency };
 }

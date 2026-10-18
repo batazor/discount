@@ -13,7 +13,8 @@ import type {
   PricingPolicy,
   StackingGroup,
 } from "../api/types";
-import { Form, flatten, type Fields, type Parsed } from "./fields";
+import { Form, moneyToFields, type Fields, type Parsed } from "./fields";
+import { formatPercentInput } from "./units";
 import { ROUNDING_POLICIES } from "./promotion";
 import { toDatetimeLocal } from "./time";
 
@@ -33,7 +34,7 @@ export function policyFromForm(fields: Fields): Parsed<PricingPolicy> {
     stacking: { type: f.enum("stacking", STACKING_POLICIES) },
     order_cap: {
       amount: f.optMoney("order_cap.amount"),
-      bps: f.optInt("order_cap.bps", { min: 0, max: 10000 }),
+      bps: f.optPercent("order_cap.percent"),
     },
   });
 }
@@ -42,8 +43,8 @@ export function policyToFields(p: PricingPolicy): Fields {
   return {
     rounding: p.rounding.type,
     stacking: p.stacking.type,
-    ...flatten(p.order_cap.amount, "order_cap.amount"),
-    "order_cap.bps": p.order_cap.bps === null ? "" : String(p.order_cap.bps),
+    ...moneyToFields(p.order_cap.amount, "order_cap.amount"),
+    "order_cap.percent": p.order_cap.bps === null ? "" : formatPercentInput(p.order_cap.bps),
   };
 }
 

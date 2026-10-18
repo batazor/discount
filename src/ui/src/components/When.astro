@@ -1,0 +1,8 @@
+---
+// A Unix timestamp. Server-rendered in UTC; client/localtime.ts rewrites it in the viewer's
+// zone and keeps UTC and the integer in the tooltip.
+interface Props { ts: number | null | undefined; empty?: string }
+const { ts, empty = "—" } = Astro.props;
+const iso = ts === null || ts === undefined ? null : new Date(ts * 1000).toISOString();
+---
+{iso ? <time class="mono" datetime={iso} data-ts={ts} data-tip={`${iso.replace("T", " ").slice(0, 19)} UTC · ${ts}`}>{iso.replace("T", " ").slice(0, 16)} UTC</time> : <span style="color: var(--color-ink-3)">{empty}</span>}

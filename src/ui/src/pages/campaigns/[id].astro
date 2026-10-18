@@ -1,0 +1,66 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../layouts/Layout.astro";
+import ApiError from "../../components/ApiError.astro";
+import DeleteButton from "../../components/DeleteButton.astro";
+import StatusBadge from "../../components/StatusBadge.astro";
+import OverviewTab from "../../components/campaign/OverviewTab.astro";
+import RulesTab from "../../components/campaign/RulesTab.astro";
+import CodesTab from "../../components/campaign/CodesTab.astro";
+import AudienceTab from "../../components/campaign/AudienceTab.astro";
+import DetailsTab from "../../components/campaign/DetailsTab.astro";
+import { api, call, unreachableUrl, dataOr } from "../../api/client";
+import { assembleCampaigns, campaignTitle } from "../../model/campaign";
+import { CONSEQUENCE } from "../../model/glossary";
+
+const id = Astro.params.id!;
+if (id === "new") return Astro.redirect("/campaigns/new");
+// Archived from this page: the campaign is gone, so land on the list with the message.
+const archived = Astro.getActionResult(actions.deletePromotion);
+if (archived?.data?.kind === "ok") return Astro.redirect(`/campaigns?archived=${encodeURIComponent(id)}`);
+const tabs = ["overview", "rules", "codes", "audience", "details"] as const;
+type Tab = (typeof tabs)[number];
+const tab: Tab = (tabs as readonly string[]).includes(Astro.url.searchParams.get("tab") ?? "") ? (Astro.url.searchParams.get("tab") as Tab) : "overview";
+
+const [current, groups, meta, allowlist, coupons] = await Promise.all([
+  call(() => api.GET("/v1/promotions/{promotion_id}", { params: { path: { promotion_id: id } } })),
+  call(() => api.GET("/v1/groups")),
+  call(() => api.GET("/v1/promotions/{promotion_id}/metadata", { params: { path: { promotion_id: id } } })),
+  call(() => api.GET("/v1/promotions/{promotion_id}/allowlist", { params: { path: { promotion_id: id } } })),
+  call(() => api.GET("/v1/coupons")),
+]);
+const now = Math.floor(Date.now() / 1000);
+const campaign = current.ok
+  ? assembleCampaigns([current.data], meta.ok ? [{ promotion_id: id, metadata: meta.data }] : [], dataOr(coupons, []).filter((c) => c.promotion_id === id), now)[0]!
+  : null;
+const generated = (await Astro.session?.get("generated")) as { promotion_id: string; codes: string[] } | undefined;
+const freshCodes = generated?.promotion_id === id ? generated.codes : [];
+if (freshCodes.length && tab === "codes") await Astro.session?.delete("generated");
+const href = (t: Tab) => `/campaigns/${encodeURIComponent(id)}?tab=${t}`;
+const labels: Record<Tab, string> = { overview: "Overview", rules: "Rules & action", codes: `Codes${campaign ? ` · ${campaign.codes.length}` : ""}`, audience: `Audience${allowlist.ok ? ` · ${allowlist.data.customer_ids.length}` : ""}`, details: "Details" };
+---
+<Layout title={campaign ? campaignTitle(campaign) : id} crumbs={[["Campaigns", "/campaigns"], [id]]} unreachable={unreachableUrl(current, groups)}>
+  <Fragment slot="badge">
+    {campaign && <span class="badge badge-muted mono">{id}</span>}
+    {campaign && <StatusBadge status={campaign.status} />}
+    {campaign?.endingSoon && <span class="badge badge-warn">ending soon</span>}
+  </Fragment>
+  <Fragment slot="actions">
+    {campaign && <a href={`/explain?campaign=${encodeURIComponent(id)}`} class="btn btn-secondary">Explain a cart</a>}
+    {campaign && <DeleteButton action={actions.deletePromotion} id={id} label="Archive" consequence={CONSEQUENCE.archive} title={`Archive ${campaignTitle(campaign)}?`} />}
+  </Fragment>
+  {!current.ok && !current.unreachable && <ApiError status={current.status} body={current.body} />}
+  {campaign && (
+    <>
+      {Astro.url.searchParams.get("created") && <p role="status" class="alert alert-success mb-4">Campaign created.</p>}
+      <nav class="tabs" aria-label="Campaign sections">
+        {tabs.map((t) => <a href={href(t)} class="tab" aria-current={t === tab ? "page" : undefined}>{labels[t]}</a>)}
+      </nav>
+      {tab === "overview" && <OverviewTab campaign={campaign} allowlistCount={allowlist.ok ? allowlist.data.customer_ids.length : 0} href={href} />}
+      {tab === "rules" && <RulesTab campaign={campaign} groupIds={dataOr(groups, []).map((g) => g.group_id)} />}
+      {tab === "codes" && <CodesTab campaign={campaign} fresh={freshCodes} />}
+      {tab === "audience" && <AudienceTab campaign={campaign} allowlist={allowlist} />}
+      {tab === "details" && <DetailsTab campaign={campaign} hasMeta={meta.ok} />}
+    </>
+  )}
+</Layout>

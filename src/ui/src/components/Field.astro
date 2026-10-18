@@ -9,9 +9,9 @@ interface Props {
   state: FormState; name: string; label: string;
   type?: "text" | "number" | "datetime-local"; placeholder?: string; hint?: string; help?: string;
   readonly?: boolean; required?: boolean; options?: readonly string[]; empty?: string; optionHelp?: Record<string, string>;
-  textarea?: boolean; checkbox?: boolean; variantSelect?: boolean; mono?: boolean; rows?: number;
+  textarea?: boolean; checkbox?: boolean; variantSelect?: boolean; mono?: boolean; rows?: number; utc?: boolean; hintHtml?: boolean;
 }
-const { state, name, label, type = "text", placeholder, hint, help, readonly = false, required = false, options, empty, optionHelp, textarea = false, checkbox = false, variantSelect = false, rows = 4 } = Astro.props;
+const { state, name, label, type = "text", placeholder, hint, help, readonly = false, required = false, options, empty, optionHelp, textarea = false, checkbox = false, variantSelect = false, rows = 4, utc = false, hintHtml = false } = Astro.props;
 const mono = Astro.props.mono ?? (type !== "text" || /(_id$|^id$|^code$|currency$|^from$|^to$|^prefix$|labels$|tags$|coupon_codes$|allowlisted$|customer_ids$|^json$|^source$|\.key$)/.test(name));
 const value = state.fields[name] ?? "";
 const error = state.errors.find((e) => e.field === name)?.message;
@@ -31,7 +31,7 @@ const cls = mono ? "input mono" : "input";
       ) : textarea ? (
         <textarea name={name} rows={rows} class={cls} placeholder={placeholder}>{value}</textarea>
       ) : (
-        <input type={type} name={name} value={value} class={cls} placeholder={placeholder} readonly={readonly} inputmode={type === "number" ? "numeric" : undefined} />
+        <input type={type} name={name} value={value} class={cls} placeholder={placeholder} readonly={readonly} inputmode={type === "number" ? "numeric" : undefined} data-utc={utc ? "" : undefined} />
       )}
     </>
   )}
@@ -40,6 +40,6 @@ const cls = mono ? "input mono" : "input";
       {Object.entries(optionHelp).map(([k, text]) => <span data-for={k} hidden={k !== value}>{text}</span>)}
     </span>
   )}
-  {hint && <span class="hint">{hint}</span>}
+  {hint && (hintHtml ? <span class="hint" set:html={hint} /> : <span class="hint">{hint}</span>)}
   {error && <span class="field-error">{error}</span>}
 </label>

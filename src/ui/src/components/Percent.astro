@@ -1,0 +1,7 @@
+---
+// `12.5 %` with the basis points in the tooltip.
+import { formatBps } from "../model/units";
+interface Props { bps: number }
+const { bps } = Astro.props;
+---
+<span class="mono" data-tip={`${bps} basis points`}>{formatBps(bps)}</span>

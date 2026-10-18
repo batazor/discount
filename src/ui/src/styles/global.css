@@ -77,6 +77,9 @@
   .nav-link { @apply flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors; color: var(--color-ink-2); }
   .nav-link:hover { background: var(--color-surface-2); color: var(--color-ink); }
   .nav-link[aria-current="page"] { background: var(--color-accent-soft); color: var(--color-accent-ink); }
+  .role-switch { @apply mx-2.5 grid grid-cols-2 rounded-md border p-0.5; border-color: var(--color-line); background: var(--color-surface-2); }
+  .role-option { @apply rounded px-2 py-1 text-center text-[12px] font-medium capitalize no-underline; color: var(--color-ink-2); }
+  .role-option[aria-current="true"] { background: var(--color-surface); color: var(--color-ink); box-shadow: var(--shadow-card); }
   .nav-group { @apply mt-5 mb-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-[0.08em]; color: var(--color-ink-3); }
 
   /* Page header */
@@ -173,6 +176,15 @@
   .help { @apply ml-1 inline-flex size-[15px] cursor-help items-center justify-center rounded-full border text-[10px] font-semibold align-[1px]; color: var(--color-ink-3); border-color: var(--color-line-strong); }
   .help:hover { color: var(--color-accent-ink); border-color: var(--color-accent); }
   .badge[data-tip] { cursor: help; }
+  dialog.confirm { @apply m-auto w-[26rem] max-w-[calc(100vw-2rem)] rounded-xl border p-5; background: var(--color-surface); color: var(--color-ink); border-color: var(--color-line); box-shadow: 0 20px 50px rgb(0 0 0 / 0.25); }
+  dialog.confirm::backdrop { background: rgb(0 0 0 / 0.4); }
+  .chip { @apply rounded-full border px-2.5 py-0.5 text-[12px] font-medium transition-colors; border-color: var(--color-line-strong); color: var(--color-ink-2); background: var(--color-surface); }
+  .chip:hover { background: var(--color-surface-2); }
+  .chip[aria-pressed="true"] { background: var(--color-accent-soft); border-color: var(--color-accent); color: var(--color-accent-ink); }
+  .tabs { @apply mb-5 flex gap-1 border-b; border-color: var(--color-line); }
+  .tab { @apply -mb-px border-b-2 border-transparent px-3 py-2 text-[13px] font-medium no-underline; color: var(--color-ink-2); }
+  .tab:hover { color: var(--color-ink); }
+  .tab[aria-current="page"] { border-color: var(--color-accent); color: var(--color-accent-ink); }
   .dl { @apply grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1.5 text-[13px]; }
   .dl dt { color: var(--color-ink-2); }
   .dl dd { font-family: var(--font-mono); }

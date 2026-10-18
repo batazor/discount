@@ -71,6 +71,18 @@ export const SKIP_HELP: Record<SkipReason["type"], string> = {
   FirstMatchTaken: "Another promotion of a first-match group applied before this one.",
 };
 
+/** What a destructive action does, for the confirm dialog. */
+export const CONSEQUENCE = {
+  archive: "The campaign leaves the catalogue and stops applying; its codes stop working. Redemptions already made keep their copy of it. There is no unarchive.",
+  deleteCoupon: "The code stops working at once. Redemptions that used it keep their record.",
+  deleteGroup: "Promotions in this group can no longer be priced until they are moved to another group.",
+  deleteGrantRule: "Future events of this kind will not issue this coupon. Codes already issued stay.",
+  deleteRate: "Carts and promotions in these two currencies can no longer be converted; evaluations needing the rate fail.",
+  cancelRedemption: "The order's discount is released: budgets and use counts are restored. This cannot be confirmed again.",
+  clearAllowlist: "Nobody is allowlisted any more; a RequiresAllowlist rule then matches no one.",
+  removeMetadata: "Title, description, source and labels are removed; listings fall back to the id.",
+};
+
 export const TERM = {
   groupPriority: "Higher applies first. Groups are ordered by priority, then by id; promotions inside a group by their own priority, then by id.",
   promotionPriority: "Higher applies first within the group; ties by promotion id.",

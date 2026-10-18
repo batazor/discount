@@ -1,61 +1,120 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import FindBox from "../components/FindBox.astro";
+import StatusBadge from "../components/StatusBadge.astro";
+import Money from "../components/Money.astro";
+import When from "../components/When.astro";
 import { api, call, unreachableUrl, dataOr } from "../api/client";
-import { fmtMoney } from "../model/evaluate";
+import { assembleCampaigns, campaignTitle, describeAction, type Campaign } from "../model/campaign";
+import { roleFrom } from "../model/role";
 
-const [policy, groups, promotions, coupons, rates, rules] = await Promise.all([
-  call(() => api.GET("/v1/policy")),
+const role = roleFrom(Astro.cookies.get("discount_role")?.value);
+const [groups, promotions, metadata, coupons] = await Promise.all([
   call(() => api.GET("/v1/groups")),
   call(() => api.GET("/v1/promotions")),
+  call(() => api.GET("/v1/promotion-metadata")),
   call(() => api.GET("/v1/coupons")),
-  call(() => api.GET("/v1/exchange-rates")),
-  call(() => api.GET("/v1/grant-rules")),
 ]);
-const unreachable = unreachableUrl(policy, groups, promotions, coupons, rates, rules);
-const cards = [
-  ["Groups", "/groups", dataOr(groups, []).length],
-  ["Promotions", "/promotions", dataOr(promotions, []).length],
-  ["Coupons", "/coupons", dataOr(coupons, []).length],
-  ["Grant rules", "/grant-rules", dataOr(rules, []).length],
-  ["Exchange rates", "/exchange-rates", dataOr(rates, []).length],
-] as const;
-const cap = policy.ok ? policy.data.order_cap : null;
+const unreachable = unreachableUrl(groups, promotions, metadata, coupons);
+const now = Math.floor(Date.now() / 1000);
+const campaigns = assembleCampaigns(dataOr(promotions, []), dataOr(metadata, []), dataOr(coupons, []), now);
+const by = (s: Campaign["status"]) => campaigns.filter((c) => c.status === s);
+const live = by("live");
+const endingSoon = live.filter((c) => c.endingSoon).sort((a, b) => (a.endsAt ?? 0) - (b.endsAt ?? 0));
+const lowBudget = live.filter((c) => c.promotion.remaining_budget).sort((a, b) => a.promotion.remaining_budget!.amount - b.promotion.remaining_budget!.amount).slice(0, 5);
+const checklist: [string, boolean, string, string][] = [
+  ["Pricing policy", true, "set, with defaults", "/settings/policy"],
+  ["A stacking group", dataOr(groups, []).length > 0, "every campaign belongs to one", "/settings/groups/new"],
+  ["A campaign", campaigns.length > 0, "the first promotion", "/campaigns/new"],
+];
+const firstRun = groups.ok && promotions.ok && checklist.some(([, done]) => !done);
 ---
-<Layout title="Overview" description="Catalogue, redemptions and customers of the discount service." unreachable={unreachable}>
-  {!unreachable && (
-    <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
-      {cards.map(([label, href, n]) => (
-        <a href={href} class="kpi"><span class="kpi-value">{n}</span><span class="kpi-label">{label}</span></a>
-      ))}
+<Layout title="Overview" description={role === "support" ? "Find who or what you are asked about, then explain it." : "How the campaigns are doing right now."} unreachable={unreachable}>
+  {role === "support" && (
+    <div class="space-y-6">
+      <section class="card">
+        <h2 class="card-title">Find</h2>
+        <FindBox autofocus />
+        <p class="hint mt-2">A customer id shows their coupons; an order id shows the redemption and lets you explain it; a code or a campaign id opens it.</p>
+      </section>
+      <section class="card" data-recent-lookups hidden>
+        <h2 class="card-title">Recent lookups</h2>
+        <ul class="flex flex-wrap gap-2" data-recent-list></ul>
+      </section>
+      <div class="grid gap-4 md:grid-cols-3">
+        <a href="/explain" class="kpi"><span class="kpi-value text-[18px]">Explain a cart</span><span class="kpi-label">Price a cart and see why each campaign applied or did not</span></a>
+        <a href="/campaigns" class="kpi"><span class="kpi-value">{live.length}</span><span class="kpi-label">live campaigns</span></a>
+        <a href="/coupons" class="kpi"><span class="kpi-value">{dataOr(coupons, []).length}</span><span class="kpi-label">stored codes</span></a>
+      </div>
     </div>
   )}
-  <div class="mt-6 grid gap-4 lg:grid-cols-2">
-    {policy.ok && (
-      <section class="card">
-        <h2 class="card-title">Pricing policy</h2>
-        <dl class="dl">
-          <dt>Rounding</dt><dd>{policy.data.rounding.type}</dd>
-          <dt>Stacking</dt><dd>{policy.data.stacking.type}</dd>
-          <dt>Order cap</dt><dd>{cap?.amount || cap?.bps !== null ? `${cap?.amount ? fmtMoney(cap.amount) : "no amount"}, ${cap?.bps !== null ? `${cap?.bps} bps` : "no bps"}` : "unconstrained"}</dd>
-        </dl>
-        <a href="/policy" class="btn btn-secondary mt-4">Edit policy</a>
-      </section>
-    )}
-    {promotions.ok && (
-      <section class="card">
-        <h2 class="card-title">Promotions</h2>
-        {promotions.data.length === 0 ? <p class="hint">No promotions yet.</p> : (
-          <ul class="space-y-1.5">
-            {promotions.data.slice(0, 6).map((p) => (
-              <li class="flex items-center justify-between gap-3 text-[13px]">
-                <a href={`/promotions/${encodeURIComponent(p.promotion_id)}`} class="link mono">{p.promotion_id}</a>
-                <span class="mono" style="color: var(--color-ink-2)">{p.action.type === "OrderPercentage" ? `${p.action.bps} bps` : fmtMoney(p.action.amount)} · {p.rules.length} rule{p.rules.length === 1 ? "" : "s"} · budget {fmtMoney(p.remaining_budget)}</span>
+  {role === "marketing" && (
+    <div class="space-y-6">
+      {firstRun && (
+        <section class="card">
+          <h2 class="card-title">Getting started</h2>
+          <ol class="space-y-2 text-[13px]">
+            {checklist.map(([label, done, note, href]) => (
+              <li class="flex items-center gap-3">
+                <span class={`badge ${done ? "badge-ok" : "badge-warn"}`}>{done ? "done" : "next"}</span>
+                {done ? <span>{label}</span> : <a href={href} class="link">{label}</a>}
+                <span class="hint">{note}</span>
               </li>
             ))}
-          </ul>
+          </ol>
+        </section>
+      )}
+      {!unreachable && (
+        <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+          {(["live", "scheduled", "exhausted", "ended"] as const).map((s) => (
+            <a href="/campaigns" class="kpi"><span class="kpi-value">{by(s).length}</span><span class="kpi-label">{s}</span></a>
+          ))}
+        </div>
+      )}
+      <div class="grid gap-4 lg:grid-cols-2">
+        <section class="card">
+          <h2 class="card-title">Ending soon <span class="hint inline font-normal">within seven days</span></h2>
+          {endingSoon.length === 0 ? <p class="hint">Nothing ends this week.</p> : (
+            <ul class="space-y-2 text-[13px]">{endingSoon.map((c) => <li class="flex items-center justify-between gap-3"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><span>until <When ts={c.endsAt} /></span></li>)}</ul>
+          )}
+        </section>
+        <section class="card">
+          <h2 class="card-title">Lowest remaining budgets</h2>
+          {lowBudget.length === 0 ? <p class="hint">No live campaign has a budget.</p> : (
+            <ul class="space-y-2 text-[13px]">{lowBudget.map((c) => <li class="flex items-center justify-between gap-3"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><Money m={c.promotion.remaining_budget} /></li>)}</ul>
+          )}
+        </section>
+        <section class="card">
+          <h2 class="card-title">Exhausted</h2>
+          {by("exhausted").length === 0 ? <p class="hint">None.</p> : (
+            <ul class="space-y-2 text-[13px]">{by("exhausted").map((c) => <li class="flex items-center justify-between gap-3"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><span class="hint">{c.exhaustedBy === "budget" ? "budget spent" : "total uses reached"}</span></li>)}</ul>
+          )}
+        </section>
+        <section class="card">
+          <h2 class="card-title">Scheduled</h2>
+          {by("scheduled").length === 0 ? <p class="hint">None.</p> : (
+            <ul class="space-y-2 text-[13px]">{by("scheduled").map((c) => <li class="flex items-center justify-between gap-3"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><span>from <When ts={c.startsAt} /></span></li>)}</ul>
+          )}
+        </section>
+      </div>
+      <section class="card">
+        <h2 class="card-title">Live now <StatusBadge status="live" /></h2>
+        {live.length === 0 ? <p class="hint">No live campaign. <a href="/campaigns/new" class="link">Create one</a>.</p> : (
+          <ul class="divide-y" style="border-color: var(--color-line)">{live.map((c) => <li class="flex items-center justify-between gap-3 py-2 text-[13px]"><a href={`/campaigns/${encodeURIComponent(c.promotion.promotion_id)}`} class="link">{campaignTitle(c)}</a><span class="mono" style="color: var(--color-ink-2)">{describeAction(c.promotion.action)}</span></li>)}</ul>
         )}
-        <div class="mt-4 flex gap-2"><a href="/promotions" class="btn btn-secondary">All promotions</a><a href="/evaluate" class="btn btn-primary">Open the playground</a></div>
       </section>
-    )}
-  </div>
+    </div>
+  )}
+  <script>
+    // Recent lookups live only in this browser (support overview).
+    const box = document.querySelector<HTMLElement>("[data-recent-lookups]");
+    const list = document.querySelector<HTMLElement>("[data-recent-list]");
+    try {
+      const recent: string[] = JSON.parse(localStorage.getItem("discount:recent") ?? "[]");
+      if (box && list && recent.length) {
+        box.hidden = false;
+        for (const q of recent) { const a = document.createElement("a"); a.href = `/find?q=${encodeURIComponent(q)}`; a.className = "chip mono"; a.textContent = q; list.appendChild(a); }
+      }
+    } catch {}
+  </script>
 </Layout>

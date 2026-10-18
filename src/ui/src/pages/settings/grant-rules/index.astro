@@ -1,0 +1,61 @@
+---
+import { actions } from "astro:actions";
+import Layout from "../../../layouts/Layout.astro";
+import DeleteButton from "../../../components/DeleteButton.astro";
+import FormStatus from "../../../components/FormStatus.astro";
+import Field from "../../../components/Field.astro";
+import { api, call, unreachableUrl, dataOr } from "../../../api/client";
+import { CONSEQUENCE } from "../../../model/glossary";
+import { formState } from "../../../actions/run";
+import { GRANT_TRIGGERS } from "../../../model/catalogue";
+import { GRANT_TRIGGER_HELP, TERM } from "../../../model/glossary";
+import Help from "../../../components/Help.astro";
+
+const deleted = Astro.getActionResult(actions.deleteGrantRule);
+const granted = Astro.getActionResult(actions.grantCoupon);
+const rules = await call(() => api.GET("/v1/grant-rules"));
+const delState = formState(deleted?.data, {});
+const grantState = formState(granted?.data, { trigger: "cancel" });
+const issued = granted?.data?.kind === "ok" ? granted.data.data : null;
+const rows = dataOr(rules, []);
+---
+<Layout title="Grant rules" description="Which coupon a customer receives after an event such as a cancellation or a review. The highest priority rule for the event wins." unreachable={unreachableUrl(rules)}>
+  <Fragment slot="badge">{rules.ok && <span class="badge badge-muted">{rows.length}</span>}</Fragment>
+  <a slot="actions" href="/settings/grant-rules/new" class="btn btn-primary">New rule</a>
+  <FormStatus state={delState} okText="Deleted." />
+
+  <details class="card mb-5" open={!!granted}>
+    <summary>Grant a coupon now</summary>
+    <p class="hint my-2">Issue the coupon for an event by hand. Repeating it for the same event and order returns the same coupon.</p>
+    <form method="post" action={actions.grantCoupon} class="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <Field state={grantState} name="trigger" label="Event" options={GRANT_TRIGGERS} required optionHelp={GRANT_TRIGGER_HELP} />
+      <Field state={grantState} name="customer_id" label="Customer" required />
+      <Field state={grantState} name="order_id" label="Order" required />
+      <div class="self-end"><button type="submit" class="btn btn-primary">Grant</button></div>
+      <div class="col-span-full">
+        <FormStatus state={grantState} okText={issued ? `Issued ${issued.code} for ${issued.promotion_id} to ${issued.customer_id ?? "public"}.` : "Granted."} />
+        {issued && <a href={`/coupons/${encodeURIComponent(issued.code)}`} class="link">Open the coupon</a>}
+      </div>
+    </form>
+  </details>
+
+  <div class="table-card max-w-5xl">
+    <table class="table">
+      <thead><tr><th>Rule</th><th>Event</th><th>Promotion</th><th class="num">Priority <Help text={TERM.grantPriority} /></th><th class="num">Valid for <Help text={TERM.grantValidity} /></th><th class="num">Uses per code <Help text={TERM.grantMaxUses} /></th><th></th></tr></thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr>
+            <td><a href={`/settings/grant-rules/${encodeURIComponent(r.rule_id)}`} class="link mono">{r.rule_id}</a></td>
+            <td><span class="badge badge-info" data-tip={GRANT_TRIGGER_HELP[r.trigger]}>{r.trigger}</span></td>
+            <td><a href={`/campaigns/${encodeURIComponent(r.promotion_id)}`} class="link mono">{r.promotion_id}</a></td>
+            <td class="num mono">{r.priority}</td>
+            <td class="num mono">{r.validity_seconds} s</td>
+            <td class="num mono">{r.max_uses ?? "∞"}</td>
+            <td class="actions"><DeleteButton action={actions.deleteGrantRule} id={r.rule_id} consequence={CONSEQUENCE.deleteGrantRule} size="xs" /></td>
+          </tr>
+        ))}
+        {rules.ok && rows.length === 0 && <tr><td colspan="7" class="empty">No grant rules yet. <a href="/settings/grant-rules/new" class="link">Create the first one</a>.</td></tr>}
+      </tbody>
+    </table>
+  </div>
+</Layout>
