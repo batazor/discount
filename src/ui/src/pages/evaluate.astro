@@ -23,7 +23,7 @@ const box = "card space-y-3";
 ---
 <Layout title="Evaluate" unreachable={result?.data?.kind === "unreachable" ? result.data.url : null}>
   <p class="lede mb-5">
-    A dry run: <code class="mono">POST /v1/evaluate</code> prices the cart and explains every promotion. Nothing is stored and no budget moves; redeeming is the storefront's job.
+    Price a cart and see why each promotion applied or did not. Nothing is stored.
   </p>
   <div class="grid gap-6 xl:grid-cols-2">
     <form method="post" action={actions.evaluate} class="space-y-4">

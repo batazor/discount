@@ -15,8 +15,7 @@ const state = formState(result?.data, current.ok ? policyToFields(current.data) 
 ---
 <Layout title="Policy" unreachable={unreachableUrl(current)}>
   <p class="lede mb-5">
-    The engine-wide <code class="mono">PricingPolicy</code>: rounding, stacking and the order-level cap.
-    Saved whole with <code class="mono">PUT /v1/policy</code>.
+    How every cart is priced: rounding, how promotions stack, and the most an order may be discounted.
   </p>
   <form method="post" action={actions.putPolicy} class="max-w-lg space-y-4">
     <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} required />

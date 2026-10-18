@@ -101,11 +101,11 @@ const empty = formState(undefined, {});
             <dt>uses_total</dt><dd>{current?.ok ? current.data.uses_total : "—"}</dd>
             <dt>remaining_budget</dt><dd>{current?.ok ? fmtMoney(current.data.remaining_budget) : "—"}</dd>
           </dl>
-          <p class="hint mt-2">Read-only here; the PUT above never carries them.</p>
+          <p class="hint mt-2">Counted by the service; not editable.</p>
         </section>
         <form method="post" action={actions.putBudget} class="card space-y-3">
           <h2 class="card-title">Budget</h2>
-          <p class="hint">Set through <code class="mono">PUT /v1/promotions/{id}/budget</code>, separate from the promotion.</p>
+          <p class="hint">How much this promotion may still grant in total. Saved separately from the promotion.</p>
           <input type="hidden" name="promotion_id" value={id} />
           <Field state={budgetState} name="no_budget" label="No budget (unbounded)" checkbox />
           <MoneyField state={budgetState} name="remaining" label="remaining" />
@@ -114,7 +114,7 @@ const empty = formState(undefined, {});
         </form>
         <form method="post" action={actions.putPromotionMetadata} class="card space-y-3">
           <h2 class="card-title">Metadata</h2>
-          <p class="hint">Title, description, source and labels for people and listings; pricing never reads them. Its own resource, separate from the promotion.</p>
+          <p class="hint">Title, description, source and labels for people and listings. Pricing never reads them.</p>
           <input type="hidden" name="promotion_id" value={id} />
           <Field state={metaState} name="title" label="title" required />
           <Field state={metaState} name="description" label="description" textarea />

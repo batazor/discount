@@ -1,6 +1,6 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import { api, call, unreachableUrl, dataOr, API_URL } from "../api/client";
+import { api, call, unreachableUrl, dataOr } from "../api/client";
 import { fmtMoney } from "../model/evaluate";
 
 const [policy, groups, promotions, coupons, rates, rules] = await Promise.all([
@@ -21,7 +21,7 @@ const cards = [
 ] as const;
 const cap = policy.ok ? policy.data.order_cap : null;
 ---
-<Layout title="Overview" description={`Operator console over <code>${API_URL}</code>. Every value here is a response of the service; the console computes nothing itself.`} unreachable={unreachable}>
+<Layout title="Overview" description="Catalogue, redemptions and customers of the discount service." unreachable={unreachable}>
   {!unreachable && (
     <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
       {cards.map(([label, href, n]) => (

@@ -24,7 +24,7 @@ const issued = granted?.data?.kind === "ok" ? granted.data.data : null;
 
   <details class="card mb-6" open={!!granted}>
     <summary>Grant now</summary>
-    <p class="hint my-2">Issues a coupon for the event through <code class="mono">POST /v1/coupons/grant</code>; idempotent per trigger and order.</p>
+    <p class="hint my-2">Issue the coupon for an event by hand. Repeating it for the same event and order returns the same coupon.</p>
     <form method="post" action={actions.grantCoupon} class="grid max-w-2xl grid-cols-2 gap-3 md:grid-cols-4">
       <Field state={grantState} name="trigger" label="trigger" options={GRANT_TRIGGERS} required />
       <Field state={grantState} name="customer_id" label="customer_id" required />
