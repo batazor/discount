@@ -123,6 +123,14 @@ Lint the document the way CI does:
 npx --yes @redocly/cli@latest lint api/openapi.yaml
 ```
 
+Every route except `/healthz`, `/openapi.yaml` and `/docs` requires a bearer JWT from an
+OIDC issuer named in `DISCOUNT_AUTH_ISSUERS` (Keycloak, Ory, Auth0, …); the tenant and the
+scopes come from claims mapped by `DISCOUNT_AUTH_TENANT_CLAIM` and
+`DISCOUNT_AUTH_SCOPES_CLAIM`, and every record belongs to the token's tenant (ADR 12, spec
+`access-control`). `DISCOUNT_AUTH=off` runs unauthenticated as tenant `default` for local
+work; the compose stack does that, and `ops/compose.auth.yaml` adds a Keycloak realm to
+try real tokens.
+
 `discount-server` runs the engine behind that API. Without `DATABASE_URL` it uses an
 in-memory catalogue seeded from `ops/promotions.json`; with it, catalogue and redemptions
 live in Postgres (migrations run at start-up).
@@ -165,8 +173,21 @@ form-to-body mapping, units and campaign status, and the production build:
 cd src/ui && npm run check && npm test && npm run build
 ```
 
-The console has no authentication, as the service has none: deploy it behind the same
-gate as the service. The compose stack binds it to localhost only.
+**Signing in.** With `DISCOUNT_UI_OIDC_ISSUER` set, every page needs a session: `/login`
+posts the username and password to the issuer's token endpoint server to server
+(resource owner password grant; `DISCOUNT_UI_OIDC_FLOW=code` switches to the
+authorization-code redirect when the issuer has a browser-facing hostname), keeps the
+tokens in the server session and sends `Authorization: Bearer` on every call to the
+service, refreshing before expiry. The auth overlay wires it to the Keycloak realm, which
+carries two demo users for the console, `marketing` / `marketing` and `support` /
+`support` (tenant `hotels`):
+
+```bash
+docker compose -f ops/compose.yaml -f ops/compose.auth.yaml up -d --build
+```
+
+Without the variable the console runs without sign-in, as the service does with
+`DISCOUNT_AUTH=off`. Either way the compose stack binds it to localhost only.
 
 ## Observability
 

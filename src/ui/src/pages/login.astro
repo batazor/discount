@@ -1,0 +1,79 @@
+---
+import "../styles/global.css";
+import { authEnabled, OIDC } from "../auth/config";
+import { discover, passwordGrant, pkce, authorizeUrl } from "../auth/oidc";
+import { SESSION_KEY } from "../auth/session";
+import { sessionFrom } from "../middleware";
+import { defaultRole } from "../auth/oidc";
+
+if (!authEnabled) return Astro.redirect("/");
+const back = (() => { const b = Astro.url.searchParams.get("back") ?? "/"; return b.startsWith("/") && !b.startsWith("//") ? b : "/"; })();
+if (await Astro.session?.get(SESSION_KEY)) return Astro.redirect(back);
+
+let error: string | null = null;
+let username = "";
+let issuerDown = false;
+
+if (OIDC.flow === "code" && Astro.request.method === "GET") {
+  try {
+    const d = await discover(OIDC.issuer);
+    const { verifier, challenge, state } = pkce();
+    await Astro.session?.set("pkce", { verifier, state, back });
+    return Astro.redirect(authorizeUrl(d, OIDC, `${Astro.url.origin}/auth/callback`, challenge, state));
+  } catch {
+    issuerDown = true;
+  }
+}
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  username = String(form.get("username") ?? "").trim();
+  const password = String(form.get("password") ?? "");
+  try {
+    const d = await discover(OIDC.issuer);
+    const t = await passwordGrant(d, OIDC, username, password);
+    if ("error" in t) error = t.error_description ?? t.error;
+    else {
+      const session = sessionFrom(t);
+      await Astro.session?.set(SESSION_KEY, session);
+      if (!Astro.cookies.has("discount_role")) Astro.cookies.set("discount_role", defaultRole(session.claims.scopes), { path: "/", sameSite: "lax", maxAge: 60 * 60 * 24 * 365 });
+      return Astro.redirect(back, 303);
+    }
+  } catch (e) {
+    issuerDown = true;
+    error = `The identity provider at ${OIDC.issuer} did not answer.`;
+  }
+}
+---
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in · discount</title>
+  </head>
+  <body class="flex min-h-screen items-center justify-center p-6">
+    <main class="w-full max-w-sm space-y-4">
+      <div class="flex items-center gap-2 px-1">
+        <span class="flex size-8 items-center justify-center rounded-md text-[14px] font-bold text-white" style="background: var(--color-accent)">%</span>
+        <span class="text-[17px] font-semibold tracking-tight">discount</span>
+      </div>
+      <form method="post" action={`/login?back=${encodeURIComponent(back)}`} class="card space-y-4">
+        <h1 class="card-title">Sign in</h1>
+        {error && <p role="alert" class="alert alert-danger">{error}</p>}
+        <label class="block"><span class="label">Username</span><input type="text" name="username" value={username} required autofocus autocomplete="username" class="input mono" /></label>
+        <label class="block"><span class="label">Password</span><input type="password" name="password" required autocomplete="current-password" class="input mono" /></label>
+        <button type="submit" class="btn btn-primary w-full justify-center" disabled={issuerDown}>Sign in</button>
+        <p class="hint">Issuer <code>{OIDC.issuer}</code>. The console keeps your tokens on the server; the browser only gets a session cookie.</p>
+      </form>
+      {OIDC.demoUsers.length > 0 && (
+        <section class="card">
+          <h2 class="card-title">Demo users</h2>
+          <ul class="space-y-1 text-[13px]">
+            {OIDC.demoUsers.map((u) => <li class="flex items-center justify-between gap-3"><span class="mono">{u.user}</span>{u.password && <span class="mono" style="color: var(--color-ink-3)">password <span class="select-all">{u.password}</span></span>}</li>)}
+          </ul>
+        </section>
+      )}
+    </main>
+  </body>
+</html>

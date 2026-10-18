@@ -5,11 +5,13 @@ import Unreachable from "../components/Unreachable.astro";
 import ConfirmDialog from "../components/ConfirmDialog.astro";
 import { API_URL } from "../api/client";
 import { navigation, roleFrom, ROLE_HELP, ROLES } from "../model/role";
+import { authEnabled } from "../auth/config";
 
 type Crumb = [label: string, href?: string];
 interface Props { title: string; unreachable?: string | null; description?: string; crumbs?: Crumb[] }
 const { title, unreachable = null, description, crumbs = [] } = Astro.props;
 
+const user = Astro.locals.user ?? null;
 const role = roleFrom(Astro.cookies.get("discount_role")?.value);
 const groups = navigation(role);
 const path = Astro.url.pathname;
@@ -54,6 +56,14 @@ const back = encodeURIComponent(path + Astro.url.search);
           </>
         ))}
         <div class="mt-auto px-2.5 pt-4 text-[11px] leading-4" style="color: var(--color-ink-3)">
+          {authEnabled && user && (
+            <div class="mb-3 rounded-md border p-2" style="border-color: var(--color-line)">
+              <div class="truncate text-[12.5px] font-semibold" style="color: var(--color-ink)" title={user.sub}>{user.name}</div>
+              <div class="truncate">tenant <span class="mono">{user.tenant ?? "—"}</span></div>
+              <div class="mt-1 flex flex-wrap gap-1">{user.scopes.map((s) => <span class="badge badge-muted" style="font-size: 10px">{s.replace("discount:", "")}</span>)}</div>
+              <form method="post" action="/logout" class="mt-2" data-astro-reload><button type="submit" class="btn-xs" style="padding-left: 0">Sign out</button></form>
+            </div>
+          )}
           <div class="font-semibold uppercase tracking-[0.08em]">Service</div>
           <code class="block truncate" title={API_URL}>{API_URL}</code>
           <a href="/api-docs" class="link mt-1 inline-block" target="_blank" rel="noreferrer" data-astro-reload>API docs ↗</a>
