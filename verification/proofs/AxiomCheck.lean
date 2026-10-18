@@ -28,3 +28,8 @@ open Discount
 #print axioms sortPromotions_perm
 #print axioms validate_perm
 #print axioms apply_perm_invariant
+#print axioms applyOne_unclamped
+#print axioms commute_of_running_independent
+#print axioms fixed_amounts_commute
+#print axioms additive_percentages_commute
+#print axioms sequential_percentages_commute_upto_rounding

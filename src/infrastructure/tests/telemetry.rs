@@ -12,7 +12,7 @@ use discount_application::ports::{Redemption, RedemptionError, RedemptionStatus,
 use discount_domain::*;
 use discount_infrastructure::http::{AppState, EvaluateRequest, evaluate_with_telemetry, router};
 use discount_infrastructure::telemetry::{self, Instruments};
-use discount_infrastructure::{PgStore, default_policy};
+use discount_infrastructure::default_policy;
 use opentelemetry::metrics::MeterProvider;
 use opentelemetry::trace::{SpanId, Status, TraceId, TracerProvider};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
@@ -594,29 +594,18 @@ fn malformed_traceparent_starts_a_fresh_trace() {
 
 // ------------------------------------------------------------ database spans
 
-/// `PgStore` on `DATABASE_URL` (wiped), or `None` with a notice when it is not set.
-fn pg_state(rt: &tokio::runtime::Runtime, h: &Harness) -> Option<Arc<AppState>> {
-    let url = match std::env::var("DATABASE_URL") {
-        Ok(u) => u,
-        Err(_) => {
-            eprintln!("DATABASE_URL not set: Postgres span scenario skipped");
-            return None;
-        }
-    };
-    let store = rt.block_on(async {
-        let s = PgStore::connect(&url, &default_policy()).await.unwrap();
-        s.reset_for_tests(&default_policy()).await.unwrap();
-        s
-    });
+/// `PgStore` on the test database (wiped); never skipped (ADR 11).
+fn pg_state(rt: &tokio::runtime::Runtime, h: &Harness) -> Arc<AppState> {
+    let store = rt.block_on(pg_store());
     let store = Arc::new(store);
-    Some(Arc::new(AppState {
+    Arc::new(AppState {
         catalog: store.clone(),
         redemptions: store,
         clock: h.state.clock.clone(),
         events: h.state.events.clone(),
         codes: h.state.codes.clone(),
         instruments: h.state.instruments.clone(),
-    }))
+    })
 }
 
 #[test]

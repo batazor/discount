@@ -1,5 +1,5 @@
 //! The `redemption` and `promotion-catalog` scenarios, run against the in-memory store and,
-//! when `DATABASE_URL` is set, against Postgres.
+//! against Postgres (`DATABASE_URL` or the local stack; never skipped, ADR 11).
 
 mod common;
 
@@ -30,16 +30,12 @@ async fn memory_ports() -> Ports {
     }
 }
 
-async fn postgres_ports() -> Option<Ports> {
-    let url = std::env::var("DATABASE_URL").ok()?;
-    let store = PgStore::connect(&url, &default_policy())
-        .await
-        .expect("connect to DATABASE_URL");
-    store.reset_for_tests(&default_policy()).await.unwrap();
-    Some(Ports {
+async fn postgres_ports() -> Ports {
+    let store = pg_store().await;
+    Ports {
         catalog: Arc::new(store.clone()),
         redemptions: Arc::new(store),
-    })
+    }
 }
 
 /// Postgres scenarios share one database, so they run one at a time.
@@ -52,13 +48,8 @@ where
     Fut: std::future::Future<Output = ()>,
 {
     f(memory_ports().await).await;
-    if std::env::var("DATABASE_URL").is_err() {
-        eprintln!("DATABASE_URL not set: Postgres scenarios skipped");
-        return;
-    }
     let _serial = PG_LOCK.lock().await;
-    let p = postgres_ports().await.expect("postgres");
-    f(p).await;
+    f(postgres_ports().await).await;
 }
 
 async fn seed(p: &Ports, budget: Option<i64>) {

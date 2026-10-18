@@ -25,7 +25,7 @@ with theorems for its invariants (ADR 2):
 |---|-----------|--------|
 | 1 | Final price is in `[0, original]`, per order and per line | proved |
 | 2 | No discount exceeds its cap, budget or the order cap | proved |
-| 3 | Stacking is deterministic (list order never matters) | proved for permutations of promotions and groups; commutativity claimed only where true |
+| 3 | Stacking is deterministic (list order never matters) | proved: permutation invariance, and commutativity exactly where it is claimed (fixed amounts, additive percentages; sequential percentages up to rounding) |
 | 4 | Exclusive promotions apply alone; first-match groups apply at most one | proved |
 | 5 | Allocation is conservative: per-line discounts sum to the order discount exactly | proved |
 | 6 | Replay is exact; a redemption is never reserved twice | core by construction; service property, tested on both stores |
@@ -86,7 +86,9 @@ cd verification/spec && lake exe discount-spec < ../drt/fixtures/samples-1.jsonl
 ```
 
 Run the Rust tests, the fixture replay and the differential run (the Lean build above
-must exist; `DRT_CASES` sets the number of random cases, default 256):
+must exist; `DRT_CASES` sets the number of random cases, default 256). The Postgres
+scenarios need the local database (`docker compose -f deploy/compose.yaml up -d postgres`;
+they create and wipe `discount_test`) or `DATABASE_URL`; they never skip (ADR 11):
 
 ```bash
 DRT_CASES=5000 cargo test --workspace

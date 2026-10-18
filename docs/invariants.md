@@ -18,7 +18,7 @@ Notation: `S` is `result.original_subtotal`, `D` is `result.total_discount`,
 |---|-----------|--------|------------------------------------------------------------|
 | 1 | Bounds per order and per line | proved | `final_total_bounds`, `line_total_bounds` |
 | 2 | Caps are respected | proved | `discount_le_cap`, `discount_le_budget`, `total_discount_le_order_cap`, `total_discount_le_subtotal` |
-| 3 | Deterministic stacking | permutation part proved; commutativity claimed only where true, proof is iteration 2 | `apply_perm_invariant`, `validate_perm`, `sortPromotions_perm` (`Determinism.lean`) |
+| 3 | Deterministic stacking | proved: permutation invariance, and commutativity exactly where it is claimed | `apply_perm_invariant`, `validate_perm`, `sortPromotions_perm` (`Determinism.lean`); `fixed_amounts_commute`, `additive_percentages_commute`, `sequential_percentages_commute_upto_rounding` (`Commutativity.lean`) |
 | 4 | Exclusive never combines; first-match groups apply at most one | proved | `exclusive_alone`, `first_match_at_most_one` |
 | 5 | Allocation is conservative | proved | `allocation_conserves`, `line_discount_sum`, `total_discount_eq_sum`; on `allocate` itself `allocate_sum`, `allocate_le`, `allocate_nonneg`, `allocate_length` |
 | 6 | Replay and idempotence | reformulated: core determinism by construction (ADR 7), idempotence is a service property, tested | none; see §6 |
@@ -85,16 +85,28 @@ On the `error` branch the two inputs are both rejected, possibly with different 
 first failing promotion depends on the order (ADR 6 reports the first error). The DRT also
 exercises permutation invariance on every generated case.
 
-**Commutativity (claimed only where true, proved in iteration 2).**
-Swapping the *priorities* of two promotions changes the result in general. It does not
-when, for a pair of adjacent promotions in the same `Stackable` group neither of which is
-clamped:
-- both are `OrderFixedAmount` (either policy);
-- both are `OrderPercentage` under `Additive` (same base `S`; each uses its own effective
-  rounding, which is independent of order);
-- both are `OrderPercentage` under `Sequential`, *up to rounding*: the unrounded
-  discounts commute, the rounded ones may differ by at most one minor unit per step.
-General commutativity is **not** an invariant of this engine.
+**Commutativity (claimed only where true; proved at the level of one pair of fold steps,
+`verification/proofs/Proofs/Invariants/Commutativity.lean`).** Swapping the *priorities* of
+two promotions changes the result in general. Swapping two adjacent promotions in the same
+`Stackable` group changes `sortPromotions` only by exchanging that pair, so the fold runs the
+two `applyOne` steps in the other order with everything else equal. For two *unclamped*
+steps (no `cap`, no `remaining_budget`, no order cap, raw discount at most the running total;
+`applyOne_unclamped` shows such a step subtracts exactly its raw discount):
+
+- both `OrderFixedAmount`, either stacking policy: the order total is the same
+  (`fixed_amounts_commute`);
+- both `OrderPercentage` under `Additive`: the same, since both read the original subtotal
+  (`additive_percentages_commute`); both corollaries of `commute_of_running_independent`;
+- both `OrderPercentage` under `Sequential`: the order totals differ by at most 2 minor
+  units, one per rounded step, for any pair of rounding policies
+  (`sequential_percentages_commute_upto_rounding`, through the two-sided error bound
+  `roundDiv_err`: `den·rd(x) − x ∈ (−den, den/2]`). A random search over all three policies
+  never exceeded 1; the proved bound is 2.
+
+Not claimed, and false in general: the per-line allocation (the second step allocates on a
+different running vector in the two orders, so lines may differ by a unit while the order
+total does not), clamped steps, promotions in different groups, and `Sequential` beyond the
+rounding slack.
 
 ## 4. Exclusive promotions never combine; first-match groups apply at most one
 

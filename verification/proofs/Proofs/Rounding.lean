@@ -107,4 +107,24 @@ theorem roundDiv_le (p : RoundingPolicy) (base bps : Int) (hb : 0 ≤ base) (_h0
   unfold roundDiv
   cases p <;> dsimp only <;> (repeat' split) <;> first | omega | (have := hlt (by omega); omega)
 
+/-- Two-sided rounding error at the basis-point scale, for every policy:
+`BPS_SCALE * roundDiv p x BPS_SCALE - x` lies in `(-BPS_SCALE, BPS_SCALE / 2]`. `Down` never
+rounds up (error in `(-BPS_SCALE, 0]`); the half policies move by at most half a step. -/
+theorem roundDiv_err (p : RoundingPolicy) (x : Int) :
+    -BPS_SCALE < BPS_SCALE * roundDiv p x BPS_SCALE - x ∧
+      2 * (BPS_SCALE * roundDiv p x BPS_SCALE - x) ≤ BPS_SCALE := by
+  -- `omega` knows Euclidean division and remainder by a literal.
+  unfold roundDiv BPS_SCALE
+  cases p <;> dsimp only
+  -- HalfUp
+  · split <;> constructor <;> omega
+  -- HalfEven
+  · split
+    · constructor <;> omega
+    · split
+      · constructor <;> omega
+      · split <;> constructor <;> omega
+  -- Down
+  · constructor <;> omega
+
 end Discount
