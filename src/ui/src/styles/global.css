@@ -133,6 +133,17 @@
   textarea.input { @apply min-h-24 leading-relaxed; }
   .hint { @apply mt-1 block text-[11.5px]; color: var(--color-ink-3); }
   .field-error { @apply mt-1 block text-[12px] font-medium; color: var(--color-danger); }
+  .option-cards { @apply grid gap-2; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+  .option-cards.compact { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); @apply gap-1.5; }
+  .option-card { @apply relative flex cursor-pointer flex-col gap-0.5 rounded-lg border px-3 py-2.5 transition-colors; border-color: var(--color-line-strong); background: var(--color-surface); }
+  .option-cards.compact .option-card { @apply flex-row items-baseline gap-2 px-2.5 py-1.5; }
+  .option-card:hover { border-color: var(--color-ink-3); }
+  .option-card:has(input:checked) { border-color: var(--color-accent); background: var(--color-accent-soft); box-shadow: 0 0 0 1px var(--color-accent) inset; }
+  .option-card:has(input:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+  .option-card input { @apply sr-only; }
+  .option-name { @apply text-[13px] font-semibold; font-family: var(--font-mono); }
+  .option-cards.compact .option-name { @apply shrink-0; }
+  .option-desc { @apply text-[12px] leading-snug; color: var(--color-ink-2); }
   .check { @apply inline-flex items-center gap-2 text-[13px]; }
   .check input { @apply size-4 rounded; accent-color: var(--color-accent); }
   .row-remove { @apply self-end rounded-md px-2 py-1.5 text-[13px] font-medium; color: var(--color-ink-3); }

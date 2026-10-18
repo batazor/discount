@@ -10,6 +10,7 @@ import { formState } from "../../../actions/run";
 import { GRANT_TRIGGERS } from "../../../model/catalogue";
 import { GRANT_TRIGGER_HELP, TERM } from "../../../model/glossary";
 import Help from "../../../components/Help.astro";
+import OptionCards from "../../../components/OptionCards.astro";
 
 const deleted = Astro.getActionResult(actions.deleteGrantRule);
 const granted = Astro.getActionResult(actions.grantCoupon);
@@ -28,7 +29,7 @@ const rows = dataOr(rules, []);
     <summary>Grant a coupon now</summary>
     <p class="hint my-2">Issue the coupon for an event by hand. Repeating it for the same event and order returns the same coupon.</p>
     <form method="post" action={actions.grantCoupon} class="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <Field state={grantState} name="trigger" label="Event" options={GRANT_TRIGGERS} required optionHelp={GRANT_TRIGGER_HELP} />
+      <div class="col-span-2"><OptionCards state={grantState} name="trigger" label="Event" options={GRANT_TRIGGERS} help={GRANT_TRIGGER_HELP} required /></div>
       <Field state={grantState} name="customer_id" label="Customer" required />
       <Field state={grantState} name="order_id" label="Order" required />
       <div class="self-end"><button type="submit" class="btn btn-primary">Grant</button></div>

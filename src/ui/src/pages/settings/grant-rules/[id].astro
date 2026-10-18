@@ -10,6 +10,7 @@ import { CONSEQUENCE } from "../../../model/glossary";
 import { formState } from "../../../actions/run";
 import { GRANT_TRIGGERS, grantRuleToFields } from "../../../model/catalogue";
 import { GRANT_TRIGGER_HELP, TERM } from "../../../model/glossary";
+import OptionCards from "../../../components/OptionCards.astro";
 
 const id = Astro.params.id!;
 const isNew = id === "new";
@@ -29,7 +30,7 @@ const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
   <form method="post" action={actions.putGrantRule} class="max-w-3xl space-y-5">
     <section class="card grid grid-cols-2 gap-4">
       <Field state={state} name="rule_id" label="Rule id" required readonly={!isNew} />
-      <Field state={state} name="trigger" label="Event" options={GRANT_TRIGGERS} required optionHelp={GRANT_TRIGGER_HELP} />
+      <div class="col-span-full"><OptionCards state={state} name="trigger" label="Event" options={GRANT_TRIGGERS} help={GRANT_TRIGGER_HELP} required /></div>
       <Field state={state} name="promotion_id" label="Promotion to grant" options={promotionIds} empty="— choose —" required />
       <Field state={state} name="priority" label="Priority" type="number" required help={TERM.grantPriority} hint="higher wins" />
       <Field state={state} name="validity_seconds" label="Valid for, seconds" type="number" required help={TERM.grantValidity} hint="2592000 = 30 days" />

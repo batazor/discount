@@ -7,12 +7,17 @@ import { animate } from "motion";
 
 const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+function variantValue(row: Element): string | null {
+  const picker = row.querySelector<HTMLElement>("[data-variant-select]");
+  if (!picker) return null;
+  if (picker instanceof HTMLSelectElement) return picker.value;
+  return picker.querySelector<HTMLInputElement>("input[type='radio']:checked")?.value ?? "";
+}
+
 function showVariant(row: Element): void {
-  const select = row.querySelector<HTMLSelectElement>("[data-variant-select]");
-  if (!select) return;
-  for (const el of row.querySelectorAll<HTMLElement>("[data-variant]")) {
-    el.hidden = el.dataset.variant !== select.value;
-  }
+  const value = variantValue(row);
+  if (value === null) return;
+  for (const el of row.querySelectorAll<HTMLElement>("[data-variant]")) el.hidden = el.dataset.variant !== value;
 }
 
 function nextIndex(list: Element): number {
@@ -50,7 +55,7 @@ export function initRows(root: ParentNode = document): void {
     list.querySelectorAll("[data-row]").forEach(showVariant);
     list.addEventListener("change", (e) => {
       const t = e.target as HTMLElement;
-      if (t.matches("[data-variant-select]")) showVariant(t.closest("[data-row]")!);
+      if (t.matches("[data-variant-select], [data-variant-select] input")) showVariant(t.closest("[data-row]")!);
     });
     list.addEventListener("click", (e) => {
       const t = (e.target as HTMLElement).closest<HTMLElement>("[data-add-row],[data-remove-row]");

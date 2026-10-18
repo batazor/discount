@@ -1,0 +1,28 @@
+---
+// A choice shown whole: every option with its name and description at once, as radio
+// cards. Works without scripts; with them it also drives variant fields (data-variant).
+import type { FormState } from "../actions/run";
+import Help from "./Help.astro";
+interface Props {
+  state: FormState; name: string; label: string; options: readonly string[]; help: Record<string, string>;
+  required?: boolean; empty?: [value: "", label: string, description: string]; variantSelect?: boolean; compact?: boolean;
+  names?: Record<string, string>; labelHelp?: string;
+}
+const { state, name, label, options, help, required = false, empty, variantSelect = false, compact = false, names = {}, labelHelp } = Astro.props;
+const value = state.fields[name] ?? "";
+const error = state.errors.find((e) => e.field === name)?.message;
+const all: [string, string, string][] = [...(empty ? [empty] : []), ...options.map((o): [string, string, string] => [o, names[o] ?? o, help[o] ?? ""])];
+---
+<fieldset class="block">
+  <legend class="label">{label}{required && <span style="color: var(--color-danger)"> *</span>}{labelHelp && <Help text={labelHelp} />}</legend>
+  <div class:list={["option-cards", compact && "compact"]} data-variant-select={variantSelect ? "" : undefined} data-radio-group>
+    {all.map(([v, title, desc]) => (
+      <label class="option-card">
+        <input type="radio" name={name} value={v} checked={v === value} />
+        <span class="option-name">{title}</span>
+        {desc && <span class="option-desc">{desc}</span>}
+      </label>
+    ))}
+  </div>
+  {error && <span class="field-error">{error}</span>}
+</fieldset>

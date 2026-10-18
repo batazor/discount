@@ -8,13 +8,15 @@ import MoneyField from "./MoneyField.astro";
 import TimestampField from "./TimestampField.astro";
 import { RULE_TYPES } from "../model/promotion";
 import { RULE_HELP } from "../model/glossary";
+import { RULE_NAMES } from "../model/campaign";
+import OptionCards from "./OptionCards.astro";
 interface Props { state: FormState; index: string }
 const { state, index } = Astro.props;
 const p = `rules.${index}`;
 ---
 <div data-row={index} class="subcard space-y-3">
   <div class="flex items-start gap-2">
-    <div class="flex-1"><Field state={state} name={`${p}.type`} label={`Rule ${Number.isNaN(Number(index)) ? "" : `#${Number(index) + 1}`}`} options={RULE_TYPES} empty="— choose a rule —" optionHelp={RULE_HELP} variantSelect /></div>
+    <div class="flex-1"><OptionCards state={state} name={`${p}.type`} label={`Rule ${Number.isNaN(Number(index)) ? "" : `#${Number(index) + 1}`}`} options={RULE_TYPES} help={RULE_HELP} names={RULE_NAMES} variantSelect compact /></div>
     <button type="button" data-remove-row hidden class="row-remove mt-5">Remove</button>
   </div>
   <div data-variant="DateWindow" class="grid grid-cols-2 gap-3">

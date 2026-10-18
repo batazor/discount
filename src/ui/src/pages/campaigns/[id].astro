@@ -22,12 +22,13 @@ const tabs = ["overview", "rules", "codes", "audience", "details"] as const;
 type Tab = (typeof tabs)[number];
 const tab: Tab = (tabs as readonly string[]).includes(Astro.url.searchParams.get("tab") ?? "") ? (Astro.url.searchParams.get("tab") as Tab) : "overview";
 
-const [current, groups, meta, allowlist, coupons] = await Promise.all([
+const [current, groups, meta, allowlist, coupons, promotions] = await Promise.all([
   call(() => api.GET("/v1/promotions/{promotion_id}", { params: { path: { promotion_id: id } } })),
   call(() => api.GET("/v1/groups")),
   call(() => api.GET("/v1/promotions/{promotion_id}/metadata", { params: { path: { promotion_id: id } } })),
   call(() => api.GET("/v1/promotions/{promotion_id}/allowlist", { params: { path: { promotion_id: id } } })),
   call(() => api.GET("/v1/coupons")),
+  call(() => api.GET("/v1/promotions")),
 ]);
 const now = Math.floor(Date.now() / 1000);
 const campaign = current.ok
@@ -57,7 +58,7 @@ const labels: Record<Tab, string> = { overview: "Overview", rules: "Rules & acti
         {tabs.map((t) => <a href={href(t)} class="tab" aria-current={t === tab ? "page" : undefined}>{labels[t]}</a>)}
       </nav>
       {tab === "overview" && <OverviewTab campaign={campaign} allowlistCount={allowlist.ok ? allowlist.data.customer_ids.length : 0} href={href} />}
-      {tab === "rules" && <RulesTab campaign={campaign} groupIds={dataOr(groups, []).map((g) => g.group_id)} />}
+      {tab === "rules" && <RulesTab campaign={campaign} groupIds={dataOr(groups, []).map((g) => g.group_id)} groups={dataOr(groups, [])} promotions={dataOr(promotions, [])} />}
       {tab === "codes" && <CodesTab campaign={campaign} fresh={freshCodes} />}
       {tab === "audience" && <AudienceTab campaign={campaign} allowlist={allowlist} />}
       {tab === "details" && <DetailsTab campaign={campaign} hasMeta={meta.ok} />}

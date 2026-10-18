@@ -10,10 +10,12 @@ import { formState } from "../../actions/run";
 import { ACTION_TYPES, ROUNDING_POLICIES } from "../../model/promotion";
 import { ACTION_HELP, ROUNDING_HELP, TERM } from "../../model/glossary";
 import { Form } from "../../model/fields";
+import GroupCard from "../../components/GroupCard.astro";
+import OptionCards from "../../components/OptionCards.astro";
 
 const result = Astro.getActionResult(actions.createCampaign);
 if (result?.data?.kind === "ok") return Astro.redirect(`/campaigns/${encodeURIComponent(result.data.data.promotion_id)}?tab=${result.data.data.codes.length ? "codes" : "overview"}&created=1`);
-const groups = await call(() => api.GET("/v1/groups"));
+const [groups, promotions] = await Promise.all([call(() => api.GET("/v1/groups")), call(() => api.GET("/v1/promotions"))]);
 const groupIds = dataOr(groups, []).map((g) => g.group_id);
 const state = formState(result?.data, {
   "action.type": "OrderPercentage",
@@ -24,8 +26,9 @@ const state = formState(result?.data, {
 const ruleIndices = new Form(state.fields).rows("rules").map(String);
 const empty = formState(undefined, {});
 ---
-<Layout title="New campaign" crumbs={[["Campaigns", "/campaigns"], ["New"]]} description="One form; the console saves the promotion, then its budget, title and codes." unreachable={unreachableUrl(groups)}>
-  <form method="post" action={actions.createCampaign} class="max-w-3xl space-y-5">
+<Layout title="New campaign" crumbs={[["Campaigns", "/campaigns"], ["New"]]} description="One form; the console saves the promotion, then its budget, title and codes." unreachable={unreachableUrl(groups, promotions)}>
+  <div class="grid gap-6 lg:grid-cols-[minmax(0,48rem)_20rem]">
+  <form method="post" action={actions.createCampaign} class="space-y-5">
     <section class="card space-y-4">
       <h2 class="card-title">What is it</h2>
       <div class="grid grid-cols-2 gap-4">
@@ -43,7 +46,7 @@ const empty = formState(undefined, {});
       <div data-row-list>
         <div data-rows>
           <div data-row="action" class="grid grid-cols-2 gap-4">
-            <Field state={state} name="action.type" label="Type" options={ACTION_TYPES} required variantSelect optionHelp={ACTION_HELP} />
+            <div class="col-span-full"><OptionCards state={state} name="action.type" label="Type" options={ACTION_TYPES} help={ACTION_HELP} names={{ OrderPercentage: "Percent off", OrderFixedAmount: "Amount off" }} required variantSelect /></div>
             <div data-variant="OrderPercentage"><Field state={state} name="action.percent" label="Percent off" placeholder="10" mono hint="e.g. 12.5" /></div>
             <div data-variant="OrderFixedAmount"><MoneyField state={state} name="action.amount" label="Amount off" /></div>
           </div>
@@ -51,7 +54,7 @@ const empty = formState(undefined, {});
       </div>
       <div class="grid grid-cols-2 gap-4">
         <MoneyField state={state} name="cap" label="Cap per order" hint="empty = unlimited" help={TERM.cap} />
-        <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} empty="— policy default —" optionHelp={ROUNDING_HELP} help={TERM.promotionRounding} />
+        <div class="col-span-full"><OptionCards state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} help={ROUNDING_HELP} empty={["", "Policy default", "Round as the pricing policy says."]} labelHelp={TERM.promotionRounding} /></div>
         <Field state={state} name="priority" label="Priority" type="number" required help={TERM.promotionPriority} hint="higher applies first; 0 is fine" />
         <div class="self-center"><Field state={state} name="exclusive" label="Exclusive: applies alone" checkbox help={TERM.exclusive} /></div>
       </div>
@@ -86,6 +89,8 @@ const empty = formState(undefined, {});
       <a href="/campaigns" class="btn btn-ghost">Cancel</a>
     </div>
   </form>
+  <GroupCard groups={dataOr(groups, [])} promotions={dataOr(promotions, [])} selected={state.fields.group_id ?? ""} />
+  </div>
   <script>
     import { initRows } from "../../client/rows";
     initRows();

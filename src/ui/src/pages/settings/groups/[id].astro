@@ -10,6 +10,7 @@ import { CONSEQUENCE } from "../../../model/glossary";
 import { formState } from "../../../actions/run";
 import { groupToFields, STACKING_MODES } from "../../../model/catalogue";
 import { STACKING_MODE_HELP, TERM } from "../../../model/glossary";
+import OptionCards from "../../../components/OptionCards.astro";
 
 const id = Astro.params.id!;
 const isNew = id === "new";
@@ -26,7 +27,7 @@ const state = formState(result?.data, current?.ok ? groupToFields(current.data) 
     <section class="card space-y-4">
       <Field state={state} name="group_id" label="Group id" required readonly={!isNew} />
       <Field state={state} name="priority" label="Priority" type="number" required help={TERM.groupPriority} hint="higher applies first" />
-      <Field state={state} name="mode" label="Mode" options={STACKING_MODES} required optionHelp={STACKING_MODE_HELP} />
+      <OptionCards state={state} name="mode" label="Mode" options={STACKING_MODES} help={STACKING_MODE_HELP} required />
     </section>
     <FormStatus state={state} />
     <div class="form-actions">

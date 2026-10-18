@@ -1,0 +1,59 @@
+---
+// What a stacking group is, and what the chosen one does: its priority and mode, and the
+// campaigns already in it in application order. Follows the group select without a reload.
+import type { Promotion, StackingGroup } from "../api/types";
+import { STACKING_MODE_HELP, TERM } from "../model/glossary";
+import { describeAction } from "../model/campaign";
+import Help from "./Help.astro";
+interface Props { groups: StackingGroup[]; promotions: Promotion[]; selected: string; current?: string }
+const { groups, promotions, selected, current } = Astro.props;
+// Total order inside a group: promotion priority DESC, then id ASC (docs/ubiquitous-language.md).
+const members = (id: string) => promotions.filter((p) => p.group_id === id && p.promotion_id !== current).sort((a, b) => b.priority - a.priority || a.promotion_id.localeCompare(b.promotion_id));
+const sorted = [...groups].sort((a, b) => b.priority - a.priority || a.group_id.localeCompare(b.group_id));
+---
+<aside class="card space-y-3 lg:sticky lg:top-6" data-group-card>
+  <h2 class="card-title">Stacking group <Help text={TERM.groupPriority} /></h2>
+  <p class="hint">A group orders campaigns and decides whether every eligible campaign in it applies or only the first one. Groups themselves apply by priority, higher first.</p>
+  <div data-group-info data-for="" hidden={selected !== ""}>
+    <p class="text-[13px]">Pick a group to see what it does.</p>
+  </div>
+  {sorted.map((g, i) => (
+    <div data-group-info data-for={g.group_id} hidden={g.group_id !== selected} class="space-y-3">
+      <dl class="dl">
+        <dt>Group</dt><dd>{g.group_id}</dd>
+        <dt>Priority</dt><dd>{g.priority} <span class="hint inline">{sorted.length > 1 ? `${i + 1} of ${sorted.length} in order` : "the only group"}</span></dd>
+        <dt>Mode</dt><dd class="font-sans"><span class={`badge ${g.mode.type === "Stackable" ? "badge-ok" : "badge-info"}`}>{g.mode.type}</span></dd>
+      </dl>
+      <p class="hint">{STACKING_MODE_HELP[g.mode.type]}</p>
+      <div>
+        <h3 class="label">Already in this group <span class="hint inline">in application order</span></h3>
+        {members(g.group_id).length === 0 ? <p class="hint">No other campaign yet.</p> : (
+          <ol class="space-y-1 text-[12.5px]">
+            {members(g.group_id).map((p) => (
+              <li class="flex items-center justify-between gap-2">
+                <a href={`/campaigns/${encodeURIComponent(p.promotion_id)}`} class="link mono">{p.promotion_id}</a>
+                <span class="mono" style="color: var(--color-ink-3)">{describeAction(p.action)} · prio {p.priority}{p.exclusive ? " · exclusive" : ""}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {g.mode.type === "FirstMatch" && members(g.group_id).length > 0 && <p class="hint mt-1">Only the first eligible one applies: give this campaign a higher priority than the ones it should beat.</p>}
+      </div>
+    </div>
+  ))}
+  <p class="text-[12.5px]"><a href="/settings/groups" class="link">Manage groups</a> · <a href="/settings/groups/new" class="link">New group</a></p>
+</aside>
+<script>
+  const init = () => {
+    for (const card of document.querySelectorAll<HTMLElement>("[data-group-card]")) {
+      const select = card.closest("form, main")?.querySelector<HTMLSelectElement>("select[name='group_id']") ?? document.querySelector<HTMLSelectElement>("select[name='group_id']");
+      if (!select || select.dataset.groupCard) continue;
+      select.dataset.groupCard = "1";
+      const show = () => { for (const el of card.querySelectorAll<HTMLElement>("[data-group-info]")) el.hidden = el.dataset.for !== select.value; };
+      select.addEventListener("change", show);
+      show();
+    }
+  };
+  init();
+  document.addEventListener("astro:page-load", init);
+</script>
