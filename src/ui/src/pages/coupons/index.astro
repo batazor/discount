@@ -8,6 +8,8 @@ import TimestampField from "../../components/TimestampField.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { formatTimestamp } from "../../model/time";
+import { TERM } from "../../model/glossary";
+import Help from "../../components/Help.astro";
 
 const deleted = Astro.getActionResult(actions.deleteCoupon);
 const generated = Astro.getActionResult(actions.generateCoupons);
@@ -29,10 +31,10 @@ const rows = dataOr(coupons, []);
       <Field state={genState} name="promotion_id" label="Promotion" options={promotionIds} empty="— choose —" required />
       <Field state={genState} name="count" label="How many" type="number" required hint="1–10000" />
       <Field state={genState} name="prefix" label="Prefix" placeholder="SPRING-" hint="followed by 8 random characters" />
-      <Field state={genState} name="max_uses" label="Uses per code" type="number" hint="empty = unlimited" />
+      <Field state={genState} name="max_uses" label="Uses per code" type="number" help={TERM.couponMaxUses} hint="empty = unlimited" />
       <TimestampField state={genState} name="starts_at" label="Valid from" />
       <TimestampField state={genState} name="ends_at" label="Valid until" />
-      <Field state={genState} name="customer_id" label="Bound to customer" hint="empty = public" />
+      <Field state={genState} name="customer_id" label="Bound to customer" help={TERM.couponBound} hint="empty = public" />
       <div class="self-end"><button type="submit" class="btn btn-primary">Generate</button></div>
       <div class="col-span-full"><FormStatus state={genState} okText={`Generated ${codes.length} code${codes.length === 1 ? "" : "s"}. They are listed once here; copy them now.`} /></div>
     </form>
@@ -46,7 +48,7 @@ const rows = dataOr(coupons, []);
   <div class="table-card">
     <table class="table">
       <thead>
-        <tr><th>Code</th><th>Promotion</th><th>Customer</th><th>Valid from</th><th>Valid until</th><th class="num">Uses</th><th></th></tr>
+        <tr><th>Code</th><th>Promotion</th><th>Customer <Help text={TERM.couponBound} /></th><th>Valid from</th><th>Valid until <Help text={TERM.couponWindow} /></th><th class="num">Uses <Help text={TERM.couponMaxUses} /></th><th></th></tr>
       </thead>
       <tbody>
         {rows.map((c) => (

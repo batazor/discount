@@ -4,6 +4,7 @@ import ApiError from "../../components/ApiError.astro";
 import { api, call, unreachableUrl } from "../../api/client";
 import { formatTimestamp } from "../../model/time";
 import { fmtMoney } from "../../model/evaluate";
+import { COUPON_STATUS_HELP } from "../../model/glossary";
 
 const customerId = Astro.params.customer_id!;
 const source = Astro.url.searchParams.get("source")?.trim() || "";
@@ -29,7 +30,7 @@ const actionText = (a: { type: string; bps?: number; amount?: { amount: number; 
           {list.data.map((c) => (
             <tr>
               <td class="mono"><a href={`/coupons/${encodeURIComponent(c.coupon.code)}`} class="link">{c.coupon.code}</a></td>
-              <td><span class={`badge ${badge[c.status]}`}>{c.status}</span></td>
+              <td><span class={`badge ${badge[c.status]}`} data-tip={COUPON_STATUS_HELP[c.status]}>{c.status}</span></td>
               <td class="mono">{c.order_id ? <a href={`/redemptions/${encodeURIComponent(c.order_id)}`} class="link">{c.order_id}</a> : "—"}</td>
               <td>{c.promotion ? <><a href={`/promotions/${encodeURIComponent(c.promotion.promotion_id)}`} class="link mono">{c.promotion.promotion_id}</a>{c.promotion.metadata && <span class="ml-1.5" style="color: var(--color-ink-2)">{c.promotion.metadata.title}</span>}<div class="mono text-[12px]" style="color: var(--color-ink-3)">{c.promotion.action.type} {actionText(c.promotion.action)}</div></> : <span class="badge badge-muted">gone</span>}</td>
               <td class="mono text-[12px]">{c.coupon.ends_at === null ? <span style="color: var(--color-ink-3)">—</span> : formatTimestamp(c.coupon.ends_at)}</td>

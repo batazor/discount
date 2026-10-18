@@ -27,6 +27,11 @@ export function evaluateRequestFromForm(fields: Fields): Parsed<EvaluateRequest>
         promotion_id: f.str(`uses.${i}.promotion_id`),
         count: f.int(`uses.${i}.count`, { min: 0 }),
       })),
+      attributes: f.rows("customer_attributes", "key").map((i) => ({
+        key: f.str(`customer_attributes.${i}.key`),
+        value: f.str(`customer_attributes.${i}.value`),
+      })),
+      allowlisted: f.list("customer.allowlisted"),
     },
   });
 }
@@ -38,6 +43,7 @@ export function evaluateRequestToFields(r: EvaluateRequest): Fields {
     "cart.coupon_codes": r.cart.coupon_codes.join(", "),
     "customer.customer_id": r.customer.customer_id ?? "",
     "customer.completed_orders": String(r.customer.completed_orders),
+    "customer.allowlisted": r.customer.allowlisted.join(", "),
   };
   r.cart.lines.forEach((l, i) => {
     out[`lines.${i}.line_id`] = l.line_id;
@@ -52,6 +58,10 @@ export function evaluateRequestToFields(r: EvaluateRequest): Fields {
   r.customer.uses.forEach((u, i) => {
     out[`uses.${i}.promotion_id`] = u.promotion_id;
     out[`uses.${i}.count`] = String(u.count);
+  });
+  r.customer.attributes.forEach((a, i) => {
+    out[`customer_attributes.${i}.key`] = a.key;
+    out[`customer_attributes.${i}.value`] = a.value;
   });
   return out;
 }
@@ -68,7 +78,7 @@ export const SAMPLE_REQUEST: EvaluateRequest = {
     attributes: [],
     coupon_codes: [],
   },
-  customer: { customer_id: "smoke", completed_orders: 0, uses: [] },
+  customer: { customer_id: "smoke", completed_orders: 0, uses: [], attributes: [], allowlisted: [] },
 };
 
 export function fmtMoney(m: Money | null | undefined): string {

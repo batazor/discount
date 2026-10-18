@@ -14,6 +14,9 @@ export const RULE_TYPES = [
   "MaxUsesPerCustomer",
   "MaxUsesTotal",
   "RequiresCoupon",
+  "CustomerAttributeIn",
+  "CustomerAttributeRange",
+  "RequiresAllowlist",
 ] as const;
 export type RuleType = (typeof RULE_TYPES)[number];
 
@@ -43,7 +46,12 @@ export function ruleFromForm(f: Form, p: string): Rule {
     case "MaxUsesTotal":
       return { type, max: f.int(`${p}.max`, { min: 0 }) };
     case "RequiresCoupon":
+    case "RequiresAllowlist":
       return { type };
+    case "CustomerAttributeIn":
+      return { type, key: f.str(`${p}.key`), values: f.list(`${p}.values`) };
+    case "CustomerAttributeRange":
+      return { type, key: f.str(`${p}.key`), min: f.optInt(`${p}.min`), max: f.optInt(`${p}.max`) };
   }
 }
 
@@ -77,6 +85,16 @@ export function ruleToFields(r: Rule, p: string): Fields {
       out[`${p}.max`] = String(r.max);
       break;
     case "RequiresCoupon":
+    case "RequiresAllowlist":
+      break;
+    case "CustomerAttributeIn":
+      out[`${p}.key`] = r.key;
+      out[`${p}.values`] = r.values.join(", ");
+      break;
+    case "CustomerAttributeRange":
+      out[`${p}.key`] = r.key;
+      out[`${p}.min`] = r.min === null ? "" : String(r.min);
+      out[`${p}.max`] = r.max === null ? "" : String(r.max);
       break;
   }
   return out;

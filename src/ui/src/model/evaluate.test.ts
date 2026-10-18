@@ -12,7 +12,13 @@ describe("evaluate request", () => {
         attributes: [{ key: "tier", value: "gold" }],
         coupon_codes: ["WELCOME"],
       },
-      customer: { customer_id: null, completed_orders: 3, uses: [{ promotion_id: "P1", count: 1 }] },
+      customer: {
+        customer_id: null,
+        completed_orders: 3,
+        uses: [{ promotion_id: "P1", count: 1 }],
+        attributes: [{ key: "tier", value: "gold" }],
+        allowlisted: ["P1", "P2"],
+      },
     };
     for (const r of [SAMPLE_REQUEST, full]) expect(evaluateRequestFromForm(evaluateRequestToFields(r))).toEqual({ ok: true, value: r });
   });

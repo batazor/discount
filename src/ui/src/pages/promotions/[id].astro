@@ -7,12 +7,15 @@ import FormStatus from "../../components/FormStatus.astro";
 import ApiError from "../../components/ApiError.astro";
 import RuleRow from "../../components/RuleRow.astro";
 import DeleteButton from "../../components/DeleteButton.astro";
+import Help from "../../components/Help.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { ACTION_TYPES, promotionToFields, ROUNDING_POLICIES } from "../../model/promotion";
 import { fmtMoney } from "../../model/evaluate";
 import { Form } from "../../model/fields";
 import { metadataToFields } from "../../model/metadata";
+import { allowlistToFields } from "../../model/allowlist";
+import { ACTION_HELP, ROUNDING_HELP, TERM } from "../../model/glossary";
 
 const id = Astro.params.id!;
 const isNew = id === "new";
@@ -21,12 +24,18 @@ if (isNew && put?.data?.kind === "ok") return Astro.redirect(`/promotions/${enco
 const budget = Astro.getActionResult(actions.putBudget);
 const metaPut = Astro.getActionResult(actions.putPromotionMetadata);
 const metaDel = Astro.getActionResult(actions.deletePromotionMetadata);
+const listPut = Astro.getActionResult(actions.putAllowlist);
+const listClear = Astro.getActionResult(actions.clearAllowlist);
 
-const [current, groups, meta] = await Promise.all([
+const [current, groups, meta, allowlist] = await Promise.all([
   isNew ? Promise.resolve(null) : call(() => api.GET("/v1/promotions/{promotion_id}", { params: { path: { promotion_id: id } } })),
   call(() => api.GET("/v1/groups")),
   isNew ? Promise.resolve(null) : call(() => api.GET("/v1/promotions/{promotion_id}/metadata", { params: { path: { promotion_id: id } } })),
+  isNew ? Promise.resolve(null) : call(() => api.GET("/v1/promotions/{promotion_id}/allowlist", { params: { path: { promotion_id: id } } })),
 ]);
+const listState = formState(listClear?.data?.kind === "ok" ? undefined : listPut?.data, allowlist?.ok ? allowlistToFields(allowlist.data) : {});
+const listCount = allowlist?.ok ? allowlist.data.customer_ids.length : 0;
+const usesAllowlist = current?.ok && current.data.rules.some((r) => r.type === "RequiresAllowlist");
 const state = formState(put?.data, current?.ok ? promotionToFields(current.data) : { "action.type": "OrderPercentage" });
 const budgetState = formState(budget?.data, {
   promotion_id: id,
@@ -60,10 +69,10 @@ const title = isNew ? "New promotion" : meta?.ok ? meta.data.title : id;
         <div class="grid grid-cols-2 gap-4">
           <Field state={state} name="promotion_id" label="Promotion id" required readonly={!isNew} />
           <Field state={state} name="group_id" label="Stacking group" options={groupIds} empty={groupIds.length ? "— choose —" : "no groups yet"} required />
-          <Field state={state} name="priority" label="Priority" type="number" required hint="lower applies first" />
-          <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} empty="— policy default —" />
-          <MoneyField state={state} name="cap" label="Cap per order" hint="empty = none" />
-          <div class="self-center"><Field state={state} name="exclusive" label="Exclusive: applies alone, nothing stacks with it" checkbox /></div>
+          <Field state={state} name="priority" label="Priority" type="number" required help={TERM.promotionPriority} hint="higher applies first" />
+          <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} empty="— policy default —" optionHelp={ROUNDING_HELP} help={TERM.promotionRounding} />
+          <MoneyField state={state} name="cap" label="Cap per order" hint="empty = unlimited" help={TERM.cap} />
+          <div class="self-center"><Field state={state} name="exclusive" label="Exclusive: applies alone" checkbox help={TERM.exclusive} /></div>
         </div>
       </section>
 
@@ -72,7 +81,7 @@ const title = isNew ? "New promotion" : meta?.ok ? meta.data.title : id;
         <div data-row-list>
           <div data-rows>
             <div data-row="action" class="grid grid-cols-2 gap-4">
-              <Field state={state} name="action.type" label="Type" options={ACTION_TYPES} required variantSelect />
+              <Field state={state} name="action.type" label="Type" options={ACTION_TYPES} required variantSelect optionHelp={ACTION_HELP} />
               <div data-variant="OrderPercentage"><Field state={state} name="action.bps" label="Percentage, in basis points" type="number" hint="1000 = 10 %" /></div>
               <div data-variant="OrderFixedAmount"><MoneyField state={state} name="action.amount" label="Fixed amount" /></div>
             </div>
@@ -81,7 +90,7 @@ const title = isNew ? "New promotion" : meta?.ok ? meta.data.title : id;
       </section>
 
       <section class="card space-y-3">
-        <h2 class="card-title">Rules <span class="hint inline font-normal">all must hold</span></h2>
+        <h2 class="card-title">Rules <span class="hint inline font-normal">all must hold; no rules = every cart</span></h2>
         <div data-row-list>
           <div data-rows class="space-y-3">
             {ruleIndices.map((i) => <RuleRow state={state} index={i} />)}
@@ -111,13 +120,12 @@ const title = isNew ? "New promotion" : meta?.ok ? meta.data.title : id;
         <section class="card">
           <h2 class="card-title">Counted by the service</h2>
           <dl class="dl">
-            <dt>Uses in total</dt><dd>{current?.ok ? current.data.uses_total : "—"}</dd>
-            <dt>Remaining budget</dt><dd>{current?.ok ? fmtMoney(current.data.remaining_budget) : "—"}</dd>
+            <dt>Uses in total <Help text={TERM.usesTotal} /></dt><dd>{current?.ok ? current.data.uses_total : "—"}</dd>
+            <dt>Remaining budget <Help text={TERM.remainingBudget} /></dt><dd>{current?.ok ? fmtMoney(current.data.remaining_budget) : "—"}</dd>
           </dl>
         </section>
         <form method="post" action={actions.putBudget} class="card space-y-3">
-          <h2 class="card-title">Budget</h2>
-          <p class="hint">How much this promotion may still grant in total. Saved separately from the promotion.</p>
+          <h2 class="card-title">Budget <Help text={TERM.budget} /></h2>
           <input type="hidden" name="promotion_id" value={id} />
           <Field state={budgetState} name="no_budget" label="No budget (unbounded)" checkbox />
           <MoneyField state={budgetState} name="remaining" label="Remaining" />
@@ -130,13 +138,25 @@ const title = isNew ? "New promotion" : meta?.ok ? meta.data.title : id;
           <input type="hidden" name="promotion_id" value={id} />
           <Field state={metaState} name="title" label="Title" required />
           <Field state={metaState} name="description" label="Description" textarea rows={3} />
-          <Field state={metaState} name="source" label="Source" placeholder="hotels" hint="partition for listings; empty = none" />
-          <Field state={metaState} name="labels" label="Labels" textarea rows={3} hint="one key=value per line" placeholder={"channel=app\nissuer=ops"} />
+          <Field state={metaState} name="source" label="Source" placeholder="hotels" help={TERM.source} hint="lowercase; empty = none" />
+          <Field state={metaState} name="labels" label="Labels" textarea rows={3} help={TERM.labels} hint="one key=value per line" placeholder={"channel=app\nissuer=ops"} />
           <FormStatus state={metaState} okText="Metadata saved." />
           {metaDel?.data?.kind === "ok" && <p role="status" class="alert alert-success">Metadata removed.</p>}
           <div class="flex items-center gap-3">
             <button type="submit" class="btn btn-secondary">Save metadata</button>
             {hasMeta && <DeleteButton action={actions.deletePromotionMetadata} id={id} label="Remove metadata" />}
+          </div>
+        </form>
+        <form method="post" action={actions.putAllowlist} class="card space-y-3">
+          <h2 class="card-title">Allowlist <span class="badge badge-muted">{listCount}</span> <Help text={TERM.allowlist} /></h2>
+          {!usesAllowlist && listCount > 0 && <p class="alert alert-warn">This promotion has no RequiresAllowlist rule, so the list has no effect on pricing.</p>}
+          <input type="hidden" name="promotion_id" value={id} />
+          <Field state={listState} name="customer_ids" label="Customer ids" textarea rows={5} hint="one per line; saving replaces the whole list" />
+          <FormStatus state={listState} okText="Allowlist saved." />
+          {listClear?.data?.kind === "ok" && <p role="status" class="alert alert-success">Allowlist cleared.</p>}
+          <div class="flex items-center gap-3">
+            <button type="submit" class="btn btn-secondary">Save allowlist</button>
+            {listCount > 0 && <DeleteButton action={actions.clearAllowlist} id={id} label="Clear allowlist" />}
           </div>
         </form>
       </aside>

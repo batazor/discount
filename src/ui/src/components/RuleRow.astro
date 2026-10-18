@@ -7,14 +7,15 @@ import Field from "./Field.astro";
 import MoneyField from "./MoneyField.astro";
 import TimestampField from "./TimestampField.astro";
 import { RULE_TYPES } from "../model/promotion";
+import { RULE_HELP } from "../model/glossary";
 interface Props { state: FormState; index: string }
 const { state, index } = Astro.props;
 const p = `rules.${index}`;
 ---
 <div data-row={index} class="subcard space-y-3">
-  <div class="flex items-end gap-2">
-    <div class="flex-1"><Field state={state} name={`${p}.type`} label={`Rule ${Number.isNaN(Number(index)) ? "" : `#${Number(index) + 1}`}`} options={RULE_TYPES} empty="— choose a rule —" variantSelect /></div>
-    <button type="button" data-remove-row hidden class="row-remove">Remove</button>
+  <div class="flex items-start gap-2">
+    <div class="flex-1"><Field state={state} name={`${p}.type`} label={`Rule ${Number.isNaN(Number(index)) ? "" : `#${Number(index) + 1}`}`} options={RULE_TYPES} empty="— choose a rule —" optionHelp={RULE_HELP} variantSelect /></div>
+    <button type="button" data-remove-row hidden class="row-remove mt-5">Remove</button>
   </div>
   <div data-variant="DateWindow" class="grid grid-cols-2 gap-3">
     <TimestampField state={state} name={`${p}.starts_at`} label="Starts" />
@@ -25,21 +26,29 @@ const p = `rules.${index}`;
     <MoneyField state={state} name={`${p}.max`} label="Maximum order total" />
   </div>
   <div data-variant="TagsMatch" class="grid grid-cols-3 gap-3">
-    <Field state={state} name={`${p}.all`} label="All of" hint="comma-separated" />
-    <Field state={state} name={`${p}.any`} label="Any of" hint="comma-separated" />
-    <Field state={state} name={`${p}.none`} label="None of" hint="comma-separated" />
+    <Field state={state} name={`${p}.all`} label="All of" hint="comma-separated; every one must be on the cart" />
+    <Field state={state} name={`${p}.any`} label="Any of" hint="comma-separated; at least one, or leave empty" />
+    <Field state={state} name={`${p}.none`} label="None of" hint="comma-separated; none may be on the cart" />
   </div>
   <div data-variant="AttributeIn" class="grid grid-cols-2 gap-3">
-    <Field state={state} name={`${p}.key`} label="Attribute" />
+    <Field state={state} name={`${p}.key`} label="Cart attribute" />
     <Field state={state} name={`${p}.values`} label="Allowed values" hint="comma-separated" />
   </div>
   <div data-variant="AttributeDateWindow" class="grid grid-cols-3 gap-3">
-    <Field state={state} name={`${p}.key`} label="Attribute (a date)" />
+    <Field state={state} name={`${p}.key`} label="Cart attribute" hint="its value must be an integer timestamp" />
     <TimestampField state={state} name={`${p}.starts_at`} label="Starts" />
     <TimestampField state={state} name={`${p}.ends_at`} label="Ends" />
   </div>
   <div data-variant="MaxCompletedOrders"><Field state={state} name={`${p}.max`} label="Maximum completed orders" type="number" hint="0 = first order only" /></div>
-  <div data-variant="MaxUsesPerCustomer"><Field state={state} name={`${p}.max`} label="Maximum uses per customer" type="number" /></div>
-  <div data-variant="MaxUsesTotal"><Field state={state} name={`${p}.max`} label="Maximum uses in total" type="number" /></div>
-  <div data-variant="RequiresCoupon" class="hint">Applies only when a stored coupon for this promotion is presented.</div>
+  <div data-variant="MaxUsesPerCustomer"><Field state={state} name={`${p}.max`} label="Maximum uses per customer" type="number" hint="1 = once per customer" /></div>
+  <div data-variant="MaxUsesTotal"><Field state={state} name={`${p}.max`} label="Maximum uses in total" type="number" hint="counts reserved and confirmed redemptions" /></div>
+  <div data-variant="CustomerAttributeIn" class="grid grid-cols-2 gap-3">
+    <Field state={state} name={`${p}.key`} label="Customer attribute" />
+    <Field state={state} name={`${p}.values`} label="Allowed values" hint="comma-separated" />
+  </div>
+  <div data-variant="CustomerAttributeRange" class="grid grid-cols-3 gap-3">
+    <Field state={state} name={`${p}.key`} label="Customer attribute" hint="its value must be an integer" />
+    <Field state={state} name={`${p}.min`} label="At least" type="number" hint="inclusive; empty = no lower bound" />
+    <Field state={state} name={`${p}.max`} label="At most" type="number" hint="inclusive; empty = no upper bound" />
+  </div>
 </div>

@@ -7,6 +7,8 @@ import Field from "../../components/Field.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { GRANT_TRIGGERS } from "../../model/catalogue";
+import { GRANT_TRIGGER_HELP, TERM } from "../../model/glossary";
+import Help from "../../components/Help.astro";
 
 const deleted = Astro.getActionResult(actions.deleteGrantRule);
 const granted = Astro.getActionResult(actions.grantCoupon);
@@ -25,7 +27,7 @@ const rows = dataOr(rules, []);
     <summary>Grant a coupon now</summary>
     <p class="hint my-2">Issue the coupon for an event by hand. Repeating it for the same event and order returns the same coupon.</p>
     <form method="post" action={actions.grantCoupon} class="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <Field state={grantState} name="trigger" label="Event" options={GRANT_TRIGGERS} required />
+      <Field state={grantState} name="trigger" label="Event" options={GRANT_TRIGGERS} required optionHelp={GRANT_TRIGGER_HELP} />
       <Field state={grantState} name="customer_id" label="Customer" required />
       <Field state={grantState} name="order_id" label="Order" required />
       <div class="self-end"><button type="submit" class="btn btn-primary">Grant</button></div>
@@ -38,12 +40,12 @@ const rows = dataOr(rules, []);
 
   <div class="table-card max-w-5xl">
     <table class="table">
-      <thead><tr><th>Rule</th><th>Event</th><th>Promotion</th><th class="num">Priority</th><th class="num">Valid for</th><th class="num">Uses per code</th><th></th></tr></thead>
+      <thead><tr><th>Rule</th><th>Event</th><th>Promotion</th><th class="num">Priority <Help text={TERM.grantPriority} /></th><th class="num">Valid for <Help text={TERM.grantValidity} /></th><th class="num">Uses per code <Help text={TERM.grantMaxUses} /></th><th></th></tr></thead>
       <tbody>
         {rows.map((r) => (
           <tr>
             <td><a href={`/grant-rules/${encodeURIComponent(r.rule_id)}`} class="link mono">{r.rule_id}</a></td>
-            <td><span class="badge badge-info">{r.trigger}</span></td>
+            <td><span class="badge badge-info" data-tip={GRANT_TRIGGER_HELP[r.trigger]}>{r.trigger}</span></td>
             <td><a href={`/promotions/${encodeURIComponent(r.promotion_id)}`} class="link mono">{r.promotion_id}</a></td>
             <td class="num mono">{r.priority}</td>
             <td class="num mono">{r.validity_seconds} s</td>

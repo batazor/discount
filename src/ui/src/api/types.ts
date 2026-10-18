@@ -32,3 +32,4 @@ export type ClampReason = S["ClampReason"];
 export type Redemption = S["Redemption"];
 export type PromotionMetadata = S["PromotionMetadata"];
 export type MetadataEntry = S["MetadataEntry"];
+export type Allowlist = S["Allowlist"];

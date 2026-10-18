@@ -5,6 +5,7 @@ import FormStatus from "../../components/FormStatus.astro";
 import Field from "../../components/Field.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
+import { TERM } from "../../model/glossary";
 
 const put = Astro.getActionResult(actions.putExchangeRate);
 const deleted = Astro.getActionResult(actions.deleteExchangeRate);
@@ -18,7 +19,7 @@ const rows = dataOr(rates, []);
   <form method="post" action={actions.putExchangeRate} class="card mb-5 grid max-w-4xl grid-cols-2 gap-3 md:grid-cols-5">
     <Field state={putState} name="from" label="From" placeholder="USD" required />
     <Field state={putState} name="to" label="To" placeholder="EUR" required />
-    <Field state={putState} name="numerator" label="Numerator" type="number" required />
+    <Field state={putState} name="numerator" label="Numerator" type="number" required help={TERM.rateFormula} />
     <Field state={putState} name="denominator" label="Denominator" type="number" required />
     <div class="self-end"><button type="submit" class="btn btn-primary">Set rate</button></div>
     <div class="col-span-full"><FormStatus state={putState} okText="Rate stored." /></div>

@@ -9,6 +9,7 @@ import DeleteButton from "../../components/DeleteButton.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { couponToFields } from "../../model/catalogue";
+import { TERM } from "../../model/glossary";
 
 const code = Astro.params.code!;
 const isNew = code === "new";
@@ -32,13 +33,13 @@ const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
       <Field state={state} name="promotion_id" label="Promotion" options={promotionIds} empty="— choose —" required />
       <TimestampField state={state} name="starts_at" label="Valid from" />
       <TimestampField state={state} name="ends_at" label="Valid until" />
-      <Field state={state} name="customer_id" label="Bound to customer" hint="empty = public, anyone may present it" />
-      <Field state={state} name="max_uses" label="Maximum uses" type="number" hint="empty = unlimited, 1 = single use" />
+      <Field state={state} name="customer_id" label="Bound to customer" help={TERM.couponBound} hint="empty = public" />
+      <Field state={state} name="max_uses" label="Maximum uses" type="number" help={TERM.couponMaxUses} hint="empty = unlimited, 1 = single use" />
       {!isNew && (
         <label class="block">
           <span class="label">Uses so far</span>
           <input type="text" name="uses" value={current?.ok ? String(current.data.uses) : ""} readonly class="input mono" />
-          <span class="hint">Counted by the service from redemptions; not editable.</span>
+          <span class="hint">{TERM.couponUses} Not editable.</span>
         </label>
       )}
     </section>

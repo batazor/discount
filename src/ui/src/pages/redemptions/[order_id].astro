@@ -7,6 +7,7 @@ import ResultPanel from "../../components/ResultPanel.astro";
 import { api, call, unreachableUrl } from "../../api/client";
 import { formState } from "../../actions/run";
 import { formatTimestamp } from "../../model/time";
+import { REDEMPTION_STATUS_HELP } from "../../model/glossary";
 
 const orderId = Astro.params.order_id!;
 const confirmed = Astro.getActionResult(actions.confirmRedemption);
@@ -16,17 +17,17 @@ const current = await call(() => api.GET("/v1/redemptions/{order_id}", { params:
 const badge: Record<string, string> = { reserved: "badge-info", confirmed: "badge-ok", cancelled: "badge-muted" };
 ---
 <Layout title={orderId} crumbs={[["Redemptions", "/redemptions"], [orderId]]} unreachable={unreachableUrl(current)}>
-  <Fragment slot="badge">{current.ok && <span class={`badge ${badge[current.data.status]}`}>{current.data.status}</span>}</Fragment>
+  <Fragment slot="badge">{current.ok && <span class={`badge ${badge[current.data.status]}`} data-tip={REDEMPTION_STATUS_HELP[current.data.status]}>{current.data.status}</span>}</Fragment>
   <Fragment slot="actions">
     {current.ok && (
       <>
         <form method="post" action={actions.confirmRedemption}>
           <input type="hidden" name="id" value={orderId} />
-          <button type="submit" class="btn btn-success" title="reserved → confirmed">Confirm</button>
+          <button type="submit" class="btn btn-success" data-tip="reserved → confirmed: the order went through, budgets stay consumed">Confirm</button>
         </form>
         <form method="post" action={actions.cancelRedemption} onsubmit={`return confirm('Cancel ${orderId}? Budgets are restored.')`}>
           <input type="hidden" name="id" value={orderId} />
-          <button type="submit" class="btn btn-danger" title="reserved or confirmed → cancelled, budgets restored">Cancel</button>
+          <button type="submit" class="btn btn-danger" data-tip="reserved or confirmed → cancelled: budgets and use counts are restored">Cancel</button>
         </form>
       </>
     )}

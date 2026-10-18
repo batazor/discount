@@ -6,6 +6,8 @@ import FormStatus from "../../components/FormStatus.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { fmtMoney } from "../../model/evaluate";
+import { TERM } from "../../model/glossary";
+import Help from "../../components/Help.astro";
 
 const deleted = Astro.getActionResult(actions.deletePromotion);
 const source = Astro.url.searchParams.get("source")?.trim() || "";
@@ -34,7 +36,7 @@ const actionText = (p: { action: { type: string; bps?: number; amount?: { amount
   <div class="table-card">
     <table class="table">
       <thead>
-        <tr><th>Promotion</th><th>Group</th><th class="num">Priority</th><th>Action</th><th>Rules</th><th class="num">Uses</th><th class="num">Remaining budget</th><th></th></tr>
+        <tr><th>Promotion</th><th>Group</th><th class="num">Priority <Help text={TERM.promotionPriority} /></th><th>Action</th><th>Rules</th><th class="num">Uses <Help text={TERM.usesTotal} /></th><th class="num">Remaining budget <Help text={TERM.remainingBudget} /></th><th></th></tr>
       </thead>
       <tbody>
         {rows.map((p) => (
@@ -42,7 +44,7 @@ const actionText = (p: { action: { type: string; bps?: number; amount?: { amount
             <td>
               <div class="flex items-center gap-2">
                 <a href={`/promotions/${encodeURIComponent(p.promotion_id)}`} class="link mono">{p.promotion_id}</a>
-                {p.exclusive && <span class="badge badge-warn">exclusive</span>}
+                {p.exclusive && <span class="badge badge-warn" data-tip={TERM.exclusive}>exclusive</span>}
                 {titles.get(p.promotion_id)?.source && <span class="badge badge-info">{titles.get(p.promotion_id)!.source}</span>}
               </div>
               {titles.get(p.promotion_id) && <div class="text-[12.5px]" style="color: var(--color-ink-2)">{titles.get(p.promotion_id)!.title}</div>}

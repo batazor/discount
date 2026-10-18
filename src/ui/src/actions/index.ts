@@ -13,6 +13,7 @@ import {
 } from "../model/catalogue";
 import { evaluateRequestFromForm, parseJson } from "../model/evaluate";
 import { Form, type Fields, type Parsed } from "../model/fields";
+import { allowlistFromForm } from "../model/allowlist";
 import { metadataFromForm } from "../model/metadata";
 import { promotionFromForm } from "../model/promotion";
 import { run, runPlain } from "./run";
@@ -79,6 +80,19 @@ export const server = {
     ...form,
     handler: (fd: FormData) =>
       runPlain(fd, (f) => api.DELETE("/v1/promotions/{promotion_id}/metadata", { params: { path: { promotion_id: f.id ?? "" } } })),
+  }),
+
+  putAllowlist: defineAction({
+    ...form,
+    handler: (fd: FormData) =>
+      run(fd, allowlistFromForm, (body) =>
+        api.PUT("/v1/promotions/{promotion_id}/allowlist", { params: { path: { promotion_id: fd.get("promotion_id")?.toString() ?? "" } }, body }),
+      ),
+  }),
+  clearAllowlist: defineAction({
+    ...form,
+    handler: (fd: FormData) =>
+      runPlain(fd, (f) => api.DELETE("/v1/promotions/{promotion_id}/allowlist", { params: { path: { promotion_id: f.id ?? "" } } })),
   }),
 
   putCoupon: defineAction({

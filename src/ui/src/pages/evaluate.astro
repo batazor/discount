@@ -7,6 +7,7 @@ import ResultPanel from "../components/ResultPanel.astro";
 import { formState } from "../actions/run";
 import { evaluateRequestToFields, SAMPLE_REQUEST } from "../model/evaluate";
 import { Form } from "../model/fields";
+import { TERM } from "../model/glossary";
 
 const result = Astro.getActionResult(actions.evaluate);
 // The playground keeps what was posted even after a success, to tweak and re-run.
@@ -18,6 +19,7 @@ const empty = formState(undefined, {});
 const lines = f.rows("lines").map(String);
 const attrs = f.rows("attributes").map(String);
 const uses = f.rows("uses").map(String);
+const cattrs = f.rows("customer_attributes").map(String);
 ---
 <Layout title="Evaluate" description="Price a cart and see why each promotion applied or did not. Nothing is stored." unreachable={result?.data?.kind === "unreachable" ? result.data.url : null}>
   <div class="grid gap-6 xl:grid-cols-2">
@@ -26,8 +28,8 @@ const uses = f.rows("uses").map(String);
         <h2 class="card-title">Cart</h2>
         <div class="grid grid-cols-3 gap-3">
           <Field state={state} name="cart.currency" label="Currency" required />
-          <Field state={state} name="cart.tags" label="Tags" hint="comma-separated" />
-          <Field state={state} name="cart.coupon_codes" label="Coupon codes" hint="comma-separated" />
+          <Field state={state} name="cart.tags" label="Tags" help={TERM.cartTags} hint="comma-separated" />
+          <Field state={state} name="cart.coupon_codes" label="Coupon codes" help={TERM.couponCodes} hint="comma-separated" />
         </div>
         <div data-row-list>
           <p class="label">Lines</p>
@@ -54,7 +56,7 @@ const uses = f.rows("uses").map(String);
           <button type="button" data-add-row hidden class="row-add">Add line</button>
         </div>
         <div data-row-list>
-          <p class="label">Attributes</p>
+          <p class="label">Attributes <span class="help" data-tip={TERM.cartAttributes} tabindex="0">?</span></p>
           <div data-rows class="space-y-2">
             {attrs.map((i) => (
               <div data-row={i} class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
@@ -79,11 +81,11 @@ const uses = f.rows("uses").map(String);
       <section class="card space-y-4">
         <h2 class="card-title">Customer</h2>
         <div class="grid grid-cols-2 gap-3">
-          <Field state={state} name="customer.customer_id" label="Customer id" hint="empty = anonymous; the service adds this customer's stored uses" />
-          <Field state={state} name="customer.completed_orders" label="Completed orders" type="number" required />
+          <Field state={state} name="customer.customer_id" label="Customer id" hint="empty = anonymous; the service adds this customer's stored uses and allowlists" />
+          <Field state={state} name="customer.completed_orders" label="Completed orders" type="number" required help={TERM.completedOrders} />
         </div>
         <div data-row-list>
-          <p class="label">Extra uses supplied by the caller</p>
+          <p class="label">Extra uses <span class="help" data-tip={TERM.customerUses} tabindex="0">?</span></p>
           <div data-rows class="space-y-2">
             {uses.map((i) => (
               <div data-row={i} class="grid grid-cols-[1fr_6rem_auto] items-end gap-2">
@@ -103,6 +105,28 @@ const uses = f.rows("uses").map(String);
           </template>
           <button type="button" data-add-row hidden class="row-add">Add use</button>
         </div>
+        <div data-row-list>
+          <p class="label">Customer attributes <span class="help" data-tip={TERM.customerAttributes} tabindex="0">?</span></p>
+          <div data-rows class="space-y-2">
+            {cattrs.map((i) => (
+              <div data-row={i} class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+                <Field state={state} name={`customer_attributes.${i}.key`} label="Key" />
+                <Field state={state} name={`customer_attributes.${i}.value`} label="Value" />
+                <button type="button" data-remove-row hidden class="row-remove">×</button>
+              </div>
+            ))}
+            {cattrs.length === 0 && <p class="hint">None.</p>}
+          </div>
+          <template data-row-template>
+            <div data-row="__i__" class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+              <Field state={empty} name="customer_attributes.__i__.key" label="Key" />
+              <Field state={empty} name="customer_attributes.__i__.value" label="Value" />
+              <button type="button" data-remove-row hidden class="row-remove">×</button>
+            </div>
+          </template>
+          <button type="button" data-add-row hidden class="row-add">Add attribute</button>
+        </div>
+        <Field state={state} name="customer.allowlisted" label="Allowlisted promotions" help={TERM.allowlisted} hint="comma-separated promotion ids; the stored allowlists are added by the service" />
       </section>
 
       <details class="card" open={!!state.fields.json}>

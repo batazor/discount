@@ -91,6 +91,9 @@ const everyRule: Rule[] = [
   { type: "MaxUsesPerCustomer", max: 2 },
   { type: "MaxUsesTotal", max: 100 },
   { type: "RequiresCoupon" },
+  { type: "CustomerAttributeIn", key: "tier", values: ["gold"] },
+  { type: "CustomerAttributeRange", key: "completed_app_orders", min: null, max: 0 },
+  { type: "RequiresAllowlist" },
 ];
 
 describe("round trips", () => {

@@ -8,6 +8,7 @@ import DeleteButton from "../../components/DeleteButton.astro";
 import { api, call, unreachableUrl, dataOr } from "../../api/client";
 import { formState } from "../../actions/run";
 import { GRANT_TRIGGERS, grantRuleToFields } from "../../model/catalogue";
+import { GRANT_TRIGGER_HELP, TERM } from "../../model/glossary";
 
 const id = Astro.params.id!;
 const isNew = id === "new";
@@ -27,11 +28,11 @@ const promotionIds = dataOr(promotions, []).map((p) => p.promotion_id);
   <form method="post" action={actions.putGrantRule} class="max-w-3xl space-y-5">
     <section class="card grid grid-cols-2 gap-4">
       <Field state={state} name="rule_id" label="Rule id" required readonly={!isNew} />
-      <Field state={state} name="trigger" label="Event" options={GRANT_TRIGGERS} required />
+      <Field state={state} name="trigger" label="Event" options={GRANT_TRIGGERS} required optionHelp={GRANT_TRIGGER_HELP} />
       <Field state={state} name="promotion_id" label="Promotion to grant" options={promotionIds} empty="— choose —" required />
-      <Field state={state} name="priority" label="Priority" type="number" required hint="higher wins among rules for the same event" />
-      <Field state={state} name="validity_seconds" label="Valid for, seconds" type="number" required hint="2592000 = 30 days" />
-      <Field state={state} name="max_uses" label="Uses per issued code" type="number" hint="empty = unlimited" />
+      <Field state={state} name="priority" label="Priority" type="number" required help={TERM.grantPriority} hint="higher wins" />
+      <Field state={state} name="validity_seconds" label="Valid for, seconds" type="number" required help={TERM.grantValidity} hint="2592000 = 30 days" />
+      <Field state={state} name="max_uses" label="Uses per issued code" type="number" help={TERM.grantMaxUses} hint="empty = unlimited" />
     </section>
     <FormStatus state={state} />
     <div class="form-actions">

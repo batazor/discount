@@ -8,6 +8,8 @@ import { api, call, unreachableUrl } from "../api/client";
 import { formState } from "../actions/run";
 import { policyToFields, STACKING_POLICIES } from "../model/catalogue";
 import { ROUNDING_POLICIES } from "../model/promotion";
+import { ROUNDING_HELP, STACKING_HELP, TERM } from "../model/glossary";
+import Help from "../components/Help.astro";
 
 const result = Astro.getActionResult(actions.putPolicy);
 const current = await call(() => api.GET("/v1/policy"));
@@ -16,11 +18,11 @@ const state = formState(result?.data, current.ok ? policyToFields(current.data) 
 <Layout title="Pricing policy" description="How every cart is priced: rounding, how promotions stack, and the most an order may be discounted." unreachable={unreachableUrl(current)}>
   <form method="post" action={actions.putPolicy} class="max-w-xl space-y-5">
     <section class="card space-y-4">
-      <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} required hint="how a percentage discount is rounded to minor units" />
-      <Field state={state} name="stacking" label="Stacking" options={STACKING_POLICIES} required hint="Sequential: each promotion sees the already discounted subtotal. Additive: all see the original." />
+      <Field state={state} name="rounding" label="Rounding" options={ROUNDING_POLICIES} required optionHelp={ROUNDING_HELP} hint="how a fraction of a minor unit is resolved; a promotion may override it" />
+      <Field state={state} name="stacking" label="Stacking" options={STACKING_POLICIES} required optionHelp={STACKING_HELP} />
     </section>
     <section class="card space-y-4">
-      <h2 class="card-title">Order cap <span class="hint inline font-normal">both empty = unconstrained</span></h2>
+      <h2 class="card-title">Order cap <Help text={TERM.orderCap} /></h2>
       <MoneyField state={state} name="order_cap.amount" label="At most this amount" />
       <Field state={state} name="order_cap.bps" label="At most this share, in basis points" type="number" hint="5000 = 50 % of the subtotal" />
     </section>

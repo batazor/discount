@@ -166,6 +166,13 @@
   .sidebar { @apply sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r px-3 py-4 md:flex; border-color: var(--color-line); background: var(--color-surface); }
   .topbar { @apply flex items-center gap-1 overflow-x-auto border-b px-3 py-2 md:hidden; border-color: var(--color-line); background: var(--color-surface); }
   .topbar .nav-link { @apply shrink-0 whitespace-nowrap; }
+  /* Tooltips: any element with data-tip; the help glyph is one of them */
+  [data-tip] { position: relative; }
+  [data-tip]::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); width: max-content; max-width: 18rem; white-space: normal; background: var(--color-ink); color: var(--color-bg); @apply rounded-lg px-2.5 py-2 text-[12px] font-normal leading-[1.4] normal-case tracking-normal; font-family: var(--font-sans); opacity: 0; pointer-events: none; transition: opacity 0.12s; z-index: 30; }
+  [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; }
+  .help { @apply ml-1 inline-flex size-[15px] cursor-help items-center justify-center rounded-full border text-[10px] font-semibold align-[1px]; color: var(--color-ink-3); border-color: var(--color-line-strong); }
+  .help:hover { color: var(--color-accent-ink); border-color: var(--color-accent); }
+  .badge[data-tip] { cursor: help; }
   .dl { @apply grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1.5 text-[13px]; }
   .dl dt { color: var(--color-ink-2); }
   .dl dd { font-family: var(--font-mono); }

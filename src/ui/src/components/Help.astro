@@ -1,0 +1,6 @@
+---
+// A small "?" with a tooltip; keyboard reachable. The text is the attribute, so no script.
+interface Props { text: string }
+const { text } = Astro.props;
+---
+<span class="help" tabindex="0" role="note" aria-label={text} data-tip={text}>?</span>
