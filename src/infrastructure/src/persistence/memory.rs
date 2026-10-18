@@ -1162,10 +1162,7 @@ mod tests {
     /// promotion that exists; the sample cart prices without a validation error.
     #[tokio::test]
     async fn demo_catalogue_loads_and_is_consistent() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../ops/demo/catalogue.json"
-        );
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/demo/catalogue.json");
         let fixture = CatalogFixture::from_json_file(path).expect("demo catalogue loads");
         assert!(
             fixture.as_of.is_some(),

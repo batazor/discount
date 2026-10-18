@@ -1562,7 +1562,14 @@ async fn paused_records_leave_the_snapshot() {
         let mut p2 = fixed_300("P2");
         p2.rules = vec![Rule::RequiresCoupon];
         p.catalog.put_promotion(p2).await.unwrap();
-        p.catalog.put_coupon(coupon("WELCOME", None)).await.unwrap();
+        // The code turns P2 on (its RequiresCoupon rule); P1 applies to every cart.
+        p.catalog
+            .put_coupon(Coupon {
+                promotion_id: "P2".into(),
+                ..coupon("WELCOME", None)
+            })
+            .await
+            .unwrap();
         assert_eq!(
             p.catalog.get_promotion_state("P1").await.unwrap(),
             Some(CatalogState::Active)
