@@ -44,6 +44,12 @@ inductive Rule where
   | MaxUsesTotal (max : Int)
   /-- A presented, valid coupon of this promotion exists. -/
   | RequiresCoupon
+  /-- Some customer attribute `key` has a value in `values`. -/
+  | CustomerAttributeIn (key : String) (values : List String)
+  /-- Customer attribute `key` parses as an integer `t` with `min ≤ t ≤ max` for the present bounds. -/
+  | CustomerAttributeRange (key : String) (min : Option Int) (max : Option Int)
+  /-- This promotion's id is in `customer.allowlisted`. -/
+  | RequiresAllowlist
   deriving Repr, DecidableEq, Inhabited
 
 inductive Action where

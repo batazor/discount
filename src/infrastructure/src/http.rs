@@ -80,6 +80,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/promotions", get(list_promotions))
         .route("/v1/promotion-metadata", get(list_promotion_metadata))
         .route(
+            "/v1/promotions/{promotion_id}/allowlist",
+            get(get_allowlist)
+                .put(put_allowlist)
+                .delete(delete_allowlist),
+        )
+        .route(
+            "/v1/promotions/{promotion_id}/allowlist/customers/{customer_id}",
+            get(is_allowlisted)
+                .put(add_to_allowlist)
+                .delete(remove_from_allowlist),
+        )
+        .route(
             "/v1/promotions/{promotion_id}/metadata",
             get(get_promotion_metadata)
                 .put(put_promotion_metadata)
@@ -350,6 +362,7 @@ async fn redeem(
     let span = evaluate_span(&currency, request.cart.lines.len());
     let started = std::time::Instant::now();
     let use_case = Redeem {
+        catalog: &*state.catalog,
         redemptions: &*state.redemptions,
         clock: &*state.clock,
         events: &*state.events,
@@ -568,6 +581,111 @@ async fn delete_promotion_metadata(
     Path(promotion_id): Path<String>,
 ) -> Response {
     match state.catalog.delete_metadata(&promotion_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+// ---------------------------------------------------------------- allowlists
+
+/// `{customer_ids}` (spec `promotion-catalog`, "Allowlists").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AllowlistBody {
+    pub customer_ids: Vec<String>,
+}
+
+pub const MAX_ALLOWLIST: usize = 100_000;
+
+async fn get_allowlist(
+    State(state): State<Arc<AppState>>,
+    Path(promotion_id): Path<String>,
+) -> Response {
+    match state.catalog.get_allowlist(&promotion_id).await {
+        Ok(Some(customer_ids)) => ok_json(&AllowlistBody { customer_ids }),
+        Ok(None) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn put_allowlist(
+    State(state): State<Arc<AppState>>,
+    Path(promotion_id): Path<String>,
+    StrictJson(body): StrictJson<AllowlistBody>,
+) -> Response {
+    if body.customer_ids.len() > MAX_ALLOWLIST {
+        return decode_error(format!(
+            "customer_ids must hold at most {MAX_ALLOWLIST} ids"
+        ));
+    }
+    if body.customer_ids.iter().any(|c| c.is_empty()) {
+        return decode_error("customer_ids must not contain an empty id".into());
+    }
+    let mut ids = body.customer_ids;
+    ids.sort();
+    ids.dedup();
+    match state
+        .catalog
+        .put_allowlist(&promotion_id, ids.clone())
+        .await
+    {
+        Ok(true) => ok_json(&AllowlistBody { customer_ids: ids }),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn delete_allowlist(
+    State(state): State<Arc<AppState>>,
+    Path(promotion_id): Path<String>,
+) -> Response {
+    match state.catalog.delete_allowlist(&promotion_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn is_allowlisted(
+    State(state): State<Arc<AppState>>,
+    Path((promotion_id, customer_id)): Path<(String, String)>,
+) -> Response {
+    match state
+        .catalog
+        .is_allowlisted(&promotion_id, &customer_id)
+        .await
+    {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn add_to_allowlist(
+    State(state): State<Arc<AppState>>,
+    Path((promotion_id, customer_id)): Path<(String, String)>,
+) -> Response {
+    match state
+        .catalog
+        .add_to_allowlist(&promotion_id, &customer_id)
+        .await
+    {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(e) => storage_error(&e),
+    }
+}
+
+async fn remove_from_allowlist(
+    State(state): State<Arc<AppState>>,
+    Path((promotion_id, customer_id)): Path<(String, String)>,
+) -> Response {
+    match state
+        .catalog
+        .remove_from_allowlist(&promotion_id, &customer_id)
+        .await
+    {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found(),
         Err(e) => storage_error(&e),

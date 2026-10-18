@@ -17,7 +17,9 @@ def cart : CartSnapshot :=
     coupon_codes := ["WELCOME"] }
 
 def customer : CustomerContext :=
-  { customer_id := some "c1", completed_orders := 1, uses := [{ promotion_id := "P1", count := 2 }] }
+  { customer_id := some "c1", completed_orders := 1, uses := [{ promotion_id := "P1", count := 2 }],
+    attributes := [{ key := "tier", value := "gold" }, { key := "completed_app_orders", value := "0" }],
+    allowlisted := ["P1"] }
 
 def promo (rules : List Rule) : Promotion :=
   { promotion_id := "P1", group_id := "g", priority := 0, exclusive := false, cap := none,
@@ -70,6 +72,17 @@ def holds (r : Rule) : Bool := ruleHolds r (promo [r]) input
                                      customer_id := none, max_uses := some 1, uses := 1 }] }) = false
 #guard holds (.MaxUsesTotal 100) = false
 #guard holds (.MaxUsesTotal 101) = true
+-- Customer attributes and allowlists (OpenSpec `customer-attributes`)
+#guard holds (.CustomerAttributeIn "tier" ["gold", "platinum"]) = true
+#guard holds (.CustomerAttributeIn "tier" ["silver"]) = false
+#guard holds (.CustomerAttributeIn "segment" ["gold"]) = false
+#guard holds (.CustomerAttributeRange "completed_app_orders" none (some 0)) = true
+#guard holds (.CustomerAttributeRange "completed_app_orders" (some 1) none) = false
+#guard holds (.CustomerAttributeRange "completed_app_orders" (some 0) (some 0)) = true
+#guard holds (.CustomerAttributeRange "tier" none none) = false
+#guard holds (.CustomerAttributeRange "missing" none none) = false
+#guard holds .RequiresAllowlist = true
+#guard (ruleHolds .RequiresAllowlist (promo []) { input with customer := { customer with allowlisted := [] } }) = false
 -- parseDecimal
 #guard parseDecimal "150" = some 150
 #guard parseDecimal "-7" = some (-7)

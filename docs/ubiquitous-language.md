@@ -126,9 +126,14 @@ JSON: `{"currency": "EUR", "lines": [...], "tags": ["#ios"], "attributes": [...]
 What eligibility rules may know about the customer (ADR 7). Fields:
 `customer_id : Option String`, `completed_orders : Int` (`≥ 0`; `0` means first order),
 `uses : List PromotionUse` where `PromotionUse = { promotion_id, count }` (`count ≥ 0`,
-each promotion at most once): how many times this customer already used each promotion.
-The application layer fills `uses` from reserved and confirmed redemptions.
-JSON: `{"customer_id": "c1", "completed_orders": 0, "uses": [{"promotion_id": "P1", "count": 1}]}`.
+each promotion at most once): how many times this customer already used each promotion;
+`attributes : List Attribute`, caller-supplied facts about the customer
+(`tier = "gold"`, `completed_app_orders = "0"`), read by `CustomerAttributeIn` and
+`CustomerAttributeRange`; `allowlisted : List PromotionId` (each id at most once), the
+promotions whose allowlist names this customer, read by `RequiresAllowlist`. The application
+layer fills `uses` from reserved and confirmed redemptions and adds to `allowlisted` the
+promotions whose stored allowlist contains `customer_id`.
+JSON: `{"customer_id": "c1", "completed_orders": 0, "uses": [{"promotion_id": "P1", "count": 1}], "attributes": [{"key": "tier", "value": "gold"}], "allowlisted": ["P1"]}`.
 
 ## Stacking groups
 
@@ -170,13 +175,23 @@ A predicate over `(cart, customer, coupons, now)` and the promotion being evalua
 - `RequiresCoupon`: some coupon in `coupons` has this `promotion_id`, its `code` is in
   `cart.coupon_codes`, its window contains `now`, its `customer_id` is absent or equals
   `customer.customer_id`, and it has remaining uses (`max_uses` absent or `uses < max_uses`).
+- `CustomerAttributeIn { key, values : List String }`: some `customer.attributes` entry has
+  `key` and a value in `values`.
+- `CustomerAttributeRange { key, min?, max? : Option Int }`: the customer attribute `key`
+  exists, its value parses as a decimal integer `t`, and `min ≤ t`, `t ≤ max` for the
+  present bounds (closed range, unlike `AttributeDateWindow`). A missing or non-integer
+  value fails the rule.
+- `RequiresAllowlist`: this promotion's `promotion_id` is in `customer.allowlisted`.
 JSON: `{"type": "DateWindow", "starts_at": 1760227200, "ends_at": null}`,
 `{"type": "OrderTotalRange", "min": {"amount": 5000, "currency": "EUR"}, "max": null}`,
 `{"type": "TagsMatch", "all": [], "any": ["#ios", "#android"], "none": ["#partner"]}`,
 `{"type": "AttributeIn", "key": "hotel_kind", "values": ["resort"]}`,
 `{"type": "AttributeDateWindow", "key": "checkin", "starts_at": 100, "ends_at": 200}`,
 `{"type": "MaxCompletedOrders", "max": 0}`, `{"type": "MaxUsesPerCustomer", "max": 1}`,
-`{"type": "MaxUsesTotal", "max": 100}`, `{"type": "RequiresCoupon"}`.
+`{"type": "MaxUsesTotal", "max": 100}`, `{"type": "RequiresCoupon"}`,
+`{"type": "CustomerAttributeIn", "key": "tier", "values": ["gold"]}`,
+`{"type": "CustomerAttributeRange", "key": "completed_app_orders", "min": null, "max": 0}`,
+`{"type": "RequiresAllowlist"}`.
 
 ### Eligibility
 A promotion is **eligible** for an input when every one of its rules holds (`eligible`).
@@ -306,7 +321,8 @@ converted amount.
 6. `customer`: `InvalidCustomerContext { field: "customer.completed_orders" }` if negative;
    for each `uses[k]`: negative `count` → `InvalidCustomerContext { field: "customer.uses[<k>].count" }`;
    then a `promotion_id` seen twice → `InvalidCustomerContext { field: "customer.uses[<k>]" }`
-   with `<k>` the second occurrence.
+   with `<k>` the second occurrence; then a `promotion_id` seen twice in `allowlisted` →
+   `InvalidCustomerContext { field: "customer.allowlisted[<k>]" }`.
 7. For each `exchange_rates[k]` in order: `InvalidCurrency` on `.from`, on `.to`;
    `InvalidExchangeRate { field }` for `.numerator`, `.denominator` outside `1 ..= MAX_RATE_PART`;
    then `DuplicateExchangeRate { from, to }` for the first pair seen twice.
@@ -390,6 +406,10 @@ input line, one envelope per output line, `{"ok": <PricingResult>}` or
   and how it is reported, stored next to it in the catalogue and never read by pricing
   (OpenSpec change `promotion-metadata`). `source` partitions listings (hotels, cars, …);
   `labels` is a small string map of reporting dimensions.
+- `Allowlist`: the set of customer ids a promotion is open to, stored next to it in the
+  catalogue (OpenSpec change `customer-attributes`). Pricing never reads the set: `Evaluate`
+  and `Redeem` put the ids of the promotions whose allowlist contains `customer.customer_id`
+  into `customer.allowlisted`, where `RequiresAllowlist` reads them.
 - `CustomerCoupon { coupon, status, order_id?, promotion? }`: read model returned by
   `ListCustomerCoupons`; `promotion` is `{ promotion_id, action, metadata? }` of the coupon's
   promotion.

@@ -6,6 +6,7 @@
 
 use discount_domain::*;
 use proptest::prelude::*;
+use proptest::strategy::BoxedStrategy;
 
 pub const NOW: Timestamp = 1_000;
 
@@ -178,7 +179,7 @@ pub fn cart(cur: Currency) -> impl Strategy<Value = CartSnapshot> {
     })
 }
 
-pub fn customer(n_promotions: usize) -> impl Strategy<Value = CustomerContext> {
+pub fn customer(n_promotions: usize) -> BoxedStrategy<CustomerContext> {
     let uses = prop::collection::vec((0..n_promotions.max(1), 0..=3i64), 0..=2).prop_map(|v| {
         let mut out: Vec<PromotionUse> = Vec::new();
         for (k, count) in v {
@@ -196,12 +197,39 @@ pub fn customer(n_promotions: usize) -> impl Strategy<Value = CustomerContext> {
         prop::option::weighted(0.7, prop::sample::select(vec!["c1", "c2"])),
         0..=3i64,
         uses,
+        prop::option::weighted(0.6, prop::sample::select(vec!["gold", "silver", "x"])),
+        prop::option::weighted(0.6, prop::sample::select(vec!["0", "1", "2", "many"])),
+        prop::collection::vec(prop::sample::select(vec!["P0", "P1", "P2"]), 0..=2),
     )
-        .prop_map(|(cid, completed_orders, uses)| CustomerContext {
-            customer_id: cid.map(|c| c.to_string()),
-            completed_orders,
-            uses,
+        .prop_map(|(cid, completed_orders, uses, tier, app, listed)| {
+            let mut attributes = Vec::new();
+            if let Some(t) = tier {
+                attributes.push(Attribute {
+                    key: "tier".into(),
+                    value: t.into(),
+                });
+            }
+            if let Some(a) = app {
+                attributes.push(Attribute {
+                    key: "completed_app_orders".into(),
+                    value: a.into(),
+                });
+            }
+            let mut allowlisted: Vec<String> = Vec::new();
+            for pid in listed {
+                if !allowlisted.iter().any(|p| p == pid) {
+                    allowlisted.push(pid.into());
+                }
+            }
+            CustomerContext {
+                customer_id: cid.map(|c| c.to_string()),
+                completed_orders,
+                uses,
+                attributes,
+                allowlisted,
+            }
         })
+        .boxed()
 }
 
 /// Coupon snapshots with distinct codes, pointing at generated promotion ids.
@@ -298,6 +326,11 @@ pub fn rule(cur: Currency) -> impl Strategy<Value = Rule> {
         1 => (0..=3i64).prop_map(|max| Rule::MaxUsesPerCustomer { max }),
         1 => (0..=3i64).prop_map(|max| Rule::MaxUsesTotal { max }),
         2 => Just(Rule::RequiresCoupon),
+        1 => prop::collection::vec(prop::sample::select(vec!["gold", "silver"]), 0..=2)
+            .prop_map(|vs| Rule::CustomerAttributeIn { key: "tier".into(), values: vs.into_iter().map(str::to_string).collect() }),
+        1 => (prop::option::of(0..=2i64), prop::option::of(0..=2i64))
+            .prop_map(|(min, max)| Rule::CustomerAttributeRange { key: "completed_app_orders".into(), min, max }),
+        1 => Just(Rule::RequiresAllowlist),
     ]
 }
 
@@ -388,7 +421,7 @@ pub fn valid_input() -> impl Strategy<Value = PricingInput> {
 
 /// The violations `validate` must report, one per case. Some are no-ops on inputs without
 /// the relevant element; those cases simply stay valid.
-pub const MUTATIONS: usize = 25;
+pub const MUTATIONS: usize = 26;
 
 pub fn mutate(i: &mut PricingInput, which: usize) {
     let cur = i.cart.currency.clone();
@@ -532,10 +565,38 @@ pub fn mutate(i: &mut PricingInput, which: usize) {
             i.coupons.push(c.clone());
             i.coupons.push(c);
         }
-        _ => {
+        21 => {
             if let Some(p) = i.promotions.first_mut() {
                 p.rules.push(Rule::MaxUsesPerCustomer { max: -1 });
             }
+        }
+        22 => {
+            if let Some(c) = i.coupons.first_mut() {
+                c.uses = -1;
+            } else {
+                i.coupons.push(Coupon {
+                    code: "NEG".into(),
+                    promotion_id: "P0".into(),
+                    starts_at: None,
+                    ends_at: None,
+                    customer_id: None,
+                    max_uses: Some(-1),
+                    uses: 0,
+                });
+            }
+        }
+        23 => {
+            if let Some(p) = i.promotions.first_mut() {
+                p.uses_total = -1;
+            }
+        }
+        24 => {
+            if let Some(p) = i.promotions.first_mut() {
+                p.rules.push(Rule::MaxUsesTotal { max: -1 });
+            }
+        }
+        _ => {
+            i.customer.allowlisted = vec!["P0".into(), "P1".into(), "P0".into()];
         }
     }
 }

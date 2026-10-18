@@ -43,7 +43,7 @@ fn cart() -> serde_json::Value {
 }
 
 fn customer() -> serde_json::Value {
-    json!({"customer_id": "c1", "completed_orders": 0, "uses": []})
+    json!({"customer_id": "c1", "completed_orders": 0, "uses": [], "attributes": [], "allowlisted": []})
 }
 
 #[tokio::test]
@@ -329,6 +329,53 @@ async fn generated_client_drives_the_documented_flows() {
         Err(discount_client::Error::ErrorResponse(e)) => assert_eq!(e.status(), 404),
         other => panic!("expected 404, got {other:?}"),
     }
+
+    // allowlists: replace, read back sorted, add one, membership, remove
+    let al: types::Allowlist = from_json(json!({"customer_ids": ["c2", "c1"]}));
+    let stored = client
+        .put_allowlist("P1", &al)
+        .await
+        .expect("put allowlist")
+        .into_inner();
+    assert_eq!(
+        stored
+            .customer_ids
+            .iter()
+            .map(|c| c.as_str())
+            .collect::<Vec<_>>(),
+        vec!["c1", "c2"]
+    );
+    assert_eq!(
+        client
+            .add_to_allowlist("P1", "c3")
+            .await
+            .expect("add")
+            .status(),
+        204
+    );
+    let got = client
+        .get_allowlist("P1")
+        .await
+        .expect("get allowlist")
+        .into_inner();
+    assert_eq!(got.customer_ids.len(), 3);
+    assert_eq!(
+        client
+            .is_allowlisted("P1", "c3")
+            .await
+            .expect("member")
+            .status(),
+        204
+    );
+    client
+        .remove_from_allowlist("P1", "c3")
+        .await
+        .expect("remove");
+    match client.is_allowlisted("P1", "c3").await {
+        Err(discount_client::Error::ErrorResponse(e)) => assert_eq!(e.status(), 404),
+        other => panic!("expected 404, got {other:?}"),
+    }
+    client.delete_allowlist("P1").await.expect("clear");
 
     // the service serves the very document the client was generated from
     let doc = client.openapi_document().await.expect("openapi document");

@@ -17,7 +17,8 @@ pub use customer_coupons::{
     SaveCustomerCoupon, coupon_status,
 };
 pub use evaluate::{
-    CancelRedemption, ConfirmRedemption, Evaluate, EvaluateError, Redeem, pricing_input,
+    CancelRedemption, ConfirmRedemption, Evaluate, EvaluateError, Redeem, merge_allowlisted,
+    pricing_input,
 };
 pub use ports::{
     CatalogSnapshot, Clock, Event, EventPublisher, PricingFn, PromotionCatalog, Redemption,

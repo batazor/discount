@@ -220,6 +220,56 @@ paths:
       parameters: [ { $ref: '#/components/parameters/Source' } ]
       responses:
         '200': { description: Entries, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MetadataEntry' } } } } }
+  /v1/promotions/{promotion_id}/allowlist:
+    parameters: [ { $ref: '#/components/parameters/PromotionId' } ]
+    get:
+      operationId: getAllowlist
+      tags: [catalogue]
+      summary: The customers the promotion is open to (sorted)
+      responses:
+        '200': { description: Allowlist, content: { application/json: { schema: { $ref: '#/components/schemas/Allowlist' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: putAllowlist
+      tags: [catalogue]
+      summary: Replace the whole allowlist (at most 100000 ids; pricing never reads it, see RequiresAllowlist)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Allowlist' } } } }
+      responses:
+        '200': { description: 'Stored allowlist, sorted and deduplicated', content: { application/json: { schema: { $ref: '#/components/schemas/Allowlist' } } } }
+        '400': { $ref: '#/components/responses/DecodeError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteAllowlist
+      tags: [catalogue]
+      summary: Clear the allowlist
+      responses:
+        '204': { description: Cleared }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/promotions/{promotion_id}/allowlist/customers/{customer_id}:
+    parameters:
+      - { $ref: '#/components/parameters/PromotionId' }
+      - { name: customer_id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: isAllowlisted
+      tags: [catalogue]
+      summary: Membership check
+      responses:
+        '204': { description: The customer is listed }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: addToAllowlist
+      tags: [catalogue]
+      summary: Add one customer (idempotent)
+      responses:
+        '204': { description: Listed }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: removeFromAllowlist
+      tags: [catalogue]
+      summary: Remove one customer
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/coupons:
     get:
       operationId: listCoupons
@@ -489,12 +539,14 @@ components:
       properties: { promotion_id: { type: string }, count: { type: integer, format: int64, minimum: 0 } }
     CustomerContext:
       type: object
-      required: [customer_id, completed_orders, uses]
+      required: [customer_id, completed_orders, uses, attributes, allowlisted]
       additionalProperties: false
       properties:
         customer_id: { type: string, nullable: true }
         completed_orders: { type: integer, format: int64, minimum: 0 }
         uses: { type: array, items: { $ref: '#/components/schemas/PromotionUse' }, description: The service adds the customer's reserved and confirmed redemptions to these counts }
+        attributes: { type: array, items: { $ref: '#/components/schemas/Attribute' }, description: 'Caller-supplied facts about the customer, read by CustomerAttributeIn and CustomerAttributeRange' }
+        allowlisted: { type: array, items: { type: string }, description: 'Promotions whose allowlist names this customer; the service adds the ids from the stored allowlists. Each id once.' }
     StackingGroup:
       type: object
       required: [group_id, priority, mode]
@@ -515,6 +567,9 @@ components:
         - { type: object, additionalProperties: false, required: [type, max], properties: { type: { type: string, enum: [MaxUsesPerCustomer] }, max: { type: integer, format: int64, minimum: 0 } } }
         - { type: object, additionalProperties: false, required: [type, max], properties: { type: { type: string, enum: [MaxUsesTotal] }, max: { type: integer, format: int64, minimum: 0 } } }
         - { type: object, additionalProperties: false, required: [type], properties: { type: { type: string, enum: [RequiresCoupon] } } }
+        - { type: object, additionalProperties: false, required: [type, key, values], properties: { type: { type: string, enum: [CustomerAttributeIn] }, key: { type: string }, values: { type: array, items: { type: string } } } }
+        - { type: object, additionalProperties: false, required: [type, key, min, max], properties: { type: { type: string, enum: [CustomerAttributeRange] }, key: { type: string }, min: { type: integer, format: int64, nullable: true }, max: { type: integer, format: int64, nullable: true } } }
+        - { type: object, additionalProperties: false, required: [type], properties: { type: { type: string, enum: [RequiresAllowlist] } } }
     Action:
       oneOf:
         - { type: object, additionalProperties: false, required: [type, bps], properties: { type: { type: string, enum: [OrderPercentage] }, bps: { $ref: '#/components/schemas/BasisPoints' } } }
@@ -619,6 +674,12 @@ components:
           maxProperties: 20
           additionalProperties: { type: string, maxLength: 256 }
           description: Reporting dimensions (issuer, business line, aim, channel, ...); keys 1-64 characters
+    Allowlist:
+      type: object
+      required: [customer_ids]
+      additionalProperties: false
+      properties:
+        customer_ids: { type: array, items: { type: string, minLength: 1 }, maxItems: 100000 }
     MetadataEntry:
       type: object
       required: [promotion_id, metadata]

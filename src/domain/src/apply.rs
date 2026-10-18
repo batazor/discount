@@ -671,6 +671,62 @@ mod tests {
             skipped(&apply(&i).unwrap()),
             Some(SkipReason::NotEligible { rule_index: 2 })
         );
+        // customer attributes and allowlists
+        i.customer.attributes = vec![
+            Attribute {
+                key: "tier".into(),
+                value: "gold".into(),
+            },
+            Attribute {
+                key: "completed_app_orders".into(),
+                value: "0".into(),
+            },
+        ];
+        i.promotions[0].rules = vec![Rule::CustomerAttributeIn {
+            key: "tier".into(),
+            values: vec!["gold".into()],
+        }];
+        assert_eq!(apply(&i).unwrap().applied.len(), 1);
+        i.promotions[0].rules = vec![Rule::CustomerAttributeIn {
+            key: "tier".into(),
+            values: vec!["silver".into()],
+        }];
+        assert_eq!(
+            skipped(&apply(&i).unwrap()),
+            Some(SkipReason::NotEligible { rule_index: 0 })
+        );
+        i.promotions[0].rules = vec![Rule::CustomerAttributeRange {
+            key: "completed_app_orders".into(),
+            min: None,
+            max: Some(0),
+        }];
+        assert_eq!(apply(&i).unwrap().applied.len(), 1);
+        i.customer.attributes[1].value = "1".into();
+        assert_eq!(
+            skipped(&apply(&i).unwrap()),
+            Some(SkipReason::NotEligible { rule_index: 0 })
+        );
+        i.customer.attributes[1].value = "many".into();
+        assert_eq!(
+            skipped(&apply(&i).unwrap()),
+            Some(SkipReason::NotEligible { rule_index: 0 })
+        );
+        i.promotions[0].rules = vec![Rule::RequiresAllowlist];
+        assert_eq!(
+            skipped(&apply(&i).unwrap()),
+            Some(SkipReason::NotEligible { rule_index: 0 })
+        );
+        i.customer.allowlisted = vec!["P1".into()];
+        assert_eq!(apply(&i).unwrap().applied.len(), 1);
+        i.customer.allowlisted = vec!["P1".into(), "P2".into(), "P1".into()];
+        assert_eq!(
+            apply(&i),
+            Err(PricingError::InvalidCustomerContext {
+                field: "customer.allowlisted[2]".into()
+            })
+        );
+        i.customer.allowlisted = vec![];
+        i.promotions[0].rules = vec![Rule::RequiresCoupon];
         // validation of the context
         i.customer.uses.push(PromotionUse {
             promotion_id: "P1".into(),

@@ -79,6 +79,7 @@ async fn remaining(p: &Ports, id: &str) -> Option<Money> {
 
 fn redeem<'a>(p: &'a Ports, clock: &'a FixedClock) -> Redeem<'a> {
     Redeem {
+        catalog: &*p.catalog,
         redemptions: &*p.redemptions,
         clock,
         events: &NoopEventPublisher,
@@ -378,6 +379,7 @@ async fn coupons_rates_and_uses_flow_into_pricing() {
         assert_eq!(r.applied[0].discount.amount, 920);
         // two reservations for c1 -> uses reach the limit; a third evaluation skips P1
         let redeem = Redeem {
+            catalog: &*p.catalog,
             redemptions: &*p.redemptions,
             clock: &clock,
             events: &NoopEventPublisher,
@@ -586,9 +588,11 @@ async fn concurrent_single_use() {
         let mut handles = Vec::new();
         for k in 0..8 {
             let redemptions = p.redemptions.clone();
+            let catalog = p.catalog.clone();
             handles.push(tokio::spawn(async move {
                 let clock = FixedClock(NOW);
                 let redeem = Redeem {
+                    catalog: &*catalog,
                     redemptions: &*redemptions,
                     clock: &clock,
                     events: &NoopEventPublisher,
@@ -1146,6 +1150,132 @@ async fn promotion_metadata_and_source_filter() {
         );
         assert!(p.catalog.delete_metadata("P1").await.unwrap());
         assert_eq!(p.catalog.get_metadata("P1").await.unwrap(), None);
+    })
+    .await;
+}
+
+/// Spec `promotion-catalog`, "Allowlists", and `eligibility-rules`, "Customer attributes and
+/// allowlists in the context": storage, enrichment of the customer context, gating.
+#[tokio::test]
+async fn allowlists_gate_promotions() {
+    for_each_backend(|p| async move {
+        let clock = FixedClock(NOW);
+        p.catalog.put_group(group_g()).await.unwrap();
+        for id in ["P1", "P2"] {
+            let mut pr = fixed_300(id);
+            pr.rules = vec![Rule::RequiresAllowlist];
+            p.catalog.put_promotion(pr).await.unwrap();
+        }
+        // unknown promotion
+        assert_eq!(p.catalog.get_allowlist("nope").await.unwrap(), None);
+        assert!(
+            !p.catalog
+                .put_allowlist("nope", vec!["c1".into()])
+                .await
+                .unwrap()
+        );
+        assert!(!p.catalog.add_to_allowlist("nope", "c1").await.unwrap());
+        assert!(!p.catalog.delete_allowlist("nope").await.unwrap());
+        // empty by default; replace, add (idempotent), membership, sorted read-back
+        assert_eq!(p.catalog.get_allowlist("P1").await.unwrap(), Some(vec![]));
+        assert!(
+            p.catalog
+                .put_allowlist("P1", vec!["c2".into(), "c1".into(), "c1".into()])
+                .await
+                .unwrap()
+        );
+        assert!(p.catalog.add_to_allowlist("P1", "c3").await.unwrap());
+        assert!(p.catalog.add_to_allowlist("P1", "c3").await.unwrap());
+        assert_eq!(
+            p.catalog.get_allowlist("P1").await.unwrap(),
+            Some(vec!["c1".to_string(), "c2".to_string(), "c3".to_string()])
+        );
+        assert!(p.catalog.is_allowlisted("P1", "c1").await.unwrap());
+        assert!(!p.catalog.is_allowlisted("P1", "c9").await.unwrap());
+        assert!(p.catalog.add_to_allowlist("P2", "c1").await.unwrap());
+        assert_eq!(
+            p.catalog.allowlisted_for("c1").await.unwrap(),
+            vec!["P1".to_string(), "P2".to_string()]
+        );
+        assert_eq!(
+            p.catalog.allowlisted_for("c9").await.unwrap(),
+            Vec::<String>::new()
+        );
+
+        // evaluation: a listed customer gets both promotions, an unlisted one none, and a
+        // caller-supplied allowlisted id is merged with the stored ones
+        let evaluate = Evaluate {
+            catalog: &*p.catalog,
+            redemptions: &*p.redemptions,
+            clock: &clock,
+            events: &NoopEventPublisher,
+        };
+        let c1 = CustomerContext {
+            customer_id: Some("c1".into()),
+            ..CustomerContext::default()
+        };
+        let c9 = CustomerContext {
+            customer_id: Some("c9".into()),
+            ..CustomerContext::default()
+        };
+        assert_eq!(
+            evaluate
+                .run(sample_cart(), c1.clone())
+                .await
+                .unwrap()
+                .applied
+                .len(),
+            2
+        );
+        let r = evaluate.run(sample_cart(), c9.clone()).await.unwrap();
+        assert!(r.applied.is_empty());
+        assert_eq!(
+            r.skipped[0].reason,
+            SkipReason::NotEligible { rule_index: 0 }
+        );
+        let c9b = CustomerContext {
+            allowlisted: vec!["P2".into()],
+            ..c9.clone()
+        };
+        let r = evaluate.run(sample_cart(), c9b).await.unwrap();
+        assert_eq!(
+            r.applied
+                .iter()
+                .map(|a| a.promotion_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["P2"]
+        );
+        // Redeem enriches too, and the stored replay record shows the merged list
+        let o = redeem(&p, &clock)
+            .run("al-1", sample_cart(), c1.clone())
+            .await
+            .unwrap();
+        assert_eq!(o.redemption().result.applied.len(), 2);
+        assert_eq!(
+            o.redemption().input.customer.allowlisted,
+            vec!["P1".to_string(), "P2".to_string()]
+        );
+        // remove, clear, archive
+        assert!(p.catalog.remove_from_allowlist("P1", "c1").await.unwrap());
+        assert!(!p.catalog.remove_from_allowlist("P1", "c1").await.unwrap());
+        assert_eq!(
+            evaluate
+                .run(sample_cart(), c1.clone())
+                .await
+                .unwrap()
+                .applied
+                .len(),
+            1
+        );
+        assert!(p.catalog.delete_allowlist("P1").await.unwrap());
+        assert_eq!(p.catalog.get_allowlist("P1").await.unwrap(), Some(vec![]));
+        p.catalog.archive_promotion("P2").await.unwrap();
+        assert_eq!(p.catalog.get_allowlist("P2").await.unwrap(), None);
+        assert_eq!(
+            p.catalog.allowlisted_for("c1").await.unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(!p.catalog.is_allowlisted("P2", "c1").await.unwrap());
     })
     .await;
 }

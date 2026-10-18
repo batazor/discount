@@ -89,5 +89,5 @@ pub fn group_g() -> StackingGroup {
 }
 
 pub fn customer_json() -> serde_json::Value {
-    serde_json::json!({"customer_id": null, "completed_orders": 0, "uses": []})
+    serde_json::json!({"customer_id": null, "completed_orders": 0, "uses": [], "attributes": [], "allowlisted": []})
 }

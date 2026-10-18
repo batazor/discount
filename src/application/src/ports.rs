@@ -275,6 +275,35 @@ pub trait PromotionCatalog: Send + Sync {
     async fn delete_metadata(&self, promotion_id: &str) -> Result<bool, StorageError>;
     /// Metadata of every non-archived promotion that has some, ordered by promotion id.
     async fn list_metadata(&self) -> Result<Vec<(PromotionId, PromotionMetadata)>, StorageError>;
+    /// The allowlist of a non-archived promotion, sorted; `None` when the promotion is unknown.
+    async fn get_allowlist(&self, promotion_id: &str) -> Result<Option<Vec<String>>, StorageError>;
+    /// Replace the whole set; `Ok(false)` when the promotion is unknown or archived.
+    async fn put_allowlist(
+        &self,
+        promotion_id: &str,
+        customer_ids: Vec<String>,
+    ) -> Result<bool, StorageError>;
+    /// Clear the set; `Ok(false)` when the promotion is unknown or archived.
+    async fn delete_allowlist(&self, promotion_id: &str) -> Result<bool, StorageError>;
+    /// `Ok(false)` when the promotion is unknown or archived.
+    async fn add_to_allowlist(
+        &self,
+        promotion_id: &str,
+        customer_id: &str,
+    ) -> Result<bool, StorageError>;
+    /// `Ok(false)` when the customer was not listed (or the promotion is unknown).
+    async fn remove_from_allowlist(
+        &self,
+        promotion_id: &str,
+        customer_id: &str,
+    ) -> Result<bool, StorageError>;
+    async fn is_allowlisted(
+        &self,
+        promotion_id: &str,
+        customer_id: &str,
+    ) -> Result<bool, StorageError>;
+    /// Non-archived promotions whose allowlist contains the customer, sorted.
+    async fn allowlisted_for(&self, customer_id: &str) -> Result<Vec<PromotionId>, StorageError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

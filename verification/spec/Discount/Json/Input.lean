@@ -106,13 +106,15 @@ instance : FromJson PromotionUse where
 
 instance : ToJson CustomerContext where
   toJson c := Json.mkObj [("customer_id", optJson c.customer_id),
-    ("completed_orders", toJson c.completed_orders), ("uses", toJson c.uses)]
+    ("completed_orders", toJson c.completed_orders), ("uses", toJson c.uses),
+    ("attributes", toJson c.attributes), ("allowlisted", toJson c.allowlisted)]
 
 instance : FromJson CustomerContext where
   fromJson? j := do
-    checkKeys j ["customer_id", "completed_orders", "uses"]
+    checkKeys j ["customer_id", "completed_orders", "uses", "attributes", "allowlisted"]
     pure { customer_id := ← getOpt j "customer_id", completed_orders := ← getField j "completed_orders",
-           uses := ← getField j "uses" }
+           uses := ← getField j "uses", attributes := ← getField j "attributes",
+           allowlisted := ← getField j "allowlisted" }
 
 instance : ToJson Coupon where
   toJson c := Json.mkObj [("code", toJson c.code), ("promotion_id", toJson c.promotion_id),
@@ -176,6 +178,10 @@ instance : ToJson Rule where
     | .MaxUsesPerCustomer m => variant "MaxUsesPerCustomer" [("max", toJson m)]
     | .MaxUsesTotal m => variant "MaxUsesTotal" [("max", toJson m)]
     | .RequiresCoupon => variant "RequiresCoupon"
+    | .CustomerAttributeIn k vs => variant "CustomerAttributeIn" [("key", toJson k), ("values", toJson vs)]
+    | .CustomerAttributeRange k mn mx =>
+        variant "CustomerAttributeRange" [("key", toJson k), ("min", optJson mn), ("max", optJson mx)]
+    | .RequiresAllowlist => variant "RequiresAllowlist"
 
 instance : FromJson Rule where
   fromJson? j := do
@@ -207,6 +213,15 @@ instance : FromJson Rule where
     | "RequiresCoupon" =>
         checkKeys j ["type"]
         pure .RequiresCoupon
+    | "CustomerAttributeIn" =>
+        checkKeys j ["type", "key", "values"]
+        pure (.CustomerAttributeIn (← getField j "key") (← getField j "values"))
+    | "CustomerAttributeRange" =>
+        checkKeys j ["type", "key", "min", "max"]
+        pure (.CustomerAttributeRange (← getField j "key") (← getOpt j "min") (← getOpt j "max"))
+    | "RequiresAllowlist" =>
+        checkKeys j ["type"]
+        pure .RequiresAllowlist
     | v => throw s!"unknown Rule '{v}'"
 
 instance : ToJson Action where

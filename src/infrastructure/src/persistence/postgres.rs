@@ -80,7 +80,7 @@ impl PgStore {
     /// Empty every table and reset the policy; for integration tests only. Tests wipe the
     /// database they point at, so give them a dedicated one.
     pub async fn reset_for_tests(&self, policy: &PricingPolicy) -> Result<(), StorageError> {
-        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants, saved_coupons, promotion_metadata")
+        sqlx::query("TRUNCATE redemptions, promotion_budgets, promotions, stacking_groups, coupons, exchange_rates, grant_rules, grants, saved_coupons, promotion_metadata, promotion_allowlist")
             .execute(&self.pool)
             .await
             .map_err(storage)?;
@@ -804,6 +804,148 @@ impl PromotionCatalog for PgStore {
                 ))
             })
             .collect()
+    }
+    #[tracing::instrument(name = "db.get_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "get_allowlist"))]
+    async fn get_allowlist(&self, promotion_id: &str) -> Result<Option<Vec<String>>, StorageError> {
+        let live: Option<i64> = sqlx::query_scalar(
+            "SELECT 1::BIGINT FROM promotions WHERE promotion_id = $1 AND NOT archived",
+        )
+        .bind(promotion_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?;
+        if live.is_none() {
+            return Ok(None);
+        }
+        let ids: Vec<String> = sqlx::query_scalar("SELECT customer_id FROM promotion_allowlist WHERE promotion_id = $1 ORDER BY customer_id")
+            .bind(promotion_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(Some(ids))
+    }
+
+    #[tracing::instrument(name = "db.put_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "put_allowlist"))]
+    async fn put_allowlist(
+        &self,
+        promotion_id: &str,
+        customer_ids: Vec<String>,
+    ) -> Result<bool, StorageError> {
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let live: Option<i64> = sqlx::query_scalar(
+            "SELECT 1::BIGINT FROM promotions WHERE promotion_id = $1 AND NOT archived FOR UPDATE",
+        )
+        .bind(promotion_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(storage)?;
+        if live.is_none() {
+            return Ok(false);
+        }
+        sqlx::query("DELETE FROM promotion_allowlist WHERE promotion_id = $1")
+            .bind(promotion_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+        let mut ids = customer_ids;
+        ids.sort();
+        ids.dedup();
+        sqlx::query("INSERT INTO promotion_allowlist (promotion_id, customer_id, created_at) SELECT $1, unnest($2::TEXT[]), $3")
+            .bind(promotion_id)
+            .bind(&ids)
+            .bind(epoch())
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+        Ok(true)
+    }
+
+    #[tracing::instrument(name = "db.delete_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "delete_allowlist"))]
+    async fn delete_allowlist(&self, promotion_id: &str) -> Result<bool, StorageError> {
+        let live: Option<i64> = sqlx::query_scalar(
+            "SELECT 1::BIGINT FROM promotions WHERE promotion_id = $1 AND NOT archived",
+        )
+        .bind(promotion_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?;
+        if live.is_none() {
+            return Ok(false);
+        }
+        sqlx::query("DELETE FROM promotion_allowlist WHERE promotion_id = $1")
+            .bind(promotion_id)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(true)
+    }
+
+    #[tracing::instrument(name = "db.add_to_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "add_to_allowlist"))]
+    async fn add_to_allowlist(
+        &self,
+        promotion_id: &str,
+        customer_id: &str,
+    ) -> Result<bool, StorageError> {
+        let r = sqlx::query(
+            "INSERT INTO promotion_allowlist (promotion_id, customer_id, created_at) \
+             SELECT promotion_id, $2, $3 FROM promotions WHERE promotion_id = $1 AND NOT archived \
+             ON CONFLICT (promotion_id, customer_id) DO UPDATE SET created_at = promotion_allowlist.created_at",
+        )
+        .bind(promotion_id)
+        .bind(customer_id)
+        .bind(epoch())
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    #[tracing::instrument(name = "db.remove_from_allowlist", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "remove_from_allowlist"))]
+    async fn remove_from_allowlist(
+        &self,
+        promotion_id: &str,
+        customer_id: &str,
+    ) -> Result<bool, StorageError> {
+        let r = sqlx::query(
+            "DELETE FROM promotion_allowlist WHERE promotion_id = $1 AND customer_id = $2",
+        )
+        .bind(promotion_id)
+        .bind(customer_id)
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    #[tracing::instrument(name = "db.is_allowlisted", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "is_allowlisted"))]
+    async fn is_allowlisted(
+        &self,
+        promotion_id: &str,
+        customer_id: &str,
+    ) -> Result<bool, StorageError> {
+        let hit: Option<i64> = sqlx::query_scalar(
+            "SELECT 1::BIGINT FROM promotion_allowlist a JOIN promotions p USING (promotion_id) \
+             WHERE a.promotion_id = $1 AND a.customer_id = $2 AND NOT p.archived",
+        )
+        .bind(promotion_id)
+        .bind(customer_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(hit.is_some())
+    }
+
+    #[tracing::instrument(name = "db.allowlisted_for", skip_all, fields(otel.kind = "client", otel.status_code = tracing::field::Empty, db.system = "postgresql", db.operation.name = "allowlisted_for"))]
+    async fn allowlisted_for(&self, customer_id: &str) -> Result<Vec<PromotionId>, StorageError> {
+        sqlx::query_scalar(
+            "SELECT a.promotion_id FROM promotion_allowlist a JOIN promotions p USING (promotion_id) \
+             WHERE a.customer_id = $1 AND NOT p.archived ORDER BY a.promotion_id",
+        )
+        .bind(customer_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage)
     }
 }
 

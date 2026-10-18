@@ -41,6 +41,27 @@ pub fn merge_uses(mut customer: CustomerContext, stored: Uses) -> CustomerContex
     customer
 }
 
+/// Add the promotions whose stored allowlist names the customer to `customer.allowlisted`,
+/// each id once (spec `eligibility-rules`, "Customer attributes and allowlists").
+pub fn merge_allowlisted(mut customer: CustomerContext, stored: Vec<String>) -> CustomerContext {
+    for pid in stored {
+        if !customer.allowlisted.contains(&pid) {
+            customer.allowlisted.push(pid);
+        }
+    }
+    customer
+}
+
+async fn stored_allowlisted(
+    catalog: &dyn PromotionCatalog,
+    customer: &CustomerContext,
+) -> Result<Vec<String>, StorageError> {
+    match &customer.customer_id {
+        Some(cid) => catalog.allowlisted_for(cid).await,
+        None => Ok(Vec::new()),
+    }
+}
+
 /// Build the engine input from a catalogue snapshot: coupons narrowed to the presented
 /// codes, stored uses merged into the customer context.
 pub fn pricing_input(
@@ -97,6 +118,10 @@ impl Evaluate<'_> {
             .await
             .map_err(EvaluateError::Storage)?;
         let uses = stored_uses(self.redemptions, &customer).await?;
+        let listed = stored_allowlisted(self.catalog, &customer)
+            .await
+            .map_err(EvaluateError::Storage)?;
+        let customer = merge_allowlisted(customer, listed);
         let input = pricing_input(snapshot, now, cart, customer, uses);
         let result = apply(&input).map_err(EvaluateError::Pricing)?;
         self.events
@@ -109,6 +134,7 @@ impl Evaluate<'_> {
 }
 
 pub struct Redeem<'a> {
+    pub catalog: &'a dyn PromotionCatalog,
     pub redemptions: &'a dyn RedemptionRepository,
     pub clock: &'a dyn Clock,
     pub events: &'a dyn EventPublisher,
@@ -124,6 +150,10 @@ impl Redeem<'_> {
         let now = self.clock.now();
         let customer_id = customer.customer_id.clone();
         let codes = cart.coupon_codes.clone();
+        let listed = stored_allowlisted(self.catalog, &customer)
+            .await
+            .map_err(RedemptionError::Storage)?;
+        let customer = merge_allowlisted(customer, listed);
         let price = move |snapshot: CatalogSnapshot, uses: Uses| {
             let input = pricing_input(snapshot, now, cart.clone(), customer.clone(), uses);
             let result = apply(&input)?;

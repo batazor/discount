@@ -24,8 +24,11 @@ def checkUses : List PromotionUse → Nat → Except PricingError Unit
 def checkCustomer (c : CustomerContext) : Except PricingError Unit :=
   andThen (if c.completed_orders < 0 then .error (.InvalidCustomerContext "customer.completed_orders") else .ok ())
   (andThen (checkUses c.uses 0)
-  (match secondOccurrence (c.uses.map (·.promotion_id)) [] 0 with
+  (andThen (match secondOccurrence (c.uses.map (·.promotion_id)) [] 0 with
     | some k => .error (.InvalidCustomerContext s!"customer.uses[{k}]")
-    | none => .ok ()))
+    | none => .ok ())
+  (match secondOccurrence c.allowlisted [] 0 with
+    | some k => .error (.InvalidCustomerContext s!"customer.allowlisted[{k}]")
+    | none => .ok ())))
 
 end Discount

@@ -34,7 +34,7 @@ pass "console at $UI is up and lists P1"
 
 # Fixture carts: the sample cart (priced to 749) and an invalid one (lowercase currency).
 post() { curl -s -o /dev/null -w "%{http_code}" -H 'Content-Type: application/json' -X POST "$SERVICE/v1/evaluate" -d "$1"; }
-CUSTOMER='{"customer_id":"smoke","completed_orders":0,"uses":[]}'
+CUSTOMER='{"customer_id":"smoke","completed_orders":0,"uses":[],"attributes":[],"allowlisted":[]}'
 CART='{"cart":{"currency":"EUR","lines":[{"line_id":"L1","unit_price":{"amount":1999,"currency":"EUR"},"quantity":2},{"line_id":"L2","unit_price":{"amount":501,"currency":"EUR"},"quantity":1}],"tags":["#ios"],"attributes":[],"coupon_codes":[]},"customer":'"$CUSTOMER"'}'
 BAD='{"cart":{"currency":"eur","lines":[],"tags":[],"attributes":[],"coupon_codes":[]},"customer":'"$CUSTOMER"'}'
 for _ in 1 2 3 4 5; do
@@ -99,6 +99,14 @@ N=$(curl -s "$SERVICE/v1/customers/smoke/coupons?source=transfers" | python3 -c 
 [ "$N" = "0" ] || fail "source filter should exclude other sources, got $N entries"
 [ "$(curl -s "$SERVICE/v1/promotions?source=hotels" | python3 -c 'import sys,json; print(",".join(p["promotion_id"] for p in json.load(sys.stdin)))')" = "P3" ] || fail "promotion source filter"
 pass "metadata on P3 reaches the customer listing; source filters work"
+
+# Allowlist: P4 applies only to listed customers.
+[ "$(put /v1/promotions/P4 '{"promotion_id":"P4","group_id":"g","priority":2,"exclusive":false,"cap":null,"remaining_budget":null,"uses_total":0,"rounding":null,"rules":[{"type":"RequiresAllowlist"}],"action":{"type":"OrderFixedAmount","amount":{"amount":100,"currency":"EUR"}}}')" = "200" ] || fail "put P4"
+[ "$(put /v1/promotions/P4/allowlist '{"customer_ids":["smoke"]}')" = "200" ] || fail "put allowlist"
+curl -s -H 'Content-Type: application/json' -X POST "$SERVICE/v1/evaluate" -d "$CART" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(a["promotion_id"]=="P4" for a in d["applied"]), d' || fail "P4 did not apply to the listed customer"
+STRANGER=$(echo "$CART" | sed 's/"customer_id":"smoke"/"customer_id":"stranger"/')
+curl -s -H 'Content-Type: application/json' -X POST "$SERVICE/v1/evaluate" -d "$STRANGER" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(s["promotion_id"]=="P4" and s["reason"]["type"]=="NotEligible" for s in d["skipped"]), d' || fail "P4 applied to an unlisted customer"
+pass "allowlist on P4: applies to smoke, skipped for stranger"
 
 # Give the periodic exporters time to flush (metrics export every 60s by default is too
 # slow for a smoke; the service sets OTEL_METRIC_EXPORT_INTERVAL=5000).

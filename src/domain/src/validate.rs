@@ -199,9 +199,15 @@ pub fn check_customer(c: &CustomerContext) -> Result<(), PricingError> {
         }
     }
     let ids: Vec<&str> = c.uses.iter().map(|u| u.promotion_id.as_str()).collect();
-    match second_occurrence(&ids) {
-        Some(k) => Err(PricingError::InvalidCustomerContext {
+    if let Some(k) = second_occurrence(&ids) {
+        return Err(PricingError::InvalidCustomerContext {
             field: format!("customer.uses[{k}]"),
+        });
+    }
+    let listed: Vec<&str> = c.allowlisted.iter().map(String::as_str).collect();
+    match second_occurrence(&listed) {
+        Some(k) => Err(PricingError::InvalidCustomerContext {
+            field: format!("customer.allowlisted[{k}]"),
         }),
         None => Ok(()),
     }
@@ -386,6 +392,11 @@ pub fn check_promotions(
             rates,
             &format!("promotions[{i}].remaining_budget"),
         )?;
+        if p.uses_total < 0 {
+            return Err(PricingError::InvalidPromotion {
+                field: format!("promotions[{i}].uses_total"),
+            });
+        }
         check_rules(&p.rules, cur, rates, i)?;
         if !gids.contains(&p.group_id.as_str()) {
             return Err(PricingError::UnknownGroup { promotion_index: i });

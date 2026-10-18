@@ -60,6 +60,7 @@ struct Store {
     grants: BTreeMap<(String, String), String>,
     saved: std::collections::BTreeSet<(String, String)>,
     metadata: BTreeMap<String, PromotionMetadata>,
+    allowlists: BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
 /// In-memory catalogue and redemption store.
@@ -505,6 +506,91 @@ impl PromotionCatalog for InMemoryStore {
             .iter()
             .filter(|(pid, _)| s.promotions.get(*pid).is_some_and(|p| !p.archived))
             .map(|(pid, m)| (pid.clone(), m.clone()))
+            .collect())
+    }
+    async fn get_allowlist(&self, promotion_id: &str) -> Result<Option<Vec<String>>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        match s.promotions.get(promotion_id) {
+            Some(p) if !p.archived => Ok(Some(
+                s.allowlists
+                    .get(promotion_id)
+                    .map(|set| set.iter().cloned().collect())
+                    .unwrap_or_default(),
+            )),
+            _ => Ok(None),
+        }
+    }
+    async fn put_allowlist(
+        &self,
+        promotion_id: &str,
+        customer_ids: Vec<String>,
+    ) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        match s.promotions.get(promotion_id) {
+            Some(p) if !p.archived => {
+                s.allowlists
+                    .insert(promotion_id.to_string(), customer_ids.into_iter().collect());
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+    async fn delete_allowlist(&self, promotion_id: &str) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        match s.promotions.get(promotion_id) {
+            Some(p) if !p.archived => {
+                s.allowlists.remove(promotion_id);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+    async fn add_to_allowlist(
+        &self,
+        promotion_id: &str,
+        customer_id: &str,
+    ) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        match s.promotions.get(promotion_id) {
+            Some(p) if !p.archived => {
+                s.allowlists
+                    .entry(promotion_id.to_string())
+                    .or_default()
+                    .insert(customer_id.to_string());
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+    async fn remove_from_allowlist(
+        &self,
+        promotion_id: &str,
+        customer_id: &str,
+    ) -> Result<bool, StorageError> {
+        let mut s = self.inner.lock().unwrap();
+        Ok(s.allowlists
+            .get_mut(promotion_id)
+            .is_some_and(|set| set.remove(customer_id)))
+    }
+    async fn is_allowlisted(
+        &self,
+        promotion_id: &str,
+        customer_id: &str,
+    ) -> Result<bool, StorageError> {
+        let s = self.inner.lock().unwrap();
+        Ok(s.promotions.get(promotion_id).is_some_and(|p| !p.archived)
+            && s.allowlists
+                .get(promotion_id)
+                .is_some_and(|set| set.contains(customer_id)))
+    }
+    async fn allowlisted_for(&self, customer_id: &str) -> Result<Vec<PromotionId>, StorageError> {
+        let s = self.inner.lock().unwrap();
+        Ok(s.allowlists
+            .iter()
+            .filter(|(pid, set)| {
+                set.contains(customer_id) && s.promotions.get(*pid).is_some_and(|p| !p.archived)
+            })
+            .map(|(pid, _)| pid.clone())
             .collect())
     }
 }

@@ -401,6 +401,8 @@ async fn openapi_covers_every_route() {
         "/v1/groups/{group_id}",
         "/v1/promotions:",
         "/v1/promotions/{promotion_id}/metadata",
+        "/v1/promotions/{promotion_id}/allowlist:",
+        "/v1/promotions/{promotion_id}/allowlist/customers/{customer_id}",
         "/v1/promotion-metadata",
         "/v1/promotions/{promotion_id}:",
         "/v1/promotions/{promotion_id}/budget",
@@ -706,7 +708,7 @@ async fn customer_coupon_routes() {
     .await;
     let mut cart = cart_json();
     cart["coupon_codes"] = json!(["WELCOME"]);
-    let customer = json!({"customer_id": "c1", "completed_orders": 0, "uses": []});
+    let customer = json!({"customer_id": "c1", "completed_orders": 0, "uses": [], "attributes": [], "allowlisted": []});
     let (status, _) = call(
         &app,
         Method::POST,
@@ -1017,6 +1019,222 @@ async fn promotion_metadata_routes() {
     );
     assert_eq!(
         call(&app, Method::DELETE, "/v1/promotions/P1/metadata", None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// Spec `promotion-catalog`, "Allowlists" over HTTP, and the gating through `/v1/evaluate`.
+#[tokio::test]
+async fn allowlist_routes() {
+    let app = router(state_with(
+        discount_infrastructure::InMemoryStore::new(discount_infrastructure::default_policy()),
+        discount_infrastructure::telemetry::Instruments::noop(),
+    ));
+    call(
+        &app,
+        Method::PUT,
+        "/v1/groups/g",
+        Some(json!({"group_id": "g", "priority": 0, "mode": {"type": "Stackable"}}).to_string()),
+    )
+    .await;
+    let promo = json!({"promotion_id": "P1", "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
+        "remaining_budget": null, "uses_total": 0, "rounding": null, "rules": [{"type": "RequiresAllowlist"}],
+        "action": {"type": "OrderPercentage", "bps": 1000}});
+    call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P1",
+        Some(promo.to_string()),
+    )
+    .await;
+    let (status, l) = call(&app, Method::GET, "/v1/promotions/P1/allowlist", None).await;
+    assert_eq!((status, l), (StatusCode::OK, json!({"customer_ids": []})));
+    let (status, l) = call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P1/allowlist",
+        Some(json!({"customer_ids": ["c2", "c1", "c1"]}).to_string()),
+    )
+    .await;
+    assert_eq!(
+        (status, l),
+        (StatusCode::OK, json!({"customer_ids": ["c1", "c2"]}))
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/P1/allowlist",
+            Some(json!({"customer_ids": [""]}).to_string())
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/P1/allowlist",
+            Some(json!({"ids": []}).to_string())
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/nope/allowlist",
+            Some(json!({"customer_ids": ["c1"]}).to_string())
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, Method::GET, "/v1/promotions/nope/allowlist", None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::GET,
+            "/v1/promotions/P1/allowlist/customers/c1",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::GET,
+            "/v1/promotions/P1/allowlist/customers/c9",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/P1/allowlist/customers/c3",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/v1/promotions/nope/allowlist/customers/c3",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, l) = call(&app, Method::GET, "/v1/promotions/P1/allowlist", None).await;
+    assert_eq!(l, json!({"customer_ids": ["c1", "c2", "c3"]}));
+    // gating: listed customer applies, unlisted is NotEligible on rule 0
+    let customer = |id: &str| json!({"customer_id": id, "completed_orders": 0, "uses": [], "attributes": [], "allowlisted": []});
+    let (status, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer("c1")}).to_string()),
+    )
+    .await;
+    assert_eq!(
+        (status, ev["applied"].as_array().unwrap().len()),
+        (StatusCode::OK, 1)
+    );
+    let (_, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": customer("c9")}).to_string()),
+    )
+    .await;
+    assert_eq!(
+        ev["skipped"][0]["reason"],
+        json!({"type": "NotEligible", "rule_index": 0})
+    );
+    // the customer's attributes travel through the request
+    let mut tiered = customer("c9");
+    tiered["attributes"] = json!([{"key": "tier", "value": "gold"}]);
+    let promo2 = json!({"promotion_id": "P2", "group_id": "g", "priority": 0, "exclusive": false, "cap": null,
+        "remaining_budget": null, "uses_total": 0, "rounding": null,
+        "rules": [{"type": "CustomerAttributeIn", "key": "tier", "values": ["gold"]}],
+        "action": {"type": "OrderFixedAmount", "amount": {"amount": 100, "currency": "EUR"}}});
+    call(
+        &app,
+        Method::PUT,
+        "/v1/promotions/P2",
+        Some(promo2.to_string()),
+    )
+    .await;
+    let (_, ev) = call(
+        &app,
+        Method::POST,
+        "/v1/evaluate",
+        Some(json!({"cart": cart_json(), "customer": tiered}).to_string()),
+    )
+    .await;
+    assert_eq!(
+        ev["applied"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["promotion_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["P2"]
+    );
+    // remove, clear, archive
+    assert_eq!(
+        call(
+            &app,
+            Method::DELETE,
+            "/v1/promotions/P1/allowlist/customers/c1",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::DELETE,
+            "/v1/promotions/P1/allowlist/customers/c1",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, Method::DELETE, "/v1/promotions/P1/allowlist", None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    let (_, l) = call(&app, Method::GET, "/v1/promotions/P1/allowlist", None).await;
+    assert_eq!(l, json!({"customer_ids": []}));
+    call(&app, Method::DELETE, "/v1/promotions/P1", None).await;
+    assert_eq!(
+        call(&app, Method::GET, "/v1/promotions/P1/allowlist", None)
             .await
             .0,
         StatusCode::NOT_FOUND

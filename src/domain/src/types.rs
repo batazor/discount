@@ -149,6 +149,10 @@ pub struct CustomerContext {
     pub customer_id: Option<String>,
     pub completed_orders: i64,
     pub uses: Vec<PromotionUse>,
+    /// Caller-supplied facts about the customer (`tier = "gold"`, `completed_app_orders = "0"`).
+    pub attributes: Vec<Attribute>,
+    /// Promotions whose allowlist names this customer; filled by the service like `uses`.
+    pub allowlisted: Vec<PromotionId>,
 }
 
 /// A code that turns a promotion on.
@@ -239,6 +243,16 @@ pub enum Rule {
     MaxUsesTotal { max: i64 },
     /// A presented, valid coupon of this promotion exists.
     RequiresCoupon,
+    /// Some customer attribute `key` has a value in `values`.
+    CustomerAttributeIn { key: String, values: Vec<String> },
+    /// Customer attribute `key` parses as an integer `t` with `min <= t <= max` for the present bounds.
+    CustomerAttributeRange {
+        key: String,
+        min: Option<i64>,
+        max: Option<i64>,
+    },
+    /// This promotion's id is in `customer.allowlisted`.
+    RequiresAllowlist,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

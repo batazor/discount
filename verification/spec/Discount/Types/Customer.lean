@@ -1,4 +1,4 @@
-import Discount.Types.Money
+import Discount.Types.Cart
 
 /-!
 # Customer context and coupons (ADR 7, OpenSpec `coupons`)
@@ -18,6 +18,10 @@ structure CustomerContext where
   customer_id : Option String
   completed_orders : Int
   uses : List PromotionUse
+  /-- Caller-supplied facts about the customer (`tier = "gold"`, `completed_app_orders = "0"`). -/
+  attributes : List Attribute
+  /-- Promotions whose allowlist names this customer; filled by the service like `uses`. -/
+  allowlisted : List PromotionId
   deriving Repr, DecidableEq, Inhabited
 
 /-- A code that turns a promotion on. -/

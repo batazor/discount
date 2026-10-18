@@ -106,6 +106,21 @@ pub fn rule_holds(r: &Rule, p: &Promotion, i: &PricingInput) -> bool {
             .coupons
             .iter()
             .any(|c| coupon_valid(i, &p.promotion_id, c)),
+        Rule::CustomerAttributeIn { key, values } => i
+            .customer
+            .attributes
+            .iter()
+            .any(|a| a.key == *key && values.contains(&a.value)),
+        Rule::CustomerAttributeRange { key, min, max } => {
+            match i.customer.attributes.iter().find(|a| a.key == *key) {
+                None => false,
+                Some(a) => match parse_decimal(&a.value) {
+                    None => false,
+                    Some(t) => min.is_none_or(|m| m <= t) && max.is_none_or(|m| t <= m),
+                },
+            }
+        }
+        Rule::RequiresAllowlist => i.customer.allowlisted.contains(&p.promotion_id),
     }
 }
 

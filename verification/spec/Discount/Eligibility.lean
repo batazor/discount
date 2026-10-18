@@ -67,6 +67,18 @@ def ruleHolds (r : Rule) (p : Promotion) (i : PricingInput) : Bool :=
   | .MaxUsesPerCustomer m => decide (usesOf i.customer p.promotion_id < m)
   | .MaxUsesTotal m => decide (p.uses_total < m)
   | .RequiresCoupon => i.coupons.any (couponValid i p.promotion_id)
+  | .CustomerAttributeIn key values =>
+      i.customer.attributes.any (fun a => a.key == key && values.contains a.value)
+  | .CustomerAttributeRange key mn mx =>
+      match i.customer.attributes.find? (fun a => a.key == key) with
+      | none => false
+      | some a =>
+        match parseDecimal a.value with
+        | none => false
+        | some t =>
+          (match mn with | none => true | some m => decide (m ≤ t)) &&
+          (match mx with | none => true | some m => decide (t ≤ m))
+  | .RequiresAllowlist => i.customer.allowlisted.contains p.promotion_id
 
 def firstFailingRule : List Rule → Promotion → PricingInput → Nat → Option Nat
   | [], _, _, _ => none
