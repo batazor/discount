@@ -1,7 +1,52 @@
 ---
-import "../styles/global.css";
+import Layout from "../layouts/Layout.astro";
+import { api, call, unreachableUrl, dataOr, API_URL } from "../api/client";
+
+const [policy, groups, promotions, coupons, rates, rules] = await Promise.all([
+  call(() => api.GET("/v1/policy")),
+  call(() => api.GET("/v1/groups")),
+  call(() => api.GET("/v1/promotions")),
+  call(() => api.GET("/v1/coupons")),
+  call(() => api.GET("/v1/exchange-rates")),
+  call(() => api.GET("/v1/grant-rules")),
+]);
+const unreachable = unreachableUrl(policy, groups, promotions, coupons, rates, rules);
+const cards = [
+  ["Groups", "/groups", dataOr(groups, []).length],
+  ["Promotions", "/promotions", dataOr(promotions, []).length],
+  ["Coupons", "/coupons", dataOr(coupons, []).length],
+  ["Grant rules", "/grant-rules", dataOr(rules, []).length],
+  ["Exchange rates", "/exchange-rates", dataOr(rates, []).length],
+] as const;
 ---
-<html lang="en">
-  <head><meta charset="utf-8" /><title>discount</title></head>
-  <body><h1 class="text-xl font-semibold">discount</h1></body>
-</html>
+<Layout title="Overview" unreachable={unreachable}>
+  <p class="mb-6 text-sm text-gray-600 dark:text-gray-400">
+    Operator console over <code class="font-mono">{API_URL}</code>. Every value here is a response of the
+    service; the console computes nothing itself.
+  </p>
+  {!unreachable && (
+    <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
+      {cards.map(([label, href, n]) => (
+        <a href={href} class="rounded border border-gray-200 p-4 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900">
+          <div class="text-3xl font-semibold tabular-nums">{n}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">{label}</div>
+        </a>
+      ))}
+    </div>
+  )}
+  {policy.ok && (
+    <section class="mt-8">
+      <h2 class="mb-2 text-lg font-semibold">Policy</h2>
+      <dl class="grid max-w-md grid-cols-2 gap-y-1 text-sm">
+        <dt class="text-gray-600 dark:text-gray-400">Rounding</dt><dd class="font-mono">{policy.data.rounding.type}</dd>
+        <dt class="text-gray-600 dark:text-gray-400">Stacking</dt><dd class="font-mono">{policy.data.stacking.type}</dd>
+        <dt class="text-gray-600 dark:text-gray-400">Order cap</dt>
+        <dd class="font-mono">
+          {policy.data.order_cap.amount ? `${policy.data.order_cap.amount.amount} ${policy.data.order_cap.amount.currency}` : "no amount"},
+          {policy.data.order_cap.bps !== null ? `${policy.data.order_cap.bps} bps` : "no bps"}
+        </dd>
+      </dl>
+      <a href="/policy" class="mt-2 inline-block text-sm underline">Edit policy</a>
+    </section>
+  )}
+</Layout>

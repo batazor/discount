@@ -21,7 +21,7 @@ Notation: `S` is `result.original_subtotal`, `D` is `result.total_discount`,
 | 3 | Deterministic stacking | permutation part proved; commutativity claimed only where true, proof is iteration 2 | `apply_perm_invariant`, `validate_perm`, `sortPromotions_perm` (`Determinism.lean`) |
 | 4 | Exclusive never combines; first-match groups apply at most one | proved | `exclusive_alone`, `first_match_at_most_one` |
 | 5 | Allocation is conservative | proved | `allocation_conserves`, `line_discount_sum`, `total_discount_eq_sum`; on `allocate` itself `allocate_sum`, `allocate_le`, `allocate_nonneg`, `allocate_length` |
-| 6 | Idempotence | stated, iteration 2 | `apply_idempotent` (planned) |
+| 6 | Replay and idempotence | reformulated: core determinism by construction (ADR 7), idempotence is a service property, tested | none; see §6 |
 | 7 | Eligibility is a function of `(now, cart, customer, coupons)` | proved | `eligible_depends_on_input` |
 
 "Proved" means a theorem without `sorry` that `lake build` checks in CI, over the Lean
@@ -122,21 +122,32 @@ Why: `allocate` distributes `D - Σ floor(D s_i / S)` units one at a time to the
 the largest remainders, so the sum is exact by construction (ADR 5). Line discounts are
 sums of allocations; the order discount is the sum of step discounts.
 
-## 6. Applying the same promotion set twice is idempotent
+## 6. Replay is exact; idempotence is a service property
 
-**Determinism (iteration 1):** `apply input = apply input`, and more usefully the
-`PricingInput` JSON is a complete replay record: the same document yields the same
-result in both implementations. This is what the DRT exercises on every case.
+Decision of 2026-10-18 (the question "should the core forget nothing between two
+applications" was answered: no new concept): invariant 6 is two claims at two layers.
 
-**Idempotence proper (iteration 2):** re-pricing an already priced order with the same
-promotions must grant nothing more. With the first-iteration model this is *not* true as
-stated: a `CartSnapshot` built from `result.lines[*].total` carries no memory of which
-promotions were applied, and a percentage promotion would discount it again. The honest
-formulation needs the cart to record the promotions already applied and `eligible` to skip
-them. That is a new domain concept (a record of applied promotions on the snapshot) and
-per the project rules it is added to the ubiquitous language only after an explicit
-decision. Until then invariant 6 is stated, not proved, and ADR 8 schedules it for
-iteration 2 together with `Redeem`.
+**Core: determinism by construction (ADR 7).** `apply` is a total function of
+`PricingInput` and nothing else: no clock, no repository, no randomness. There is no theorem
+to prove beyond what the model is; the congruence theorems make the dependency explicit
+(`eligible_depends_on_input` for eligibility, `compute_congr` for the whole pipeline). The
+`PricingInput` JSON is therefore a complete replay record: the same document yields the same
+result, in Lean and, by the differential run, in Rust.
+
+**Service: a redemption replays to its own result, and reserving is idempotent.** `Redeem`
+stores the `PricingInput` it priced and the `PricingResult` it got (spec `redemption`, "Redeem
+reserves atomically"); `apply` on the stored input reproduces the stored result, and a repeated
+`Redeem` for the same `order_id` returns the stored redemption without touching budgets or
+counters (spec `redemption`, "Redeem is idempotent by order id"). Both are checked by the
+shared port scenarios on the in-memory and the Postgres store. This is where the product
+guarantee "the same order is never discounted twice" lives.
+
+**What is not claimed.** "Re-pricing an already discounted cart grants nothing more" is not
+an invariant of this engine and is not stated: a cart built from `result.lines[*].total` has
+no memory of the promotions applied to it, and a record of applied promotions on the
+snapshot would still let other promotions apply once an exclusive winner is excluded. If
+such a memory is ever needed, it is a new domain concept (ubiquitous language first) with its
+own, weaker theorem.
 
 ## 7. Eligibility depends only on its inputs
 

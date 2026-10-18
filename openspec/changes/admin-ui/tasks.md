@@ -3,13 +3,13 @@
 ## 1. Scaffold (`src/ui`)
 
 - [x] 1.1 Create the Astro project in `src/ui` (Node adapter, `output: 'server'`, port `4321`), with `tailwindcss` + `@tailwindcss/vite`, `motion`, `openapi-typescript`, `openapi-fetch`, `zod`, `vitest` as dependencies and a `prebuild`/`predev` script generating `src/api/schema.d.ts` from `../../api/openapi.yaml`; git-ignore the generated file; verify `npm run build` succeeds from a clean checkout
-- [ ] 1.2 Add `src/ui/src/api/client.ts` (typed `openapi-fetch` client reading `DISCOUNT_API_URL`, default `http://localhost:8080`) and the `GET /healthz` endpoint; verify `curl localhost:4321/healthz` is `200` with the service stopped and the index page shows the "service unreachable" notice naming the URL
-- [ ] 1.3 Add the layout (navigation, Tailwind base styles, dark mode via `prefers-color-scheme`, Astro View Transitions) and the shared `ApiError` component printing status plus verbatim body; verify `astro check` passes and the built CSS contains only used utilities
+- [x] 1.2 Add `src/ui/src/api/client.ts` (typed `openapi-fetch` client reading `DISCOUNT_API_URL`, default `http://localhost:8080`) and the `GET /healthz` endpoint; verify `curl localhost:4321/healthz` is `200` with the service stopped and the index page shows the "service unreachable" notice naming the URL
+- [x] 1.3 Add the layout (navigation, Tailwind base styles, dark mode via `prefers-color-scheme`, Astro View Transitions) and the shared `ApiError` component printing status plus verbatim body; verify `astro check` passes and the built CSS contains only used utilities
 
 ## 2. View model (`src/ui/src/model`)
 
-- [ ] 2.1 Implement form↔body mapping for `Promotion` (every `Rule` and `Action` variant, `null` optionals, money as integer minor units + currency, timestamps as integers) with vitest cases for "Add a date window rule" and "Fixed amount in minor units"; verify `npm test` passes
-- [ ] 2.2 Implement form↔body mapping for `PricingPolicy`, `StackingGroup`, `Coupon`, `GrantRule`, `ExchangeRate`, `GenerateCouponsRequest`, `GrantRequest`, `EvaluateRequest` and result-to-rows for `PricingResult` (applied, skipped with reason, clamps, lines, allocations); verify vitest covers "Uses are shown, not sent" and a round trip of every shape
+- [x] 2.1 Implement form↔body mapping for `Promotion` (every `Rule` and `Action` variant, `null` optionals, money as integer minor units + currency, timestamps as integers) with vitest cases for "Add a date window rule" and "Fixed amount in minor units"; verify `npm test` passes
+- [x] 2.2 Implement form↔body mapping for `PricingPolicy`, `StackingGroup`, `Coupon`, `GrantRule`, `ExchangeRate`, `GenerateCouponsRequest`, `GrantRequest`, `EvaluateRequest` and result-to-rows for `PricingResult` (applied, skipped with reason, clamps, lines, allocations); verify vitest covers "Uses are shown, not sent" and a round trip of every shape
 
 ## 3. Catalogue screens (`src/ui/src/pages`, `src/ui/src/actions`)
 

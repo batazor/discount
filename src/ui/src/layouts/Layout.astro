@@ -1,0 +1,53 @@
+---
+import "../styles/global.css";
+import { ClientRouter } from "astro:transitions";
+import Unreachable from "../components/Unreachable.astro";
+
+interface Props { title: string; unreachable?: string | null }
+const { title, unreachable = null } = Astro.props;
+
+const nav = [
+  ["/", "Overview"],
+  ["/policy", "Policy"],
+  ["/groups", "Groups"],
+  ["/promotions", "Promotions"],
+  ["/coupons", "Coupons"],
+  ["/grant-rules", "Grant rules"],
+  ["/exchange-rates", "Exchange rates"],
+  ["/redemptions", "Redemptions"],
+  ["/customers", "Customers"],
+  ["/evaluate", "Evaluate"],
+] as const;
+const path = Astro.url.pathname;
+const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
+---
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} · discount</title>
+    <ClientRouter />
+  </head>
+  <body class="min-h-full bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100">
+    <div class="flex min-h-screen">
+      <nav class="w-52 shrink-0 border-r border-gray-200 bg-gray-50 px-3 py-4 dark:border-gray-800 dark:bg-gray-900">
+        <a href="/" class="mb-4 block px-2 text-lg font-bold tracking-tight">discount</a>
+        <ul class="space-y-0.5 text-sm">
+          {nav.map(([href, label]) => (
+            <li>
+              <a href={href}
+                 class:list={["block rounded px-2 py-1.5 hover:bg-gray-200 dark:hover:bg-gray-800",
+                   active(href) && "bg-gray-200 font-semibold dark:bg-gray-800"]}>{label}</a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <main class="min-w-0 flex-1 px-8 py-6">
+        <h1 class="mb-4 text-2xl font-semibold">{title}</h1>
+        {unreachable && <div class="mb-4"><Unreachable url={unreachable} /></div>}
+        <slot />
+      </main>
+    </div>
+  </body>
+</html>

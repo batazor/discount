@@ -28,7 +28,7 @@ with theorems for its invariants (ADR 2):
 | 3 | Stacking is deterministic (list order never matters) | proved for permutations of promotions and groups; commutativity claimed only where true |
 | 4 | Exclusive promotions apply alone; first-match groups apply at most one | proved |
 | 5 | Allocation is conservative: per-line discounts sum to the order discount exactly | proved |
-| 6 | Re-applying the same promotions is idempotent | iteration 2 |
+| 6 | Replay is exact; a redemption is never reserved twice | core by construction; service property, tested on both stores |
 | 7 | Eligibility depends only on its inputs | proved |
 
 The Lean model compiles to a reference executable. `verification/drt/` generates random carts and

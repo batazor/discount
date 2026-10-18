@@ -109,10 +109,11 @@ async fn reserve_decrements_budget_and_is_idempotent() {
         assert!(matches!(o2, ReserveOutcome::Idempotent(_)));
         assert_eq!(o2.redemption().result, r1.result);
         assert_eq!(remaining(&p, "P1").await, Some(eur(700)));
-        // stored
+        // stored, and the stored input is a complete replay record (invariant 6)
         let stored = p.redemptions.get("order-1").await.unwrap().unwrap();
         assert_eq!(stored.result, r1.result);
         assert_eq!(stored.input.promotions[0].remaining_budget, Some(eur(1000)));
+        assert_eq!(apply(&stored.input), Ok(stored.result.clone()));
     })
     .await;
 }

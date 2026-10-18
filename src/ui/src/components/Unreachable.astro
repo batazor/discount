@@ -1,0 +1,8 @@
+---
+interface Props { url: string }
+const { url } = Astro.props;
+---
+<div role="alert" class="rounded border border-red-300 bg-red-50 px-4 py-3 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100">
+  <strong>Service unreachable.</strong> The discount service at <code class="font-mono">{url}</code> did not answer.
+  Set <code class="font-mono">DISCOUNT_API_URL</code> or start the service.
+</div>
